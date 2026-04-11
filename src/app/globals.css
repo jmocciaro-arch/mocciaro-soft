@@ -101,3 +101,61 @@ body {
 .kanban-card:active {
   cursor: grabbing;
 }
+
+/* ─── React Grid Layout - Dashboard ─── */
+.react-grid-layout {
+  position: relative;
+}
+
+.react-grid-item {
+  transition: all 200ms ease;
+}
+
+.react-grid-item.react-draggable-dragging {
+  transition: none;
+  z-index: 100;
+  opacity: 0.9;
+}
+
+.react-grid-item.cssTransforms {
+  transition-property: transform;
+}
+
+.react-grid-placeholder {
+  background: #FF6600;
+  opacity: 0.15;
+  border-radius: 12px;
+}
+
+.react-resizable-handle {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  bottom: 0;
+  right: 0;
+  cursor: se-resize;
+}
+
+.react-resizable-handle::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid rgba(255, 102, 0, 0.4);
+  border-bottom: 2px solid rgba(255, 102, 0, 0.4);
+}
+
+/* Sutil grid lines during editing */
+.dashboard-editing .react-grid-layout {
+  background-image:
+    linear-gradient(to right, rgba(42, 48, 64, 0.3) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(42, 48, 64, 0.3) 1px, transparent 1px);
+  background-size: calc(100% / 12) 112px;
+}
+
+/* Hide resize handle when not editing */
+.dashboard-grid-container:not(.dashboard-editing) .react-resizable-handle {
+  display: none;
+}
