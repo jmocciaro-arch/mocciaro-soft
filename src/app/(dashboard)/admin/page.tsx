@@ -15,12 +15,49 @@ import { useToast } from '@/components/ui/toast'
 import { formatDate, formatDateTime, formatRelative, getInitials } from '@/lib/utils'
 import {
   Settings, Users, Building2, Sliders, Warehouse, Activity,
-  Save, Plus, Loader2, ChevronLeft, ChevronRight, Edit, Shield
+  Save, Plus, Loader2, ChevronLeft, ChevronRight, Edit, Shield,
+  UserPlus, Power, Copy, Eye, EyeOff, Check
 } from 'lucide-react'
 
 type Row = Record<string, unknown>
 
 const ROLES = ['admin', 'vendedor', 'tecnico', 'viewer']
+const ROLE_LABELS: Record<string, string> = {
+  admin: 'Administrador',
+  vendedor: 'Vendedor',
+  tecnico: 'Tecnico',
+  viewer: 'Solo lectura',
+}
+
+const ALL_PERMISSIONS = [
+  { key: 'quote', label: 'Cotizaciones', group: 'Ventas' },
+  { key: 'catalog', label: 'Catalogo', group: 'Productos' },
+  { key: 'stock', label: 'Stock', group: 'Productos' },
+  { key: 'clients', label: 'Clientes', group: 'CRM' },
+  { key: 'crm', label: 'CRM / Pipeline', group: 'CRM' },
+  { key: 'sat', label: 'SAT / Servicio tecnico', group: 'Operaciones' },
+  { key: 'purchases', label: 'Compras', group: 'Operaciones' },
+  { key: 'sales', label: 'Ventas', group: 'Ventas' },
+  { key: 'reports', label: 'Reportes', group: 'Admin' },
+  { key: 'admin', label: 'Administracion', group: 'Admin' },
+  { key: 'edit_users', label: 'Editar usuarios', group: 'Admin' },
+  { key: 'edit_params', label: 'Editar parametros', group: 'Admin' },
+  { key: 'see_costs', label: 'Ver costos', group: 'Finanzas' },
+  { key: 'see_markup', label: 'Ver markup', group: 'Finanzas' },
+  { key: 'edit_prices', label: 'Editar precios', group: 'Finanzas' },
+  { key: 'edit_stock', label: 'Editar stock', group: 'Productos' },
+  { key: 'edit_clients', label: 'Editar clientes', group: 'CRM' },
+  { key: 'export', label: 'Exportar datos', group: 'Admin' },
+]
+
+const DEFAULT_ROLE_PERMISSIONS: Record<string, Record<string, boolean>> = {
+  admin: Object.fromEntries(ALL_PERMISSIONS.map(p => [p.key, true])),
+  vendedor: { quote: true, catalog: true, stock: false, clients: true, crm: true, sat: false, purchases: false, sales: true, reports: true, admin: false, edit_users: false, edit_params: false, see_costs: false, see_markup: true, edit_prices: false, edit_stock: false, edit_clients: true, export: true },
+  tecnico: { quote: false, catalog: true, stock: true, clients: false, crm: false, sat: true, purchases: false, sales: false, reports: false, admin: false, edit_users: false, edit_params: false, see_costs: false, see_markup: false, edit_prices: false, edit_stock: true, edit_clients: false, export: false },
+  viewer: { quote: false, catalog: true, stock: false, clients: true, crm: true, sat: false, purchases: false, sales: false, reports: true, admin: false, edit_users: false, edit_params: false, see_costs: false, see_markup: false, edit_prices: false, edit_stock: false, edit_clients: false, export: false },
+}
+
+// Backwards compat: old permissions list for the matrix tab
 const PERMISSIONS = [
   { key: 'ver_precios', label: 'Ver precios' },
   { key: 'editar_stock', label: 'Editar stock' },
@@ -40,6 +77,28 @@ const DEFAULT_MATRIX: Record<string, Record<string, boolean>> = {
   viewer: { ver_precios: true, editar_stock: false, crear_cotizaciones: false, crear_pedidos: false, crear_facturas: false, gestionar_clientes: false, gestionar_sat: false, ver_reportes: true, admin_sistema: false },
 }
 
+// Empty user form
+interface UserForm {
+  username: string
+  full_name: string
+  email: string
+  role: string
+  gmail: string
+  whatsapp: string
+  phone: string
+  company_id: string
+  active: boolean
+  permissions: Record<string, boolean>
+}
+
+function emptyUserForm(): UserForm {
+  return {
+    username: '', full_name: '', email: '', role: 'vendedor',
+    gmail: '', whatsapp: '', phone: '', company_id: '', active: true,
+    permissions: { ...DEFAULT_ROLE_PERMISSIONS['vendedor'] },
+  }
+}
+
 const tabs = [
   { id: 'users', label: 'Usuarios', icon: <Users size={16} /> },
   { id: 'companies', label: 'Empresas', icon: <Building2 size={16} /> },
@@ -56,8 +115,13 @@ export default function AdminPage() {
   // Users
   const [usersData, setUsersData] = useState<Row[]>([])
   const [loadingUsers, setLoadingUsers] = useState(false)
-  const [editUser, setEditUser] = useState<Row | null>(null)
-  const [editUserRole, setEditUserRole] = useState('')
+  const [showUserModal, setShowUserModal] = useState(false)
+  const [editingUserId, setEditingUserId] = useState<string | null>(null)
+  const [userForm, setUserForm] = useState<UserForm>(emptyUserForm())
+  const [savingUser, setSavingUser] = useState(false)
+  const [generatedPassword, setGeneratedPassword] = useState<string | null>(null)
+  const [showPassword, setShowPassword] = useState(false)
+  const [userSearch, setUserSearch] = useState('')
 
   // Companies
   const [companies, setCompanies] = useState<Row[]>([])
@@ -89,6 +153,119 @@ export default function AdminPage() {
     setUsersData(data || [])
     setLoadingUsers(false)
   }, [supabase])
+
+  const openNewUser = () => {
+    setEditingUserId(null)
+    setUserForm(emptyUserForm())
+    setGeneratedPassword(null)
+    setShowPassword(false)
+    setShowUserModal(true)
+  }
+
+  const openEditUser = (u: Row) => {
+    setEditingUserId(u.id as string)
+    const perms = (u.permissions && typeof u.permissions === 'object') ? u.permissions as Record<string, boolean> : {}
+    setUserForm({
+      username: (u.username as string) || '',
+      full_name: (u.full_name as string) || '',
+      email: (u.email as string) || '',
+      role: (u.role as string) || 'viewer',
+      gmail: (u.gmail as string) || '',
+      whatsapp: (u.whatsapp as string) || '',
+      phone: (u.phone as string) || '',
+      company_id: (u.company_id as string) || '',
+      active: u.active !== false,
+      permissions: { ...DEFAULT_ROLE_PERMISSIONS[(u.role as string) || 'viewer'], ...perms },
+    })
+    setGeneratedPassword(null)
+    setShowPassword(false)
+    setShowUserModal(true)
+  }
+
+  const handleRoleChange = (role: string) => {
+    setUserForm(prev => ({
+      ...prev,
+      role,
+      permissions: { ...DEFAULT_ROLE_PERMISSIONS[role] || {} },
+    }))
+  }
+
+  const toggleUserPermission = (key: string) => {
+    setUserForm(prev => ({
+      ...prev,
+      permissions: { ...prev.permissions, [key]: !prev.permissions[key] },
+    }))
+  }
+
+  const saveUser = async () => {
+    if (!userForm.username.trim() || !userForm.full_name.trim() || !userForm.email.trim()) {
+      addToast({ type: 'warning', title: 'Completa los campos obligatorios' })
+      return
+    }
+    setSavingUser(true)
+    try {
+      if (editingUserId) {
+        // Update existing user
+        const res = await fetch('/api/admin/users', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: editingUserId, ...userForm }),
+        })
+        const result = await res.json()
+        if (!res.ok) {
+          addToast({ type: 'error', title: 'Error', message: result.error })
+        } else {
+          addToast({ type: 'success', title: 'Usuario actualizado' })
+          setShowUserModal(false)
+          loadUsers()
+        }
+      } else {
+        // Create new user
+        const res = await fetch('/api/admin/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(userForm),
+        })
+        const result = await res.json()
+        if (!res.ok) {
+          addToast({ type: 'error', title: 'Error', message: result.error })
+        } else {
+          setGeneratedPassword(result.generated_password || null)
+          addToast({ type: 'success', title: 'Usuario creado correctamente' })
+          loadUsers()
+        }
+      }
+    } catch (err) {
+      addToast({ type: 'error', title: 'Error de red', message: (err as Error).message })
+    } finally {
+      setSavingUser(false)
+    }
+  }
+
+  const deactivateUser = async (userId: string) => {
+    try {
+      const res = await fetch(`/api/admin/users?id=${userId}`, { method: 'DELETE' })
+      const result = await res.json()
+      if (!res.ok) {
+        addToast({ type: 'error', title: 'Error', message: result.error })
+      } else {
+        addToast({ type: 'success', title: 'Usuario desactivado' })
+        loadUsers()
+      }
+    } catch (err) {
+      addToast({ type: 'error', title: 'Error', message: (err as Error).message })
+    }
+  }
+
+  const filteredUsers = usersData.filter(u => {
+    if (!userSearch) return true
+    const s = userSearch.toLowerCase()
+    return (
+      ((u.full_name as string) || '').toLowerCase().includes(s) ||
+      ((u.email as string) || '').toLowerCase().includes(s) ||
+      ((u.username as string) || '').toLowerCase().includes(s)
+    )
+  })
 
   const loadCompanies = useCallback(async () => {
     setLoadingCompanies(true)
@@ -160,7 +337,7 @@ export default function AdminPage() {
   }, [supabase])
 
   const handleTabChange = (tab: string) => {
-    if (tab === 'users') loadUsers()
+    if (tab === 'users') { loadUsers(); loadCompanies() }
     if (tab === 'companies') loadCompanies()
     if (tab === 'params') loadParams()
     if (tab === 'warehouses') loadWarehouses()
@@ -168,15 +345,9 @@ export default function AdminPage() {
     if (tab === 'permissions') loadPermissions()
   }
 
-  useEffect(() => { loadUsers() }, [loadUsers])
+  useEffect(() => { loadUsers(); loadCompanies() }, [loadUsers, loadCompanies])
 
-  const saveUserRole = async () => {
-    if (!editUser) return
-    await supabase.from('tt_users').update({ role: editUserRole }).eq('id', editUser.id)
-    addToast({ type: 'success', title: 'Rol actualizado' })
-    setEditUser(null)
-    loadUsers()
-  }
+  // saveUserRole removed - replaced by full user management modal
 
   const openEditCompany = (c: Row) => {
     setEditCompany(c)
@@ -238,51 +409,77 @@ export default function AdminPage() {
             {activeTab === 'users' && (
               <Card>
                 <CardHeader>
-                  <CardTitle>Usuarios</CardTitle>
+                  <CardTitle>Usuarios del sistema</CardTitle>
+                  <Button size="sm" onClick={openNewUser}><UserPlus size={14} /> Nuevo usuario</Button>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="space-y-4">
+                  <SearchBar placeholder="Buscar usuario..." value={userSearch} onChange={setUserSearch} />
                   {loadingUsers ? (
                     <div className="flex justify-center py-10"><Loader2 className="animate-spin text-[#FF6600]" size={28} /></div>
+                  ) : filteredUsers.length === 0 ? (
+                    <div className="text-center py-10 text-[#6B7280]">
+                      <Users size={40} className="mx-auto mb-2 opacity-30" />
+                      <p className="text-sm">No se encontraron usuarios</p>
+                    </div>
                   ) : (
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Usuario</TableHead>
-                          <TableHead>Email</TableHead>
-                          <TableHead>Rol</TableHead>
-                          <TableHead>Último acceso</TableHead>
-                          <TableHead>Acciones</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {usersData.map((u) => (
-                          <TableRow key={u.id as string}>
-                            <TableCell>
-                              <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 rounded-full bg-[#FF6600] flex items-center justify-center text-white text-xs font-bold">
-                                  {getInitials((u.full_name as string) || 'U')}
-                                </div>
-                                <span className="text-sm font-medium text-[#F0F2F5]">{(u.full_name as string) || '-'}</span>
-                              </div>
-                            </TableCell>
-                            <TableCell className="text-sm text-[#9CA3AF]">{(u.email as string) || '-'}</TableCell>
-                            <TableCell>
-                              <Badge variant={(u.role as string) === 'admin' ? 'orange' : 'default'}>
-                                {(u.role as string) || 'user'}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-sm text-[#6B7280]">
-                              {u.updated_at ? formatRelative(u.updated_at as string) : 'Nunca'}
-                            </TableCell>
-                            <TableCell>
-                              <Button variant="ghost" size="sm" onClick={() => { setEditUser(u); setEditUserRole((u.role as string) || '') }}>
-                                <Edit size={14} />
-                              </Button>
-                            </TableCell>
+                    <div className="overflow-x-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Usuario</TableHead>
+                            <TableHead>Username</TableHead>
+                            <TableHead>Email</TableHead>
+                            <TableHead>Rol</TableHead>
+                            <TableHead>Estado</TableHead>
+                            <TableHead>Ultima actualizacion</TableHead>
+                            <TableHead>Acciones</TableHead>
                           </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
+                        </TableHeader>
+                        <TableBody>
+                          {filteredUsers.map((u) => (
+                            <TableRow key={u.id as string}>
+                              <TableCell>
+                                <div className="flex items-center gap-3">
+                                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold ${u.active === false ? 'bg-[#4B5563]' : 'bg-[#FF6600]'}`}>
+                                    {getInitials((u.full_name as string) || 'U')}
+                                  </div>
+                                  <span className={`text-sm font-medium ${u.active === false ? 'text-[#6B7280] line-through' : 'text-[#F0F2F5]'}`}>
+                                    {(u.full_name as string) || '-'}
+                                  </span>
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-sm text-[#9CA3AF]">{(u.username as string) || '-'}</TableCell>
+                              <TableCell className="text-sm text-[#9CA3AF]">{(u.email as string) || '-'}</TableCell>
+                              <TableCell>
+                                <Badge variant={(u.role as string) === 'admin' ? 'orange' : (u.role as string) === 'vendedor' ? 'info' : (u.role as string) === 'tecnico' ? 'warning' : 'default'}>
+                                  {ROLE_LABELS[(u.role as string)] || (u.role as string) || 'viewer'}
+                                </Badge>
+                              </TableCell>
+                              <TableCell>
+                                <Badge variant={u.active !== false ? 'success' : 'danger'}>
+                                  {u.active !== false ? 'Activo' : 'Inactivo'}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-sm text-[#6B7280]">
+                                {u.updated_at ? formatRelative(u.updated_at as string) : 'Nunca'}
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex items-center gap-1">
+                                  <Button variant="ghost" size="sm" onClick={() => openEditUser(u)} title="Editar">
+                                    <Edit size={14} />
+                                  </Button>
+                                  {u.active !== false && (
+                                    <Button variant="ghost" size="sm" onClick={() => deactivateUser(u.id as string)} title="Desactivar">
+                                      <Power size={14} className="text-red-400" />
+                                    </Button>
+                                  )}
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
                   )}
                 </CardContent>
               </Card>
@@ -509,25 +706,160 @@ export default function AdminPage() {
       </Tabs>
       </Suspense>
 
-      {/* ─── EDIT USER ROLE ─── */}
-      <Modal isOpen={!!editUser} onClose={() => setEditUser(null)} title="Editar usuario" size="sm">
-        {editUser && (
+      {/* ─── CREATE / EDIT USER MODAL ─── */}
+      <Modal
+        isOpen={showUserModal}
+        onClose={() => { if (!generatedPassword) setShowUserModal(false) }}
+        title={generatedPassword ? 'Usuario creado' : editingUserId ? 'Editar usuario' : 'Nuevo usuario'}
+        size="xl"
+      >
+        {generatedPassword ? (
           <div className="space-y-4">
-            <p className="text-sm text-[#D1D5DB]">{(editUser.full_name as string) || ''} ({(editUser.email as string) || ''})</p>
-            <Select
-              label="Rol"
-              options={[
-                { value: 'admin', label: 'Admin' },
-                { value: 'vendedor', label: 'Vendedor' },
-                { value: 'tecnico', label: 'Técnico' },
-                { value: 'viewer', label: 'Solo lectura' },
-              ]}
-              value={editUserRole}
-              onChange={(e) => setEditUserRole(e.target.value)}
-            />
-            <div className="flex justify-end gap-3">
-              <Button variant="secondary" onClick={() => setEditUser(null)}>Cancelar</Button>
-              <Button onClick={saveUserRole}><Save size={14} /> Guardar</Button>
+            <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+              <div className="flex items-center gap-2 mb-2">
+                <Check size={18} className="text-emerald-400" />
+                <p className="text-sm font-medium text-emerald-400">Usuario creado correctamente</p>
+              </div>
+              <p className="text-xs text-[#9CA3AF] mb-3">Se genero una contrasena temporal. Copiala y enviasela al usuario para su primer inicio de sesion.</p>
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-[#0F1218] border border-[#2A3040]">
+                <code className="flex-1 text-sm text-[#F0F2F5] font-mono">
+                  {showPassword ? generatedPassword : '••••••••••••••••'}
+                </code>
+                <Button variant="ghost" size="sm" onClick={() => setShowPassword(!showPassword)}>
+                  {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => {
+                  navigator.clipboard.writeText(generatedPassword)
+                  addToast({ type: 'success', title: 'Contrasena copiada al portapapeles' })
+                }}>
+                  <Copy size={14} />
+                </Button>
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <Button onClick={() => { setShowUserModal(false); setGeneratedPassword(null) }}>Cerrar</Button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-5">
+            {/* Basic info */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Input
+                label="Nombre completo *"
+                value={userForm.full_name}
+                onChange={(e) => setUserForm({ ...userForm, full_name: e.target.value })}
+                placeholder="Juan Perez"
+              />
+              <Input
+                label="Username *"
+                value={userForm.username}
+                onChange={(e) => setUserForm({ ...userForm, username: e.target.value })}
+                placeholder="jperez"
+              />
+              <Input
+                label="Email *"
+                type="email"
+                value={userForm.email}
+                onChange={(e) => setUserForm({ ...userForm, email: e.target.value })}
+                placeholder="juan@torquetools.es"
+              />
+              <Select
+                label="Rol"
+                options={ROLES.map(r => ({ value: r, label: ROLE_LABELS[r] || r }))}
+                value={userForm.role}
+                onChange={(e) => handleRoleChange(e.target.value)}
+              />
+            </div>
+
+            {/* Contact info */}
+            <div>
+              <p className="text-xs font-medium text-[#6B7280] uppercase tracking-wider mb-3">Contacto</p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <Input
+                  label="Gmail (Google Chat)"
+                  value={userForm.gmail}
+                  onChange={(e) => setUserForm({ ...userForm, gmail: e.target.value })}
+                  placeholder="juan@gmail.com"
+                />
+                <Input
+                  label="WhatsApp"
+                  value={userForm.whatsapp}
+                  onChange={(e) => setUserForm({ ...userForm, whatsapp: e.target.value })}
+                  placeholder="+34 600 000 000"
+                />
+                <Input
+                  label="Telefono"
+                  value={userForm.phone}
+                  onChange={(e) => setUserForm({ ...userForm, phone: e.target.value })}
+                  placeholder="+34 900 000 000"
+                />
+              </div>
+            </div>
+
+            {/* Company & status */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Select
+                label="Empresa"
+                options={[{ value: '', label: 'Sin asignar' }, ...companies.map(c => ({ value: (c.id as string), label: (c.name as string) || '-' }))]}
+                value={userForm.company_id}
+                onChange={(e) => setUserForm({ ...userForm, company_id: e.target.value })}
+              />
+              <div>
+                <p className="block text-sm font-medium text-[#9CA3AF] mb-1.5">Estado</p>
+                <button
+                  onClick={() => setUserForm({ ...userForm, active: !userForm.active })}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg border transition-all ${
+                    userForm.active
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                      : 'bg-red-500/10 border-red-500/30 text-red-400'
+                  }`}
+                >
+                  <Power size={14} />
+                  <span className="text-sm font-medium">{userForm.active ? 'Activo' : 'Inactivo'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Permissions */}
+            <div>
+              <p className="text-xs font-medium text-[#6B7280] uppercase tracking-wider mb-3">
+                Permisos granulares
+                <span className="text-[10px] font-normal normal-case ml-2 text-[#4B5563]">
+                  (se cargan los defaults del rol seleccionado)
+                </span>
+              </p>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                {ALL_PERMISSIONS.map(p => (
+                  <button
+                    key={p.key}
+                    onClick={() => toggleUserPermission(p.key)}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs transition-all ${
+                      userForm.permissions[p.key]
+                        ? 'bg-[#FF6600]/10 border-[#FF6600]/30 text-[#FF6600]'
+                        : 'bg-[#0F1218] border-[#1E2330] text-[#6B7280] hover:border-[#2A3040]'
+                    }`}
+                  >
+                    <div className={`w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-all ${
+                      userForm.permissions[p.key]
+                        ? 'bg-[#FF6600] border-[#FF6600]'
+                        : 'border-[#2A3040]'
+                    }`}>
+                      {userForm.permissions[p.key] && (
+                        <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+                      )}
+                    </div>
+                    <span className="truncate">{p.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex justify-end gap-3 pt-4 border-t border-[#1E2330]">
+              <Button variant="secondary" onClick={() => setShowUserModal(false)}>Cancelar</Button>
+              <Button onClick={saveUser} loading={savingUser}>
+                <Save size={14} /> {editingUserId ? 'Guardar cambios' : 'Crear usuario'}
+              </Button>
             </div>
           </div>
         )}

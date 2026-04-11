@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { Bell, AlertCircle, Info, AlertTriangle } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { formatRelative } from '@/lib/utils'
@@ -23,6 +24,7 @@ const severityConfig: Record<string, { icon: React.ReactNode; color: string; bg:
 }
 
 export function WidgetAlerts() {
+  const router = useRouter()
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -70,6 +72,9 @@ export function WidgetAlerts() {
           <div
             key={alert.id}
             className="p-2.5 rounded-lg bg-[#0F1218] border border-[#1E2330] hover:border-[#2A3040] transition-all cursor-pointer"
+            onClick={() => {
+              if (alert.link) router.push(alert.link)
+            }}
           >
             <div className="flex items-start gap-2">
               <div className={`p-1.5 rounded-lg ${sev.bg} ${sev.color} shrink-0 mt-0.5`}>

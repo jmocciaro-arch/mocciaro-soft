@@ -32,14 +32,14 @@ export const useSidebar = () => useContext(SidebarContext)
 
 const navItems = [
   { label: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { label: 'Leads', href: '/crm', icon: Target },
+  { label: 'CRM / Leads', href: '/crm?tab=pipeline', icon: Target },
   { label: 'Cotizador', href: '/cotizador', icon: FileText, badgeKey: 'quotes_draft' },
-  { label: 'Pedidos', href: '/documentos/demo', icon: ClipboardList, badgeKey: 'so_open' },
-  { label: 'Albaranes', href: '/ventas', icon: Truck },
-  { label: 'Facturas', href: '/admin', icon: CreditCard },
-  { label: 'Compras', href: '/compras', icon: ShoppingCart, badgeKey: 'po_pending' },
+  { label: 'Pedidos', href: '/ventas?tab=pedidos', icon: ClipboardList, badgeKey: 'so_open' },
+  { label: 'Albaranes', href: '/ventas?tab=albaranes', icon: Truck },
+  { label: 'Facturas', href: '/ventas?tab=facturas', icon: CreditCard },
+  { label: 'Compras', href: '/compras?tab=pedidos', icon: ShoppingCart, badgeKey: 'po_pending' },
   { label: 'Stock', href: '/stock', icon: Warehouse },
-  { label: 'Proveedores', href: '/compras', icon: Building2 },
+  { label: 'Proveedores', href: '/compras?tab=proveedores', icon: Building2 },
   { label: 'Clientes', href: '/clientes', icon: Users },
   { label: 'Catalogo', href: '/catalogo', icon: Package },
   { label: 'SAT', href: '/sat', icon: Wrench, badgeKey: 'sat_open' },
@@ -95,8 +95,9 @@ export function Sidebar() {
   const { collapsed, setCollapsed, mobileOpen, setMobileOpen, badges } = useSidebar()
 
   const isActive = (href: string) => {
-    if (href === '/') return pathname === '/'
-    return pathname.startsWith(href)
+    const basePath = href.split('?')[0]
+    if (basePath === '/') return pathname === '/'
+    return pathname.startsWith(basePath)
   }
 
   return (
@@ -146,7 +147,7 @@ export function Sidebar() {
             const active = isActive(item.href)
             return (
               <Link
-                key={item.href}
+                key={item.label}
                 href={item.href}
                 onClick={() => setMobileOpen(false)}
                 className={cn(
@@ -198,8 +199,9 @@ export function MobileNav() {
   const mobileItems = navItems.slice(0, 5)
 
   const isActive = (href: string) => {
-    if (href === '/') return pathname === '/'
-    return pathname.startsWith(href)
+    const basePath = href.split('?')[0]
+    if (basePath === '/') return pathname === '/'
+    return pathname.startsWith(basePath)
   }
 
   return (
@@ -210,7 +212,7 @@ export function MobileNav() {
           const active = isActive(item.href)
           return (
             <Link
-              key={item.href}
+              key={item.label}
               href={item.href}
               className={cn(
                 'flex flex-col items-center gap-0.5 px-3 py-2 rounded-lg transition-colors min-w-[60px]',
