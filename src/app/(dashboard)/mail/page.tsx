@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, Suspense } from 'react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -274,6 +274,7 @@ export default function MailPage() {
         </div>
       </div>
 
+      <Suspense fallback={<div className="flex justify-center py-10"><Loader2 className="animate-spin text-[#FF6600]" size={32} /></div>}>
       <Tabs tabs={accountTabs} defaultTab="buscatools" onChange={(id) => setActiveAccount(id)}>
         {() => (
           <>
@@ -345,6 +346,7 @@ export default function MailPage() {
           </>
         )}
       </Tabs>
+      </Suspense>
 
       {/* ─── READ ─── */}
       <Modal isOpen={showRead} onClose={() => setShowRead(false)} title={selectedMsg?.subject || ''} size="xl">

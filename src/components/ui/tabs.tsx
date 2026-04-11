@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
 
 interface Tab {
@@ -16,19 +17,40 @@ interface TabsProps {
   onChange?: (tabId: string) => void
   children: (activeTab: string) => React.ReactNode
   className?: string
+  urlParam?: string // name of the URL search param to sync with
 }
 
-export function Tabs({ tabs, defaultTab, onChange, children, className }: TabsProps) {
-  const [activeTab, setActiveTab] = useState(defaultTab || tabs[0]?.id)
+export function Tabs({ tabs, defaultTab, onChange, children, className, urlParam = 'tab' }: TabsProps) {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const pathname = usePathname()
+
+  const urlTab = searchParams.get(urlParam)
+  const validUrlTab = urlTab && tabs.some(t => t.id === urlTab) ? urlTab : null
+  const initialTab = validUrlTab || defaultTab || tabs[0]?.id
+
+  const [activeTab, setActiveTab] = useState(initialTab)
+
+  // Sync from URL on mount and when URL changes
+  useEffect(() => {
+    if (validUrlTab && validUrlTab !== activeTab) {
+      setActiveTab(validUrlTab)
+    }
+  }, [validUrlTab])
 
   const handleTabChange = (tabId: string) => {
     setActiveTab(tabId)
     onChange?.(tabId)
+
+    // Update URL
+    const params = new URLSearchParams(searchParams.toString())
+    params.set(urlParam, tabId)
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
   }
 
   return (
     <div className={cn(className)}>
-      <div className="flex gap-1 p-1 bg-[#0F1218] rounded-lg border border-[#1E2330] mb-4 overflow-x-auto">
+      <div className="flex gap-1 p-1 bg-[#0F1218] rounded-lg border border-[#1E2330] mb-4 overflow-x-auto scrollbar-hide">
         {tabs.map((tab) => (
           <button
             key={tab.id}

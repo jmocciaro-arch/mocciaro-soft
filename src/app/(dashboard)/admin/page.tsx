@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, Suspense } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -15,17 +15,38 @@ import { useToast } from '@/components/ui/toast'
 import { formatDate, formatDateTime, formatRelative, getInitials } from '@/lib/utils'
 import {
   Settings, Users, Building2, Sliders, Warehouse, Activity,
-  Save, Plus, Loader2, ChevronLeft, ChevronRight, Edit
+  Save, Plus, Loader2, ChevronLeft, ChevronRight, Edit, Shield
 } from 'lucide-react'
 
 type Row = Record<string, unknown>
 
+const ROLES = ['admin', 'vendedor', 'tecnico', 'viewer']
+const PERMISSIONS = [
+  { key: 'ver_precios', label: 'Ver precios' },
+  { key: 'editar_stock', label: 'Editar stock' },
+  { key: 'crear_cotizaciones', label: 'Crear cotizaciones' },
+  { key: 'crear_pedidos', label: 'Crear pedidos' },
+  { key: 'crear_facturas', label: 'Crear facturas' },
+  { key: 'gestionar_clientes', label: 'Gestionar clientes' },
+  { key: 'gestionar_sat', label: 'Gestionar SAT' },
+  { key: 'ver_reportes', label: 'Ver reportes' },
+  { key: 'admin_sistema', label: 'Admin sistema' },
+]
+
+const DEFAULT_MATRIX: Record<string, Record<string, boolean>> = {
+  admin: { ver_precios: true, editar_stock: true, crear_cotizaciones: true, crear_pedidos: true, crear_facturas: true, gestionar_clientes: true, gestionar_sat: true, ver_reportes: true, admin_sistema: true },
+  vendedor: { ver_precios: true, editar_stock: false, crear_cotizaciones: true, crear_pedidos: true, crear_facturas: false, gestionar_clientes: true, gestionar_sat: false, ver_reportes: true, admin_sistema: false },
+  tecnico: { ver_precios: false, editar_stock: true, crear_cotizaciones: false, crear_pedidos: false, crear_facturas: false, gestionar_clientes: false, gestionar_sat: true, ver_reportes: false, admin_sistema: false },
+  viewer: { ver_precios: true, editar_stock: false, crear_cotizaciones: false, crear_pedidos: false, crear_facturas: false, gestionar_clientes: false, gestionar_sat: false, ver_reportes: true, admin_sistema: false },
+}
+
 const tabs = [
   { id: 'users', label: 'Usuarios', icon: <Users size={16} /> },
   { id: 'companies', label: 'Empresas', icon: <Building2 size={16} /> },
-  { id: 'params', label: 'Parámetros', icon: <Sliders size={16} /> },
+  { id: 'params', label: 'Parametros', icon: <Sliders size={16} /> },
   { id: 'warehouses', label: 'Almacenes', icon: <Warehouse size={16} /> },
-  { id: 'audit', label: 'Auditoría', icon: <Activity size={16} /> },
+  { id: 'audit', label: 'Auditoria', icon: <Activity size={16} /> },
+  { id: 'permissions', label: 'Permisos', icon: <Shield size={16} /> },
 ]
 
 export default function AdminPage() {
@@ -108,12 +129,43 @@ export default function AdminPage() {
     setLoadingAudit(false)
   }, [supabase, auditPage, auditEntityFilter])
 
+  // Permissions
+  const [permMatrix, setPermMatrix] = useState<Record<string, Record<string, boolean>>>(DEFAULT_MATRIX)
+  const [savingPerms, setSavingPerms] = useState(false)
+
+  const togglePerm = (role: string, perm: string) => {
+    setPermMatrix(prev => ({
+      ...prev,
+      [role]: { ...prev[role], [perm]: !prev[role]?.[perm] }
+    }))
+  }
+
+  const savePermissions = async () => {
+    setSavingPerms(true)
+    // Save to system params as JSON
+    await supabase.from('tt_system_params').upsert({
+      key: 'role_permissions',
+      value: JSON.stringify(permMatrix),
+      description: 'Matriz de permisos por rol',
+    }, { onConflict: 'key' })
+    addToast({ type: 'success', title: 'Permisos guardados' })
+    setSavingPerms(false)
+  }
+
+  const loadPermissions = useCallback(async () => {
+    const { data } = await supabase.from('tt_system_params').select('value').eq('key', 'role_permissions').single()
+    if (data?.value) {
+      try { setPermMatrix(JSON.parse(data.value as string)) } catch { /* keep defaults */ }
+    }
+  }, [supabase])
+
   const handleTabChange = (tab: string) => {
     if (tab === 'users') loadUsers()
     if (tab === 'companies') loadCompanies()
     if (tab === 'params') loadParams()
     if (tab === 'warehouses') loadWarehouses()
     if (tab === 'audit') loadAudit()
+    if (tab === 'permissions') loadPermissions()
   }
 
   useEffect(() => { loadUsers() }, [loadUsers])
@@ -175,9 +227,10 @@ export default function AdminPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-[#F0F2F5]">Administración</h1>
-        <p className="text-sm text-[#6B7280] mt-1">Configuración del sistema, usuarios y auditoría</p>
+        <p className="text-sm text-[#6B7280] mt-1">Configuracion del sistema, usuarios y auditoria</p>
       </div>
 
+      <Suspense fallback={<div className="flex justify-center py-10"><Loader2 className="animate-spin text-[#FF6600]" size={32} /></div>}>
       <Tabs tabs={tabs} defaultTab="users" onChange={handleTabChange}>
         {(activeTab) => (
           <>
@@ -336,11 +389,60 @@ export default function AdminPage() {
               </Card>
             )}
 
+            {/* ═══ PERMISSIONS ═══ */}
+            {activeTab === 'permissions' && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Permisos por rol</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b border-[#1E2330]">
+                          <th className="text-left text-sm font-medium text-[#9CA3AF] p-3">Permiso</th>
+                          {ROLES.map(role => (
+                            <th key={role} className="text-center text-sm font-medium text-[#9CA3AF] p-3 capitalize">{role}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {PERMISSIONS.map(perm => (
+                          <tr key={perm.key} className="border-b border-[#1E2330]/50 hover:bg-[#0F1218]">
+                            <td className="text-sm text-[#F0F2F5] p-3">{perm.label}</td>
+                            {ROLES.map(role => (
+                              <td key={role} className="text-center p-3">
+                                <button
+                                  onClick={() => togglePerm(role, perm.key)}
+                                  className={`w-6 h-6 rounded border-2 transition-all ${
+                                    permMatrix[role]?.[perm.key]
+                                      ? 'bg-[#FF6600] border-[#FF6600]'
+                                      : 'bg-transparent border-[#2A3040] hover:border-[#4B5563]'
+                                  }`}
+                                >
+                                  {permMatrix[role]?.[perm.key] && (
+                                    <svg className="w-4 h-4 text-white mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+                                  )}
+                                </button>
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="flex justify-end mt-4">
+                    <Button onClick={savePermissions} loading={savingPerms}><Save size={14} /> Guardar permisos</Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             {/* ═══ AUDIT ═══ */}
             {activeTab === 'audit' && (
               <Card>
                 <CardHeader>
-                  <CardTitle>Log de auditoría</CardTitle>
+                  <CardTitle>Log de auditoria</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex gap-3">
@@ -405,6 +507,7 @@ export default function AdminPage() {
           </>
         )}
       </Tabs>
+      </Suspense>
 
       {/* ─── EDIT USER ROLE ─── */}
       <Modal isOpen={!!editUser} onClose={() => setEditUser(null)} title="Editar usuario" size="sm">
