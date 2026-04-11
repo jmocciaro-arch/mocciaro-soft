@@ -112,14 +112,54 @@ export interface Client {
 export interface ClientContact {
   id: string
   client_id: string
-  full_name: string
+  name: string
   position: string | null
   email: string | null
   phone: string | null
   whatsapp: string | null
   is_primary: boolean
+  notes?: string | null
+  created_at: string
+}
+
+export interface ClientAddress {
+  id: string
+  client_id: string
+  label: string
+  address: string | null
+  city: string | null
+  state: string | null
+  postal_code: string | null
+  country: string
+  is_default: boolean
   notes: string | null
   created_at: string
+}
+
+/** Virtual grouped company derived from tt_clients records sharing the same legal_name */
+export interface GroupedCompany {
+  /** ID of the primary tt_clients record */
+  id: string
+  legal_name: string
+  name: string
+  tax_id: string | null
+  email: string | null
+  phone: string | null
+  whatsapp: string | null
+  address: string | null
+  city: string | null
+  state: string | null
+  postal_code: string | null
+  country: string
+  category: string | null
+  payment_terms: string | null
+  credit_limit: number
+  source: string | null
+  /** All underlying tt_clients records for this company */
+  records: Client[]
+  /** Contacts extracted from duplicate records */
+  inlineContacts: { name: string; email: string | null; phone: string | null }[]
+  contactCount: number
 }
 
 export interface Warehouse {
