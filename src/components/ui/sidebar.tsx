@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
+import { usePermissions } from '@/hooks/use-permissions'
 
 interface SidebarContextType {
   collapsed: boolean
@@ -30,20 +31,28 @@ const SidebarContext = createContext<SidebarContextType>({
 
 export const useSidebar = () => useContext(SidebarContext)
 
-const navItems = [
+interface NavItem {
+  label: string
+  href: string
+  icon: typeof LayoutDashboard
+  badgeKey?: string
+  requiredPermissions?: string[]
+}
+
+const navItems: NavItem[] = [
   { label: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { label: 'CRM / Leads', href: '/crm?tab=pipeline', icon: Target },
-  { label: 'Cotizador', href: '/cotizador', icon: FileText, badgeKey: 'quotes_draft' },
-  { label: 'Pedidos', href: '/ventas?tab=pedidos', icon: ClipboardList, badgeKey: 'so_open' },
-  { label: 'Albaranes', href: '/ventas?tab=albaranes', icon: Truck },
-  { label: 'Facturas', href: '/ventas?tab=facturas', icon: CreditCard },
-  { label: 'Compras', href: '/compras?tab=pedidos', icon: ShoppingCart, badgeKey: 'po_pending' },
-  { label: 'Stock', href: '/stock', icon: Warehouse },
-  { label: 'Proveedores', href: '/compras?tab=proveedores', icon: Building2 },
-  { label: 'Clientes', href: '/clientes', icon: Users },
-  { label: 'Catalogo', href: '/catalogo', icon: Package },
-  { label: 'SAT', href: '/sat', icon: Wrench, badgeKey: 'sat_open' },
-  { label: 'Admin', href: '/admin', icon: Settings },
+  { label: 'CRM / Leads', href: '/crm?tab=pipeline', icon: Target, requiredPermissions: ['view_crm'] },
+  { label: 'Cotizador', href: '/cotizador', icon: FileText, badgeKey: 'quotes_draft', requiredPermissions: ['create_quote', 'edit_quote', 'view_sales_reports'] },
+  { label: 'Pedidos', href: '/ventas?tab=pedidos', icon: ClipboardList, badgeKey: 'so_open', requiredPermissions: ['create_order', 'approve_order', 'view_sales_reports'] },
+  { label: 'Albaranes', href: '/ventas?tab=albaranes', icon: Truck, requiredPermissions: ['create_order', 'view_sales_reports'] },
+  { label: 'Facturas', href: '/ventas?tab=facturas', icon: CreditCard, requiredPermissions: ['view_financials', 'create_invoice'] },
+  { label: 'Compras', href: '/compras?tab=pedidos', icon: ShoppingCart, badgeKey: 'po_pending', requiredPermissions: ['create_purchase_order', 'view_suppliers'] },
+  { label: 'Stock', href: '/stock', icon: Warehouse, requiredPermissions: ['view_stock'] },
+  { label: 'Proveedores', href: '/compras?tab=proveedores', icon: Building2, requiredPermissions: ['view_suppliers'] },
+  { label: 'Clientes', href: '/clientes', icon: Users, requiredPermissions: ['view_clients'] },
+  { label: 'Catalogo', href: '/catalogo', icon: Package, requiredPermissions: ['view_catalog'] },
+  { label: 'SAT', href: '/sat', icon: Wrench, badgeKey: 'sat_open', requiredPermissions: ['view_sat'] },
+  { label: 'Admin', href: '/admin', icon: Settings, requiredPermissions: ['admin_users'] },
 ]
 
 function useBadgeCounts() {
@@ -93,12 +102,21 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 export function Sidebar() {
   const pathname = usePathname()
   const { collapsed, setCollapsed, mobileOpen, setMobileOpen, badges } = useSidebar()
+  const { canAny, isSuper, loading: permsLoading } = usePermissions()
 
   const isActive = (href: string) => {
     const basePath = href.split('?')[0]
     if (basePath === '/') return pathname === '/'
     return pathname.startsWith(basePath)
   }
+
+  // Filter nav items based on permissions
+  const visibleItems = navItems.filter(item => {
+    if (!item.requiredPermissions) return true // Dashboard always visible
+    if (permsLoading) return true // Show all while loading
+    if (isSuper) return true // Super admin sees everything
+    return canAny(item.requiredPermissions)
+  })
 
   return (
     <>
@@ -142,7 +160,7 @@ export function Sidebar() {
 
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
-          {navItems.map((item) => {
+          {visibleItems.map((item) => {
             const Icon = item.icon
             const active = isActive(item.href)
             return (

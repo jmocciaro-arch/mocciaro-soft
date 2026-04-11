@@ -17,65 +17,42 @@ import { ExportButton } from '@/components/ui/export-button'
 import {
   Settings, Users, Building2, Sliders, Warehouse, Activity,
   Save, Plus, Loader2, ChevronLeft, ChevronRight, Edit, Shield,
-  UserPlus, Power, Copy, Eye, EyeOff, Check
+  UserPlus, Power, Copy, Eye, EyeOff, Check, ShieldCheck, X
 } from 'lucide-react'
 
 type Row = Record<string, unknown>
 
-const ROLES = ['admin', 'vendedor', 'tecnico', 'viewer']
-const ROLE_LABELS: Record<string, string> = {
+// Legacy roles for backward compat with old tt_users.role field
+const LEGACY_ROLES = ['admin', 'vendedor', 'tecnico', 'viewer']
+const LEGACY_ROLE_LABELS: Record<string, string> = {
   admin: 'Administrador',
   vendedor: 'Vendedor',
   tecnico: 'Tecnico',
   viewer: 'Solo lectura',
 }
 
-const ALL_PERMISSIONS = [
-  { key: 'quote', label: 'Cotizaciones', group: 'Ventas' },
-  { key: 'catalog', label: 'Catalogo', group: 'Productos' },
-  { key: 'stock', label: 'Stock', group: 'Productos' },
-  { key: 'clients', label: 'Clientes', group: 'CRM' },
-  { key: 'crm', label: 'CRM / Pipeline', group: 'CRM' },
-  { key: 'sat', label: 'SAT / Servicio tecnico', group: 'Operaciones' },
-  { key: 'purchases', label: 'Compras', group: 'Operaciones' },
-  { key: 'sales', label: 'Ventas', group: 'Ventas' },
-  { key: 'reports', label: 'Reportes', group: 'Admin' },
-  { key: 'admin', label: 'Administracion', group: 'Admin' },
-  { key: 'edit_users', label: 'Editar usuarios', group: 'Admin' },
-  { key: 'edit_params', label: 'Editar parametros', group: 'Admin' },
-  { key: 'see_costs', label: 'Ver costos', group: 'Finanzas' },
-  { key: 'see_markup', label: 'Ver markup', group: 'Finanzas' },
-  { key: 'edit_prices', label: 'Editar precios', group: 'Finanzas' },
-  { key: 'edit_stock', label: 'Editar stock', group: 'Productos' },
-  { key: 'edit_clients', label: 'Editar clientes', group: 'CRM' },
-  { key: 'export', label: 'Exportar datos', group: 'Admin' },
-]
-
-const DEFAULT_ROLE_PERMISSIONS: Record<string, Record<string, boolean>> = {
-  admin: Object.fromEntries(ALL_PERMISSIONS.map(p => [p.key, true])),
-  vendedor: { quote: true, catalog: true, stock: false, clients: true, crm: true, sat: false, purchases: false, sales: true, reports: true, admin: false, edit_users: false, edit_params: false, see_costs: false, see_markup: true, edit_prices: false, edit_stock: false, edit_clients: true, export: true },
-  tecnico: { quote: false, catalog: true, stock: true, clients: false, crm: false, sat: true, purchases: false, sales: false, reports: false, admin: false, edit_users: false, edit_params: false, see_costs: false, see_markup: false, edit_prices: false, edit_stock: true, edit_clients: false, export: false },
-  viewer: { quote: false, catalog: true, stock: false, clients: true, crm: true, sat: false, purchases: false, sales: false, reports: true, admin: false, edit_users: false, edit_params: false, see_costs: false, see_markup: false, edit_prices: false, edit_stock: false, edit_clients: false, export: false },
+// ─── Types for RBAC ───
+interface RbacRole {
+  id: string
+  name: string
+  label: string
+  category: string
+  description: string | null
+  active: boolean
 }
 
-// Backwards compat: old permissions list for the matrix tab
-const PERMISSIONS = [
-  { key: 'ver_precios', label: 'Ver precios' },
-  { key: 'editar_stock', label: 'Editar stock' },
-  { key: 'crear_cotizaciones', label: 'Crear cotizaciones' },
-  { key: 'crear_pedidos', label: 'Crear pedidos' },
-  { key: 'crear_facturas', label: 'Crear facturas' },
-  { key: 'gestionar_clientes', label: 'Gestionar clientes' },
-  { key: 'gestionar_sat', label: 'Gestionar SAT' },
-  { key: 'ver_reportes', label: 'Ver reportes' },
-  { key: 'admin_sistema', label: 'Admin sistema' },
-]
+interface RbacPermission {
+  id: string
+  name: string
+  label: string
+  module: string
+}
 
-const DEFAULT_MATRIX: Record<string, Record<string, boolean>> = {
-  admin: { ver_precios: true, editar_stock: true, crear_cotizaciones: true, crear_pedidos: true, crear_facturas: true, gestionar_clientes: true, gestionar_sat: true, ver_reportes: true, admin_sistema: true },
-  vendedor: { ver_precios: true, editar_stock: false, crear_cotizaciones: true, crear_pedidos: true, crear_facturas: false, gestionar_clientes: true, gestionar_sat: false, ver_reportes: true, admin_sistema: false },
-  tecnico: { ver_precios: false, editar_stock: true, crear_cotizaciones: false, crear_pedidos: false, crear_facturas: false, gestionar_clientes: false, gestionar_sat: true, ver_reportes: false, admin_sistema: false },
-  viewer: { ver_precios: true, editar_stock: false, crear_cotizaciones: false, crear_pedidos: false, crear_facturas: false, gestionar_clientes: false, gestionar_sat: false, ver_reportes: true, admin_sistema: false },
+interface RbacTeam {
+  id: string
+  name: string
+  label: string
+  active: boolean
 }
 
 // Empty user form
@@ -90,28 +67,61 @@ interface UserForm {
   company_id: string
   active: boolean
   permissions: Record<string, boolean>
+  // RBAC
+  rbac_role_ids: string[]
+  rbac_team_ids: string[]
 }
 
 function emptyUserForm(): UserForm {
   return {
     username: '', full_name: '', email: '', role: 'vendedor',
     gmail: '', whatsapp: '', phone: '', company_id: '', active: true,
-    permissions: { ...DEFAULT_ROLE_PERMISSIONS['vendedor'] },
+    permissions: {},
+    rbac_role_ids: [],
+    rbac_team_ids: [],
   }
+}
+
+const CATEGORY_LABELS: Record<string, string> = {
+  internal: 'Interno',
+  external_client: 'Cliente externo',
+  external_supplier: 'Proveedor externo',
+}
+
+const MODULE_LABELS: Record<string, string> = {
+  ventas: 'Ventas',
+  compras: 'Compras',
+  stock: 'Stock / Deposito',
+  finanzas: 'Finanzas',
+  admin: 'Administracion',
+  catalogo: 'Catalogo',
+  crm: 'CRM',
+  sat: 'SAT',
 }
 
 const tabs = [
   { id: 'users', label: 'Usuarios', icon: <Users size={16} /> },
+  { id: 'roles', label: 'Roles', icon: <Shield size={16} /> },
   { id: 'companies', label: 'Empresas', icon: <Building2 size={16} /> },
   { id: 'params', label: 'Parametros', icon: <Sliders size={16} /> },
   { id: 'warehouses', label: 'Almacenes', icon: <Warehouse size={16} /> },
   { id: 'audit', label: 'Auditoria', icon: <Activity size={16} /> },
-  { id: 'permissions', label: 'Permisos', icon: <Shield size={16} /> },
 ]
 
 export default function AdminPage() {
   const supabase = createClient()
   const { addToast } = useToast()
+
+  // ─── RBAC state ───
+  const [rbacRoles, setRbacRoles] = useState<RbacRole[]>([])
+  const [rbacPermissions, setRbacPermissions] = useState<RbacPermission[]>([])
+  const [rbacTeams, setRbacTeams] = useState<RbacTeam[]>([])
+  const [rolePermMap, setRolePermMap] = useState<Record<string, Set<string>>>({})
+  const [loadingRoles, setLoadingRoles] = useState(false)
+  const [savingRolePerms, setSavingRolePerms] = useState(false)
+  const [editingRole, setEditingRole] = useState<RbacRole | null>(null)
+  const [roleSearch, setRoleSearch] = useState('')
+  const [roleCategoryFilter, setRoleCategoryFilter] = useState('')
 
   // Users
   const [usersData, setUsersData] = useState<Row[]>([])
@@ -123,6 +133,9 @@ export default function AdminPage() {
   const [generatedPassword, setGeneratedPassword] = useState<string | null>(null)
   const [showPassword, setShowPassword] = useState(false)
   const [userSearch, setUserSearch] = useState('')
+  // User RBAC assignments
+  const [userRbacRoles, setUserRbacRoles] = useState<Record<string, string[]>>({})
+  const [userEffectivePerms, setUserEffectivePerms] = useState<string[]>([])
 
   // Companies
   const [companies, setCompanies] = useState<Row[]>([])
@@ -148,6 +161,44 @@ export default function AdminPage() {
   const [auditPage, setAuditPage] = useState(0)
   const AUDIT_PAGE_SIZE = 20
 
+  // ─── RBAC loaders ───
+  const loadRbacData = useCallback(async () => {
+    setLoadingRoles(true)
+    const [rolesRes, permsRes, teamsRes] = await Promise.all([
+      supabase.from('tt_roles').select('*').order('category').order('label'),
+      supabase.from('tt_permissions').select('*').order('module').order('label'),
+      supabase.from('tt_teams').select('*').order('label'),
+    ])
+    setRbacRoles((rolesRes.data || []) as RbacRole[])
+    setRbacPermissions((permsRes.data || []) as RbacPermission[])
+    setRbacTeams((teamsRes.data || []) as RbacTeam[])
+
+    // Load role->permission map
+    const { data: rp } = await supabase.from('tt_role_permissions').select('role_id, permission_id')
+    const map: Record<string, Set<string>> = {}
+    ;(rp || []).forEach((row: Record<string, unknown>) => {
+      const roleId = row.role_id as string
+      const permId = row.permission_id as string
+      if (!map[roleId]) map[roleId] = new Set()
+      map[roleId].add(permId)
+    })
+    setRolePermMap(map)
+    setLoadingRoles(false)
+  }, [supabase])
+
+  // Load all user RBAC role assignments
+  const loadUserRbacAssignments = useCallback(async () => {
+    const { data } = await supabase.from('tt_user_roles').select('user_id, role_id')
+    const map: Record<string, string[]> = {}
+    ;(data || []).forEach((row: Record<string, unknown>) => {
+      const uid = row.user_id as string
+      const rid = row.role_id as string
+      if (!map[uid]) map[uid] = []
+      map[uid].push(rid)
+    })
+    setUserRbacRoles(map)
+  }, [supabase])
+
   const loadUsers = useCallback(async () => {
     setLoadingUsers(true)
     const { data } = await supabase.from('tt_users').select('*').order('full_name')
@@ -155,17 +206,32 @@ export default function AdminPage() {
     setLoadingUsers(false)
   }, [supabase])
 
+  // Compute effective permissions for a user based on their role IDs
+  const computeEffectivePerms = useCallback((roleIds: string[]) => {
+    const permIds = new Set<string>()
+    roleIds.forEach(rid => {
+      const rp = rolePermMap[rid]
+      if (rp) rp.forEach(pid => permIds.add(pid))
+    })
+    const permNames = rbacPermissions
+      .filter(p => permIds.has(p.id))
+      .map(p => p.name)
+    return permNames
+  }, [rolePermMap, rbacPermissions])
+
   const openNewUser = () => {
     setEditingUserId(null)
     setUserForm(emptyUserForm())
     setGeneratedPassword(null)
     setShowPassword(false)
+    setUserEffectivePerms([])
     setShowUserModal(true)
   }
 
   const openEditUser = (u: Row) => {
-    setEditingUserId(u.id as string)
-    const perms = (u.permissions && typeof u.permissions === 'object') ? u.permissions as Record<string, boolean> : {}
+    const uid = u.id as string
+    setEditingUserId(uid)
+    const currentRbacRoleIds = userRbacRoles[uid] || []
     setUserForm({
       username: (u.username as string) || '',
       full_name: (u.full_name as string) || '',
@@ -176,26 +242,24 @@ export default function AdminPage() {
       phone: (u.phone as string) || '',
       company_id: (u.company_id as string) || '',
       active: u.active !== false,
-      permissions: { ...DEFAULT_ROLE_PERMISSIONS[(u.role as string) || 'viewer'], ...perms },
+      permissions: {},
+      rbac_role_ids: currentRbacRoleIds,
+      rbac_team_ids: [],
     })
+    setUserEffectivePerms(computeEffectivePerms(currentRbacRoleIds))
     setGeneratedPassword(null)
     setShowPassword(false)
     setShowUserModal(true)
   }
 
-  const handleRoleChange = (role: string) => {
-    setUserForm(prev => ({
-      ...prev,
-      role,
-      permissions: { ...DEFAULT_ROLE_PERMISSIONS[role] || {} },
-    }))
-  }
-
-  const toggleUserPermission = (key: string) => {
-    setUserForm(prev => ({
-      ...prev,
-      permissions: { ...prev.permissions, [key]: !prev.permissions[key] },
-    }))
+  const toggleUserRbacRole = (roleId: string) => {
+    setUserForm(prev => {
+      const newIds = prev.rbac_role_ids.includes(roleId)
+        ? prev.rbac_role_ids.filter(id => id !== roleId)
+        : [...prev.rbac_role_ids, roleId]
+      setUserEffectivePerms(computeEffectivePerms(newIds))
+      return { ...prev, rbac_role_ids: newIds }
+    })
   }
 
   const saveUser = async () => {
@@ -216,9 +280,17 @@ export default function AdminPage() {
         if (!res.ok) {
           addToast({ type: 'error', title: 'Error', message: result.error })
         } else {
+          // Save RBAC role assignments
+          await supabase.from('tt_user_roles').delete().eq('user_id', editingUserId)
+          if (userForm.rbac_role_ids.length > 0) {
+            await supabase.from('tt_user_roles').insert(
+              userForm.rbac_role_ids.map(rid => ({ user_id: editingUserId, role_id: rid }))
+            )
+          }
           addToast({ type: 'success', title: 'Usuario actualizado' })
           setShowUserModal(false)
           loadUsers()
+          loadUserRbacAssignments()
         }
       } else {
         // Create new user
@@ -231,9 +303,16 @@ export default function AdminPage() {
         if (!res.ok) {
           addToast({ type: 'error', title: 'Error', message: result.error })
         } else {
+          // Assign RBAC roles to new user
+          if (result.user_id && userForm.rbac_role_ids.length > 0) {
+            await supabase.from('tt_user_roles').insert(
+              userForm.rbac_role_ids.map(rid => ({ user_id: result.user_id, role_id: rid }))
+            )
+          }
           setGeneratedPassword(result.generated_password || null)
           addToast({ type: 'success', title: 'Usuario creado correctamente' })
           loadUsers()
+          loadUserRbacAssignments()
         }
       }
     } catch (err) {
@@ -268,6 +347,42 @@ export default function AdminPage() {
     )
   })
 
+  // ─── Role permission editing ───
+  const toggleRolePerm = (roleId: string, permId: string) => {
+    setRolePermMap(prev => {
+      const newMap = { ...prev }
+      const set = new Set(newMap[roleId] || [])
+      if (set.has(permId)) {
+        set.delete(permId)
+      } else {
+        set.add(permId)
+      }
+      newMap[roleId] = set
+      return newMap
+    })
+  }
+
+  const saveRolePermissions = async (roleId: string) => {
+    setSavingRolePerms(true)
+    try {
+      // Delete existing
+      await supabase.from('tt_role_permissions').delete().eq('role_id', roleId)
+      // Insert new
+      const permIds = Array.from(rolePermMap[roleId] || [])
+      if (permIds.length > 0) {
+        await supabase.from('tt_role_permissions').insert(
+          permIds.map(pid => ({ role_id: roleId, permission_id: pid }))
+        )
+      }
+      addToast({ type: 'success', title: 'Permisos del rol guardados' })
+    } catch {
+      addToast({ type: 'error', title: 'Error al guardar permisos' })
+    } finally {
+      setSavingRolePerms(false)
+    }
+  }
+
+  // ─── Other loaders ───
   const loadCompanies = useCallback(async () => {
     setLoadingCompanies(true)
     const { data } = await supabase.from('tt_companies').select('*').order('name')
@@ -307,48 +422,16 @@ export default function AdminPage() {
     setLoadingAudit(false)
   }, [supabase, auditPage, auditEntityFilter])
 
-  // Permissions
-  const [permMatrix, setPermMatrix] = useState<Record<string, Record<string, boolean>>>(DEFAULT_MATRIX)
-  const [savingPerms, setSavingPerms] = useState(false)
-
-  const togglePerm = (role: string, perm: string) => {
-    setPermMatrix(prev => ({
-      ...prev,
-      [role]: { ...prev[role], [perm]: !prev[role]?.[perm] }
-    }))
-  }
-
-  const savePermissions = async () => {
-    setSavingPerms(true)
-    // Save to system params as JSON
-    await supabase.from('tt_system_params').upsert({
-      key: 'role_permissions',
-      value: JSON.stringify(permMatrix),
-      description: 'Matriz de permisos por rol',
-    }, { onConflict: 'key' })
-    addToast({ type: 'success', title: 'Permisos guardados' })
-    setSavingPerms(false)
-  }
-
-  const loadPermissions = useCallback(async () => {
-    const { data } = await supabase.from('tt_system_params').select('value').eq('key', 'role_permissions').single()
-    if (data?.value) {
-      try { setPermMatrix(JSON.parse(data.value as string)) } catch { /* keep defaults */ }
-    }
-  }, [supabase])
-
   const handleTabChange = (tab: string) => {
-    if (tab === 'users') { loadUsers(); loadCompanies() }
+    if (tab === 'users') { loadUsers(); loadCompanies(); loadRbacData(); loadUserRbacAssignments() }
+    if (tab === 'roles') loadRbacData()
     if (tab === 'companies') loadCompanies()
     if (tab === 'params') loadParams()
     if (tab === 'warehouses') loadWarehouses()
     if (tab === 'audit') loadAudit()
-    if (tab === 'permissions') loadPermissions()
   }
 
-  useEffect(() => { loadUsers(); loadCompanies() }, [loadUsers, loadCompanies])
-
-  // saveUserRole removed - replaced by full user management modal
+  useEffect(() => { loadUsers(); loadCompanies(); loadRbacData(); loadUserRbacAssignments() }, [loadUsers, loadCompanies, loadRbacData, loadUserRbacAssignments])
 
   const openEditCompany = (c: Row) => {
     setEditCompany(c)
@@ -383,23 +466,49 @@ export default function AdminPage() {
     for (const [key, value] of Object.entries(paramEdits)) {
       await supabase.from('tt_system_params').update({ value }).eq('key', key)
     }
-    addToast({ type: 'success', title: 'Parámetros guardados' })
+    addToast({ type: 'success', title: 'Parametros guardados' })
   }
 
   const addWarehouse = async () => {
     if (!newWarehouse.name.trim()) return
     await supabase.from('tt_warehouses').insert({ name: newWarehouse.name, city: newWarehouse.location || null, active: true })
-    addToast({ type: 'success', title: 'Almacén creado' })
+    addToast({ type: 'success', title: 'Almacen creado' })
     setShowAddWarehouse(false)
     setNewWarehouse({ name: '', location: '' })
     loadWarehouses()
   }
 
+  // Helper: get user's RBAC role labels
+  const getUserRoleLabels = (userId: string): string[] => {
+    const rids = userRbacRoles[userId] || []
+    return rids.map(rid => {
+      const role = rbacRoles.find(r => r.id === rid)
+      return role?.label || ''
+    }).filter(Boolean)
+  }
+
+  // Filtered roles for the Roles tab
+  const filteredRoles = rbacRoles.filter(r => {
+    if (roleCategoryFilter && r.category !== roleCategoryFilter) return false
+    if (roleSearch) {
+      const s = roleSearch.toLowerCase()
+      return r.label.toLowerCase().includes(s) || r.name.toLowerCase().includes(s)
+    }
+    return true
+  })
+
+  // Group permissions by module
+  const permsByModule = rbacPermissions.reduce<Record<string, RbacPermission[]>>((acc, p) => {
+    if (!acc[p.module]) acc[p.module] = []
+    acc[p.module].push(p)
+    return acc
+  }, {})
+
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-[#F0F2F5]">Administración</h1>
-        <p className="text-sm text-[#6B7280] mt-1">Configuracion del sistema, usuarios y auditoria</p>
+        <h1 className="text-2xl font-bold text-[#F0F2F5]">Administracion</h1>
+        <p className="text-sm text-[#6B7280] mt-1">Configuracion del sistema, usuarios, roles y auditoria</p>
       </div>
 
       <Suspense fallback={<div className="flex justify-center py-10"><Loader2 className="animate-spin text-[#FF6600]" size={32} /></div>}>
@@ -444,7 +553,7 @@ export default function AdminPage() {
                             <TableHead>Usuario</TableHead>
                             <TableHead>Username</TableHead>
                             <TableHead>Email</TableHead>
-                            <TableHead>Rol</TableHead>
+                            <TableHead>Roles RBAC</TableHead>
                             <TableHead>Estado</TableHead>
                             <TableHead>Ultima actualizacion</TableHead>
                             <TableHead>Acciones</TableHead>
@@ -466,9 +575,15 @@ export default function AdminPage() {
                               <TableCell className="text-sm text-[#9CA3AF]">{(u.username as string) || '-'}</TableCell>
                               <TableCell className="text-sm text-[#9CA3AF]">{(u.email as string) || '-'}</TableCell>
                               <TableCell>
-                                <Badge variant={(u.role as string) === 'admin' ? 'orange' : (u.role as string) === 'vendedor' ? 'info' : (u.role as string) === 'tecnico' ? 'warning' : 'default'}>
-                                  {ROLE_LABELS[(u.role as string)] || (u.role as string) || 'viewer'}
-                                </Badge>
+                                <div className="flex flex-wrap gap-1">
+                                  {getUserRoleLabels(u.id as string).length > 0 ? (
+                                    getUserRoleLabels(u.id as string).map(label => (
+                                      <Badge key={label} variant="orange" size="sm">{label}</Badge>
+                                    ))
+                                  ) : (
+                                    <Badge variant="default" size="sm">Sin roles</Badge>
+                                  )}
+                                </div>
                               </TableCell>
                               <TableCell>
                                 <Badge variant={u.active !== false ? 'success' : 'danger'}>
@@ -498,6 +613,65 @@ export default function AdminPage() {
                   )}
                 </CardContent>
               </Card>
+            )}
+
+            {/* ═══ ROLES ═══ */}
+            {activeTab === 'roles' && (
+              <div className="space-y-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Roles del sistema</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex gap-3 flex-wrap">
+                      <SearchBar placeholder="Buscar rol..." value={roleSearch} onChange={setRoleSearch} className="flex-1 min-w-[200px]" />
+                      <Select
+                        options={[
+                          { value: '', label: 'Todas las categorias' },
+                          { value: 'internal', label: 'Interno' },
+                          { value: 'external_client', label: 'Cliente externo' },
+                          { value: 'external_supplier', label: 'Proveedor externo' },
+                        ]}
+                        value={roleCategoryFilter}
+                        onChange={(e) => setRoleCategoryFilter(e.target.value)}
+                        className="w-52"
+                      />
+                    </div>
+
+                    {loadingRoles ? (
+                      <div className="flex justify-center py-10"><Loader2 className="animate-spin text-[#FF6600]" size={28} /></div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {filteredRoles.map(role => {
+                          const permCount = rolePermMap[role.id]?.size || 0
+                          return (
+                            <div
+                              key={role.id}
+                              onClick={() => setEditingRole(role)}
+                              className="p-4 rounded-xl bg-[#0F1218] border border-[#1E2330] hover:border-[#FF6600]/40 cursor-pointer transition-all group"
+                            >
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2">
+                                  <ShieldCheck size={16} className="text-[#FF6600]" />
+                                  <h3 className="text-sm font-semibold text-[#F0F2F5]">{role.label}</h3>
+                                </div>
+                                <Badge variant={role.category === 'internal' ? 'info' : role.category === 'external_client' ? 'warning' : 'success'} size="sm">
+                                  {CATEGORY_LABELS[role.category] || role.category}
+                                </Badge>
+                              </div>
+                              <p className="text-[11px] text-[#6B7280] mb-2 font-mono">{role.name}</p>
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs text-[#4B5563]">{permCount} permisos</span>
+                                <Edit size={14} className="text-[#4B5563] group-hover:text-[#FF6600] transition-colors" />
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
             )}
 
             {/* ═══ COMPANIES ═══ */}
@@ -539,13 +713,13 @@ export default function AdminPage() {
             {activeTab === 'params' && (
               <Card>
                 <CardHeader>
-                  <CardTitle>Parámetros del sistema</CardTitle>
+                  <CardTitle>Parametros del sistema</CardTitle>
                 </CardHeader>
                 <CardContent>
                   {loadingParams ? (
                     <div className="flex justify-center py-10"><Loader2 className="animate-spin text-[#FF6600]" size={28} /></div>
                   ) : params.length === 0 ? (
-                    <p className="text-sm text-[#6B7280] text-center py-10">No hay parámetros configurados</p>
+                    <p className="text-sm text-[#6B7280] text-center py-10">No hay parametros configurados</p>
                   ) : (
                     <div className="space-y-4">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -582,7 +756,7 @@ export default function AdminPage() {
                       <TableHeader>
                         <TableRow>
                           <TableHead>Nombre</TableHead>
-                          <TableHead>Ubicación</TableHead>
+                          <TableHead>Ubicacion</TableHead>
                           <TableHead>Creado</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -597,55 +771,6 @@ export default function AdminPage() {
                       </TableBody>
                     </Table>
                   )}
-                </CardContent>
-              </Card>
-            )}
-
-            {/* ═══ PERMISSIONS ═══ */}
-            {activeTab === 'permissions' && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Permisos por rol</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="border-b border-[#1E2330]">
-                          <th className="text-left text-sm font-medium text-[#9CA3AF] p-3">Permiso</th>
-                          {ROLES.map(role => (
-                            <th key={role} className="text-center text-sm font-medium text-[#9CA3AF] p-3 capitalize">{role}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {PERMISSIONS.map(perm => (
-                          <tr key={perm.key} className="border-b border-[#1E2330]/50 hover:bg-[#0F1218]">
-                            <td className="text-sm text-[#F0F2F5] p-3">{perm.label}</td>
-                            {ROLES.map(role => (
-                              <td key={role} className="text-center p-3">
-                                <button
-                                  onClick={() => togglePerm(role, perm.key)}
-                                  className={`w-6 h-6 rounded border-2 transition-all ${
-                                    permMatrix[role]?.[perm.key]
-                                      ? 'bg-[#FF6600] border-[#FF6600]'
-                                      : 'bg-transparent border-[#2A3040] hover:border-[#4B5563]'
-                                  }`}
-                                >
-                                  {permMatrix[role]?.[perm.key] && (
-                                    <svg className="w-4 h-4 text-white mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
-                                  )}
-                                </button>
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="flex justify-end mt-4">
-                    <Button onClick={savePermissions} loading={savingPerms}><Save size={14} /> Guardar permisos</Button>
-                  </div>
                 </CardContent>
               </Card>
             )}
@@ -671,7 +796,7 @@ export default function AdminPage() {
                     <Select
                       options={[
                         { value: '', label: 'Todas las entidades' },
-                        { value: 'quote', label: 'Cotización' },
+                        { value: 'quote', label: 'Cotizacion' },
                         { value: 'sales_order', label: 'Pedido venta' },
                         { value: 'purchase_order', label: 'OC' },
                         { value: 'delivery_note', label: 'Remito' },
@@ -697,7 +822,7 @@ export default function AdminPage() {
                         <TableRow>
                           <TableHead>Fecha</TableHead>
                           <TableHead>Entidad</TableHead>
-                          <TableHead>Acción</TableHead>
+                          <TableHead>Accion</TableHead>
                           <TableHead>Detalle</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -718,7 +843,7 @@ export default function AdminPage() {
                     <Button variant="ghost" size="sm" disabled={auditPage === 0} onClick={() => { setAuditPage(auditPage - 1); loadAudit() }}>
                       <ChevronLeft size={14} /> Anterior
                     </Button>
-                    <span className="text-xs text-[#6B7280]">Página {auditPage + 1}</span>
+                    <span className="text-xs text-[#6B7280]">Pagina {auditPage + 1}</span>
                     <Button variant="ghost" size="sm" disabled={auditLogs.length < AUDIT_PAGE_SIZE} onClick={() => { setAuditPage(auditPage + 1); loadAudit() }}>
                       Siguiente <ChevronRight size={14} />
                     </Button>
@@ -789,10 +914,10 @@ export default function AdminPage() {
                 placeholder="juan@torquetools.es"
               />
               <Select
-                label="Rol"
-                options={ROLES.map(r => ({ value: r, label: ROLE_LABELS[r] || r }))}
+                label="Rol legacy"
+                options={LEGACY_ROLES.map(r => ({ value: r, label: LEGACY_ROLE_LABELS[r] || r }))}
                 value={userForm.role}
-                onChange={(e) => handleRoleChange(e.target.value)}
+                onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}
               />
             </div>
 
@@ -845,39 +970,71 @@ export default function AdminPage() {
               </div>
             </div>
 
-            {/* Permissions */}
+            {/* RBAC Roles */}
             <div>
               <p className="text-xs font-medium text-[#6B7280] uppercase tracking-wider mb-3">
-                Permisos granulares
+                Roles RBAC
                 <span className="text-[10px] font-normal normal-case ml-2 text-[#4B5563]">
-                  (se cargan los defaults del rol seleccionado)
+                  (los permisos se derivan automaticamente de los roles asignados)
                 </span>
               </p>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                {ALL_PERMISSIONS.map(p => (
-                  <button
-                    key={p.key}
-                    onClick={() => toggleUserPermission(p.key)}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs transition-all ${
-                      userForm.permissions[p.key]
-                        ? 'bg-[#FF6600]/10 border-[#FF6600]/30 text-[#FF6600]'
-                        : 'bg-[#0F1218] border-[#1E2330] text-[#6B7280] hover:border-[#2A3040]'
-                    }`}
-                  >
-                    <div className={`w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-all ${
-                      userForm.permissions[p.key]
-                        ? 'bg-[#FF6600] border-[#FF6600]'
-                        : 'border-[#2A3040]'
-                    }`}>
-                      {userForm.permissions[p.key] && (
-                        <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
-                      )}
+              {(['internal', 'external_client', 'external_supplier'] as const).map(category => {
+                const categoryRoles = rbacRoles.filter(r => r.category === category)
+                if (categoryRoles.length === 0) return null
+                return (
+                  <div key={category} className="mb-3">
+                    <p className="text-[10px] font-semibold text-[#4B5563] uppercase mb-2">{CATEGORY_LABELS[category]}</p>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                      {categoryRoles.map(role => {
+                        const isSelected = userForm.rbac_role_ids.includes(role.id)
+                        return (
+                          <button
+                            key={role.id}
+                            onClick={() => toggleUserRbacRole(role.id)}
+                            className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs transition-all ${
+                              isSelected
+                                ? 'bg-[#FF6600]/10 border-[#FF6600]/30 text-[#FF6600]'
+                                : 'bg-[#0F1218] border-[#1E2330] text-[#6B7280] hover:border-[#2A3040]'
+                            }`}
+                          >
+                            <div className={`w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-all ${
+                              isSelected
+                                ? 'bg-[#FF6600] border-[#FF6600]'
+                                : 'border-[#2A3040]'
+                            }`}>
+                              {isSelected && (
+                                <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+                              )}
+                            </div>
+                            <span className="truncate">{role.label}</span>
+                          </button>
+                        )
+                      })}
                     </div>
-                    <span className="truncate">{p.label}</span>
-                  </button>
-                ))}
-              </div>
+                  </div>
+                )
+              })}
             </div>
+
+            {/* Effective permissions (read-only) */}
+            {userEffectivePerms.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-[#6B7280] uppercase tracking-wider mb-3">
+                  Permisos efectivos
+                  <span className="text-[10px] font-normal normal-case ml-2 text-[#4B5563]">(derivados de los roles seleccionados)</span>
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {userEffectivePerms.map(perm => {
+                    const permObj = rbacPermissions.find(p => p.name === perm)
+                    return (
+                      <Badge key={perm} variant="default" size="sm">
+                        {permObj?.label || perm}
+                      </Badge>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* Actions */}
             <div className="flex justify-end gap-3 pt-4 border-t border-[#1E2330]">
@@ -885,6 +1042,70 @@ export default function AdminPage() {
               <Button onClick={saveUser} loading={savingUser}>
                 <Save size={14} /> {editingUserId ? 'Guardar cambios' : 'Crear usuario'}
               </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* ─── EDIT ROLE PERMISSIONS MODAL ─── */}
+      <Modal
+        isOpen={!!editingRole}
+        onClose={() => setEditingRole(null)}
+        title={editingRole ? `Permisos: ${editingRole.label}` : ''}
+        size="xl"
+      >
+        {editingRole && (
+          <div className="space-y-5">
+            <div className="flex items-center gap-3">
+              <Badge variant={editingRole.category === 'internal' ? 'info' : editingRole.category === 'external_client' ? 'warning' : 'success'}>
+                {CATEGORY_LABELS[editingRole.category] || editingRole.category}
+              </Badge>
+              <span className="text-xs text-[#6B7280] font-mono">{editingRole.name}</span>
+            </div>
+
+            {Object.entries(permsByModule).map(([mod, perms]) => (
+              <div key={mod}>
+                <p className="text-xs font-semibold text-[#FF6600] uppercase tracking-wider mb-2">
+                  {MODULE_LABELS[mod] || mod}
+                </p>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                  {perms.map(perm => {
+                    const isGranted = rolePermMap[editingRole.id]?.has(perm.id) || false
+                    return (
+                      <button
+                        key={perm.id}
+                        onClick={() => toggleRolePerm(editingRole.id, perm.id)}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs transition-all ${
+                          isGranted
+                            ? 'bg-[#FF6600]/10 border-[#FF6600]/30 text-[#FF6600]'
+                            : 'bg-[#0F1218] border-[#1E2330] text-[#6B7280] hover:border-[#2A3040]'
+                        }`}
+                      >
+                        <div className={`w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-all ${
+                          isGranted ? 'bg-[#FF6600] border-[#FF6600]' : 'border-[#2A3040]'
+                        }`}>
+                          {isGranted && (
+                            <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+                          )}
+                        </div>
+                        <span className="truncate">{perm.label}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+
+            <div className="flex justify-between pt-4 border-t border-[#1E2330]">
+              <span className="text-xs text-[#4B5563]">
+                {rolePermMap[editingRole.id]?.size || 0} permisos asignados
+              </span>
+              <div className="flex gap-3">
+                <Button variant="secondary" onClick={() => setEditingRole(null)}>Cerrar</Button>
+                <Button onClick={() => saveRolePermissions(editingRole.id)} loading={savingRolePerms}>
+                  <Save size={14} /> Guardar permisos
+                </Button>
+              </div>
             </div>
           </div>
         )}
@@ -901,7 +1122,7 @@ export default function AdminPage() {
               <Input label="Tasa IVA (%)" type="number" value={companyForm.default_tax_rate || ''} onChange={(e) => setCompanyForm({ ...companyForm, default_tax_rate: e.target.value })} />
               <Input label="Margen por defecto (%)" type="number" value={companyForm.default_margin || ''} onChange={(e) => setCompanyForm({ ...companyForm, default_margin: e.target.value })} />
             </div>
-            <Input label="Dirección" value={companyForm.address || ''} onChange={(e) => setCompanyForm({ ...companyForm, address: e.target.value })} />
+            <Input label="Direccion" value={companyForm.address || ''} onChange={(e) => setCompanyForm({ ...companyForm, address: e.target.value })} />
             <div>
               <label className="block text-sm font-medium text-[#9CA3AF] mb-1.5">IBAN</label>
               <textarea
@@ -919,10 +1140,10 @@ export default function AdminPage() {
       </Modal>
 
       {/* ─── ADD WAREHOUSE ─── */}
-      <Modal isOpen={showAddWarehouse} onClose={() => setShowAddWarehouse(false)} title="Nuevo almacén" size="sm">
+      <Modal isOpen={showAddWarehouse} onClose={() => setShowAddWarehouse(false)} title="Nuevo almacen" size="sm">
         <div className="space-y-4">
-          <Input label="Nombre" value={newWarehouse.name} onChange={(e) => setNewWarehouse({ ...newWarehouse, name: e.target.value })} placeholder="Almacén principal" />
-          <Input label="Ubicación" value={newWarehouse.location} onChange={(e) => setNewWarehouse({ ...newWarehouse, location: e.target.value })} placeholder="Madrid, España" />
+          <Input label="Nombre" value={newWarehouse.name} onChange={(e) => setNewWarehouse({ ...newWarehouse, name: e.target.value })} placeholder="Almacen principal" />
+          <Input label="Ubicacion" value={newWarehouse.location} onChange={(e) => setNewWarehouse({ ...newWarehouse, location: e.target.value })} placeholder="Madrid, Espana" />
           <div className="flex justify-end gap-3">
             <Button variant="secondary" onClick={() => setShowAddWarehouse(false)}>Cancelar</Button>
             <Button onClick={addWarehouse}><Plus size={14} /> Crear</Button>
