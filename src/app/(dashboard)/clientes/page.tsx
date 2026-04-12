@@ -16,6 +16,7 @@ import { createClient } from '@/lib/supabase/client'
 import { formatCurrency, formatDate, formatRelative, getInitials } from '@/lib/utils'
 import type { Client, ClientContact, GroupedCompany, ActivityLog } from '@/types'
 import { ExportButton } from '@/components/ui/export-button'
+import { ImportButton } from '@/components/ui/import-button'
 import {
   Users, Plus, Phone, Mail, MessageSquare, MapPin,
   Building2, FileText, Edit3, Save, X, Loader2, UserPlus, Contact,
@@ -869,6 +870,22 @@ function ClientesTab() {
             { key: 'payment_terms', label: 'Condiciones Pago' },
             { key: 'contactCount', label: 'Contactos' },
           ]}
+        />
+        <ImportButton
+          targetTable="tt_clients"
+          fields={[
+            { key: 'legal_name', label: 'Razon social', required: true },
+            { key: 'name', label: 'Contacto' },
+            { key: 'tax_id', label: 'CIF/CUIT' },
+            { key: 'email', label: 'Email' },
+            { key: 'phone', label: 'Telefono' },
+            { key: 'address', label: 'Direccion' },
+            { key: 'city', label: 'Ciudad' },
+            { key: 'country', label: 'Pais' },
+            { key: 'category', label: 'Categoria' },
+            { key: 'payment_terms', label: 'Condiciones pago' },
+          ]}
+          permission="edit_clients"
         />
         <Button variant="primary" onClick={() => setShowNew(true)}><Plus size={16} /> Nueva Empresa</Button>
       </div>

@@ -13,6 +13,7 @@ import { KPICard } from '@/components/ui/kpi-card'
 import { Tabs } from '@/components/ui/tabs'
 import { useToast } from '@/components/ui/toast'
 import { ExportButton } from '@/components/ui/export-button'
+import { ImportButton } from '@/components/ui/import-button'
 import { formatCurrency, formatDate, formatRelative, getInitials } from '@/lib/utils'
 import { DocumentDetailLayout, type WorkflowStep } from '@/components/workflow/document-detail-layout'
 import { DocumentItemsTree, type DocumentItem } from '@/components/workflow/document-items-tree'
@@ -845,6 +846,19 @@ function ProveedoresTab() {
           { key: 'email', label: 'Email' }, { key: 'phone', label: 'Telefono' }, { key: 'country', label: 'Pais' },
           { key: 'city', label: 'Ciudad' }, { key: 'category', label: 'Categoria' }, { key: 'payment_terms', label: 'Condiciones Pago' },
         ]} />
+        <ImportButton
+          targetTable="tt_suppliers"
+          fields={[
+            { key: 'name', label: 'Nombre', required: true },
+            { key: 'legal_name', label: 'Razon social' },
+            { key: 'tax_id', label: 'CIF/CUIT' },
+            { key: 'email', label: 'Email' },
+            { key: 'phone', label: 'Telefono' },
+            { key: 'country', label: 'Pais' },
+            { key: 'category', label: 'Categoria' },
+          ]}
+          permission="manage_suppliers"
+        />
         <Button variant="primary" onClick={() => setShowNew(true)}><Plus size={16} /> Nuevo Proveedor</Button>
       </div>
       <div className="flex flex-col sm:flex-row gap-3">

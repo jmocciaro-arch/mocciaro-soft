@@ -14,6 +14,7 @@ import { Tabs } from '@/components/ui/tabs'
 import { createClient } from '@/lib/supabase/client'
 import { formatCurrency } from '@/lib/utils'
 import { ExportButton } from '@/components/ui/export-button'
+import { ImportButton } from '@/components/ui/import-button'
 import {
   Package, Grid3X3, List, Loader2, ShoppingCart, Tag, Award, DollarSign,
   ChevronDown, ChevronRight, X, RotateCcw, Plus, Search, ArrowUpDown,
@@ -679,6 +680,28 @@ function ProductosTab() {
                   { key: 'torque_max', label: 'Torque Max' },
                   { key: 'rpm', label: 'RPM' },
                 ]}
+              />
+              <ImportButton
+                targetTable="tt_products"
+                fields={[
+                  { key: 'sku', label: 'SKU', required: true },
+                  { key: 'name', label: 'Nombre', required: true },
+                  { key: 'brand', label: 'Marca' },
+                  { key: 'category', label: 'Categoria' },
+                  { key: 'subcategory', label: 'Subcategoria' },
+                  { key: 'price_eur', label: 'Precio EUR', type: 'number' },
+                  { key: 'cost_eur', label: 'Costo EUR', type: 'number' },
+                  { key: 'price_usd', label: 'Precio USD', type: 'number' },
+                  { key: 'image_url', label: 'URL Imagen' },
+                  { key: 'description', label: 'Descripcion' },
+                  { key: 'origin', label: 'Origen' },
+                  { key: 'encastre', label: 'Encastre' },
+                  { key: 'torque_min', label: 'Torque Min', type: 'number' },
+                  { key: 'torque_max', label: 'Torque Max', type: 'number' },
+                  { key: 'rpm', label: 'RPM', type: 'number' },
+                  { key: 'weight_kg', label: 'Peso (kg)', type: 'number' },
+                ]}
+                permission="edit_products"
               />
             </div>
           </div>

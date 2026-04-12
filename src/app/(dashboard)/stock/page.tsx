@@ -16,6 +16,7 @@ import { createClient } from '@/lib/supabase/client'
 import { formatDate, formatCurrency } from '@/lib/utils'
 import type { Warehouse } from '@/types'
 import { ExportButton } from '@/components/ui/export-button'
+import { ImportButton } from '@/components/ui/import-button'
 import {
   Package, AlertTriangle, XCircle, CheckCircle, Loader2,
   ArrowLeftRight, Warehouse as WarehouseIcon, Activity, TrendingUp
@@ -115,6 +116,16 @@ function InventarioTab() {
                 { key: 'reserved', label: 'Reservado' },
                 { key: 'min_quantity', label: 'Stock Minimo' },
               ]}
+            />
+            <ImportButton
+              targetTable="tt_stock"
+              fields={[
+                { key: 'product_id', label: 'Producto ID' },
+                { key: 'warehouse_id', label: 'Almacen ID' },
+                { key: 'quantity', label: 'Cantidad', required: true, type: 'number' },
+                { key: 'min_quantity', label: 'Stock minimo', type: 'number' },
+              ]}
+              permission="manage_stock"
             />
           </div>
         </div>
