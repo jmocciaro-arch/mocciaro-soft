@@ -859,6 +859,7 @@ function ClientesTab() {
         <ExportButton
           data={companies as unknown as Record<string, unknown>[]}
           filename="clientes_torquetools"
+          targetTable="tt_clients"
           columns={[
             { key: 'legal_name', label: 'Razon Social' },
             { key: 'tax_id', label: 'CUIT/CIF' },
@@ -876,14 +877,21 @@ function ClientesTab() {
           fields={[
             { key: 'legal_name', label: 'Razon social', required: true },
             { key: 'name', label: 'Contacto' },
+            { key: 'stelorder_id', label: 'Referencia StelOrder' },
             { key: 'tax_id', label: 'CIF/CUIT' },
             { key: 'email', label: 'Email' },
             { key: 'phone', label: 'Telefono' },
             { key: 'address', label: 'Direccion' },
             { key: 'city', label: 'Ciudad' },
+            { key: 'state', label: 'Provincia' },
+            { key: 'postal_code', label: 'Codigo postal' },
             { key: 'country', label: 'Pais' },
             { key: 'category', label: 'Categoria' },
             { key: 'payment_terms', label: 'Condiciones pago' },
+            { key: 'notes', label: 'Observaciones' },
+            { key: 'whatsapp', label: 'Web/WhatsApp' },
+            { key: 'credit_limit', label: 'Descuento/Limite', type: 'number' },
+            { key: 'active', label: 'Activa', type: 'boolean' },
           ]}
           permission="edit_clients"
         />

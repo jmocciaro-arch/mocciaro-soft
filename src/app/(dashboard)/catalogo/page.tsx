@@ -667,6 +667,7 @@ function ProductosTab() {
               <ExportButton
                 data={products as unknown as Record<string, unknown>[]}
                 filename="productos_torquetools"
+                targetTable="tt_products"
                 columns={[
                   { key: 'sku', label: 'SKU' },
                   { key: 'name', label: 'Nombre' },

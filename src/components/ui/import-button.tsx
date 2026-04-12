@@ -1,11 +1,17 @@
 'use client'
 
 import { useState, useRef, useCallback } from 'react'
-import { Upload, FileText, AlertTriangle, CheckCircle, XCircle, Loader2, X, ArrowRight } from 'lucide-react'
-import { parseCSV, readFileAsText } from '@/lib/csv-parser'
+import { Upload, FileText, AlertTriangle, CheckCircle, XCircle, Loader2, X, ArrowRight, RefreshCw, FileSpreadsheet } from 'lucide-react'
+import { parseCSV, readFileAsText, parseXLSX, isXLSXFile } from '@/lib/csv-parser'
 import { createClient } from '@/lib/supabase/client'
 import { usePermissions } from '@/hooks/use-permissions'
 import { useToast } from '@/components/ui/toast'
+import {
+  detectStelOrderFormat,
+  UPSERT_KEYS,
+  expandDotNotation,
+  type StelOrderDetection,
+} from '@/lib/stelorder-mappings'
 
 // ═══════════════════════════════════════════════════════
 // TYPES
@@ -93,7 +99,7 @@ function validateValue(value: string, field: ImportField): { valid: boolean; par
     }
     case 'boolean': {
       const lower = value.toLowerCase()
-      if (['true', '1', 'si', 'yes', 'verdadero', 'v'].includes(lower)) return { valid: true, parsed: true }
+      if (['true', '1', 'si', 'yes', 'verdadero', 'v', 'sí'].includes(lower)) return { valid: true, parsed: true }
       if (['false', '0', 'no', 'falso', 'f'].includes(lower)) return { valid: true, parsed: false }
       return { valid: false, parsed: null }
     }
@@ -105,6 +111,39 @@ function validateValue(value: string, field: ImportField): { valid: boolean; par
     default:
       return { valid: true, parsed: value.trim() }
   }
+}
+
+/**
+ * Para StelOrder: validacion y parsing de tipos de forma mas permisiva.
+ * Los campos con dot notation (specs.stock) se parsean como number si son numericos.
+ */
+function validateStelOrderValue(value: string, fieldKey: string): { valid: boolean; parsed: unknown } {
+  if (!value || value.trim() === '') return { valid: true, parsed: null }
+
+  const trimmed = value.trim()
+
+  // Campos de precio/peso/stock son numericos
+  const numericFields = ['price_eur', 'cost_eur', 'weight_kg', 'credit_limit',
+    'specs.stock', 'specs.stock_min', 'specs.stock_max', 'specs.vat_sale',
+    'specs.min_sale_price', 'specs.price_list_1', 'specs.price_list_2',
+    'specs.price_list_3', 'specs.price_list_4', 'specs.price_list_5']
+
+  if (numericFields.includes(fieldKey)) {
+    const cleaned = trimmed.replace(/\s/g, '').replace(',', '.')
+    const num = Number(cleaned)
+    if (isNaN(num)) return { valid: true, parsed: trimmed } // No fallar, guardar como texto
+    return { valid: true, parsed: num }
+  }
+
+  // Campos booleanos
+  if (fieldKey === 'active' || fieldKey === 'surcharge') {
+    const lower = trimmed.toLowerCase()
+    if (['true', '1', 'si', 'yes', 'verdadero', 'v', 'sí'].includes(lower)) return { valid: true, parsed: true }
+    if (['false', '0', 'no', 'falso', 'f'].includes(lower)) return { valid: true, parsed: false }
+    return { valid: true, parsed: trimmed }
+  }
+
+  return { valid: true, parsed: trimmed }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -133,6 +172,13 @@ export function ImportButton({
   const [progress, setProgress] = useState(0)
   const [results, setResults] = useState<ImportResults | null>(null)
   const [fileName, setFileName] = useState('')
+  const [loadingFile, setLoadingFile] = useState(false)
+
+  // StelOrder detection
+  const [stelDetection, setStelDetection] = useState<StelOrderDetection | null>(null)
+
+  // UPSERT mode
+  const [upsertMode, setUpsertMode] = useState(true)
 
   // Permission check
   if (permission && !can(permission) && !can('import_data') && !isSuper) return null
@@ -147,21 +193,41 @@ export function ImportButton({
     setValidationErrors([])
     setProgress(0)
     setImporting(false)
+    setStelDetection(null)
+    setLoadingFile(true)
 
     const ext = file.name.split('.').pop()?.toLowerCase()
-    if (ext !== 'csv') {
-      addToast({ type: 'warning', title: 'Solo se aceptan archivos CSV. Guarda tu Excel como CSV antes de importar.' })
+    const isExcel = ext === 'xlsx' || ext === 'xls'
+    const isCSV = ext === 'csv'
+
+    if (!isExcel && !isCSV) {
+      addToast({ type: 'warning', title: 'Formato no soportado. Usa archivos CSV (.csv) o Excel (.xlsx).' })
       if (fileInputRef.current) fileInputRef.current.value = ''
+      setLoadingFile(false)
       return
     }
 
     try {
-      const text = await readFileAsText(file)
-      const { headers, rows } = parseCSV(text)
+      let headers: string[]
+      let rows: string[][]
+
+      if (isExcel) {
+        // Parsear XLSX con SheetJS
+        const parsed = await parseXLSX(file)
+        headers = parsed.headers
+        rows = parsed.rows
+      } else {
+        // Parsear CSV
+        const text = await readFileAsText(file)
+        const parsed = parseCSV(text)
+        headers = parsed.headers
+        rows = parsed.rows
+      }
 
       if (headers.length === 0 || rows.length === 0) {
         addToast({ type: 'error', title: 'El archivo esta vacio o no tiene datos validos' })
         if (fileInputRef.current) fileInputRef.current.value = ''
+        setLoadingFile(false)
         return
       }
 
@@ -169,27 +235,41 @@ export function ImportButton({
       setCsvRows(rows)
       setFileName(file.name)
 
-      // Auto-detect mapping
-      const autoMapping = autoDetectMapping(headers, fields)
-      setMapping(autoMapping)
+      // 1. Intentar auto-detectar formato StelOrder
+      const detection = detectStelOrderFormat(headers, targetTable)
+      setStelDetection(detection)
+
+      if (detection.isStelOrder && Object.keys(detection.mapping).length > 0) {
+        // Usar mapping de StelOrder
+        setMapping(detection.mapping)
+      } else {
+        // Auto-detect generico por nombre de columna
+        const autoMapping = autoDetectMapping(headers, fields)
+        setMapping(autoMapping)
+      }
 
       setShowModal(true)
-    } catch {
-      addToast({ type: 'error', title: 'Error al leer el archivo' })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Error al leer el archivo'
+      addToast({ type: 'error', title: msg })
     }
 
+    setLoadingFile(false)
     if (fileInputRef.current) fileInputRef.current.value = ''
-  }, [fields, addToast])
+  }, [fields, addToast, targetTable])
 
   // ─── Validate all rows ───
   const validateAll = useCallback((): string[] => {
     const errors: string[] = []
+    const isStel = stelDetection?.isStelOrder
 
-    // Check required fields are mapped
-    const mappedKeys = new Set(Object.values(mapping))
-    for (const field of fields) {
-      if (field.required && !mappedKeys.has(field.key)) {
-        errors.push(`El campo requerido "${field.label}" no esta mapeado a ninguna columna`)
+    if (!isStel) {
+      // Check required fields are mapped (solo en modo generico)
+      const mappedKeys = new Set(Object.values(mapping))
+      for (const field of fields) {
+        if (field.required && !mappedKeys.has(field.key)) {
+          errors.push(`El campo requerido "${field.label}" no esta mapeado a ninguna columna`)
+        }
       }
     }
 
@@ -204,15 +284,27 @@ export function ImportButton({
       for (const [colIdxStr, fieldKey] of Object.entries(mapping)) {
         const colIdx = Number(colIdxStr)
         const field = fields.find(f => f.key === fieldKey)
-        if (!field) continue
+        if (!field && !isStel) continue
 
         const value = row[colIdx] || ''
-        const { valid } = validateValue(value, field)
+        if (!value) continue
 
-        if (!valid) {
-          typeErrors++
-          if (typeErrors <= 5) {
-            errors.push(`Fila ${rowIdx + 2}: "${field.label}" tiene un valor invalido: "${value.substring(0, 30)}"`)
+        if (isStel) {
+          // StelOrder: validacion mas permisiva
+          const { valid } = validateStelOrderValue(value, fieldKey)
+          if (!valid) {
+            typeErrors++
+            if (typeErrors <= 5) {
+              errors.push(`Fila ${rowIdx + 2}: campo "${fieldKey}" tiene un valor invalido: "${value.substring(0, 30)}"`)
+            }
+          }
+        } else if (field) {
+          const { valid } = validateValue(value, field)
+          if (!valid) {
+            typeErrors++
+            if (typeErrors <= 5) {
+              errors.push(`Fila ${rowIdx + 2}: "${field.label}" tiene un valor invalido: "${value.substring(0, 30)}"`)
+            }
           }
         }
       }
@@ -223,9 +315,9 @@ export function ImportButton({
     }
 
     return errors
-  }, [mapping, csvRows, fields])
+  }, [mapping, csvRows, fields, stelDetection])
 
-  // ─── Import ───
+  // ─── Import with UPSERT support ───
   const handleImport = useCallback(async () => {
     const errors = validateAll()
     if (errors.length > 0) {
@@ -241,6 +333,8 @@ export function ImportButton({
     const importResults: ImportResults = { inserted: 0, updated: 0, skipped: 0, errors: [] }
     const BATCH_SIZE = 50
     const totalRows = csvRows.length
+    const isStel = stelDetection?.isStelOrder
+    const upsertKey = UPSERT_KEYS[targetTable]
 
     for (let i = 0; i < totalRows; i += BATCH_SIZE) {
       const batch = csvRows.slice(i, i + BATCH_SIZE)
@@ -253,34 +347,107 @@ export function ImportButton({
 
         for (const [colIdxStr, fieldKey] of Object.entries(mapping)) {
           const colIdx = Number(colIdxStr)
-          const field = fields.find(f => f.key === fieldKey)
-          if (!field) continue
-
           const rawValue = row[colIdx] || ''
-          const { valid, parsed } = validateValue(rawValue, field)
 
-          if (!valid && field.required) {
-            importResults.errors.push(`Fila ${i + bIdx + 2}: "${field.label}" invalido`)
-            importResults.skipped++
-            skipRow = true
-            break
-          }
+          if (isStel) {
+            // StelOrder: parsing permisivo
+            const { parsed } = validateStelOrderValue(rawValue, fieldKey)
+            if (parsed !== null) {
+              record[fieldKey] = parsed
+            }
+          } else {
+            const field = fields.find(f => f.key === fieldKey)
+            if (!field) continue
 
-          if (parsed !== null) {
-            record[fieldKey] = parsed
+            const { valid, parsed } = validateValue(rawValue, field)
+            if (!valid && field.required) {
+              importResults.errors.push(`Fila ${i + bIdx + 2}: "${field.label}" invalido`)
+              importResults.skipped++
+              skipRow = true
+              break
+            }
+
+            if (parsed !== null) {
+              record[fieldKey] = parsed
+            }
           }
         }
 
         if (!skipRow && Object.keys(record).length > 0) {
-          records.push(record)
+          // Expandir dot notation (specs.stock -> { specs: { stock: ... } })
+          const expanded = expandDotNotation(record)
+          records.push(expanded)
         }
       }
 
-      if (records.length > 0) {
+      if (records.length === 0) {
+        setProgress(Math.min(100, Math.round(((i + batch.length) / totalRows) * 100)))
+        continue
+      }
+
+      // ── UPSERT mode: buscar existentes y actualizar ──
+      if (upsertMode && upsertKey) {
+        for (const record of records) {
+          const keyValue = record[upsertKey]
+          if (!keyValue) {
+            // Sin key de upsert, insertar directamente
+            const { error } = await supabase.from(targetTable).insert(record)
+            if (error) {
+              if (error.code === '23505') {
+                importResults.skipped++
+              } else {
+                importResults.errors.push(`Error: ${error.message?.substring(0, 80)}`)
+                importResults.skipped++
+              }
+            } else {
+              importResults.inserted++
+            }
+            continue
+          }
+
+          // Buscar si ya existe
+          const { data: existing } = await supabase
+            .from(targetTable)
+            .select('id')
+            .eq(upsertKey, keyValue)
+            .limit(1)
+
+          if (existing && existing.length > 0) {
+            // UPDATE
+            const { error: updateError } = await supabase
+              .from(targetTable)
+              .update(record)
+              .eq(upsertKey, keyValue)
+
+            if (updateError) {
+              importResults.errors.push(`Error actualizando ${upsertKey}=${keyValue}: ${updateError.message?.substring(0, 80)}`)
+              importResults.skipped++
+            } else {
+              importResults.updated++
+            }
+          } else {
+            // INSERT
+            const { error: insertError } = await supabase
+              .from(targetTable)
+              .insert(record)
+
+            if (insertError) {
+              if (insertError.code === '23505') {
+                importResults.skipped++
+              } else {
+                importResults.errors.push(`Error insertando: ${insertError.message?.substring(0, 80)}`)
+                importResults.skipped++
+              }
+            } else {
+              importResults.inserted++
+            }
+          }
+        }
+      } else {
+        // ── INSERT simple (batch) ──
         const { error, data } = await supabase.from(targetTable).insert(records).select('id')
 
         if (error) {
-          // Si hay error de constraint, intentar uno por uno
           if (error.code === '23505' || error.message?.includes('duplicate') || error.message?.includes('unique')) {
             for (const record of records) {
               const { error: singleError } = await supabase.from(targetTable).insert(record)
@@ -312,13 +479,13 @@ export function ImportButton({
     setResults(importResults)
     onComplete?.(importResults)
 
-    if (importResults.inserted > 0) {
+    if (importResults.inserted > 0 || importResults.updated > 0) {
       addToast({
         type: 'success',
-        title: `Importacion completada: ${importResults.inserted} registros insertados`,
+        title: `Importacion completada: ${importResults.inserted} insertados, ${importResults.updated} actualizados`,
       })
     }
-  }, [validateAll, csvRows, mapping, fields, targetTable, onComplete, addToast])
+  }, [validateAll, csvRows, mapping, fields, targetTable, onComplete, addToast, stelDetection, upsertMode])
 
   // ─── Close & reset ───
   const handleClose = useCallback(() => {
@@ -331,6 +498,8 @@ export function ImportButton({
     setProgress(0)
     setResults(null)
     setFileName('')
+    setStelDetection(null)
+    setLoadingFile(false)
   }, [])
 
   // ─── Mapping change ───
@@ -347,6 +516,19 @@ export function ImportButton({
     setValidationErrors([])
   }, [])
 
+  // ─── Construct combined fields list (original + StelOrder extra fields) ───
+  const allFields: ImportField[] = [...fields]
+  if (stelDetection?.isStelOrder) {
+    // Agregar campos extra del mapping StelOrder que no estan en fields
+    const existingKeys = new Set(fields.map(f => f.key))
+    const mappedValues = Object.values(stelDetection.mapping)
+    for (const fieldKey of mappedValues) {
+      if (!existingKeys.has(fieldKey) && !fieldKey.includes('.')) {
+        allFields.push({ key: fieldKey, label: fieldKey })
+      }
+    }
+  }
+
   // ─── Preview rows (first 10) ───
   const previewRows = csvRows.slice(0, 10)
 
@@ -355,20 +537,25 @@ export function ImportButton({
       <input
         ref={fileInputRef}
         type="file"
-        accept=".csv"
+        accept=".csv,.xlsx,.xls"
         onChange={handleFileSelect}
         className="hidden"
       />
 
       <button
         onClick={() => fileInputRef.current?.click()}
-        className={`flex items-center gap-2 px-3 py-2 text-sm font-medium text-[#9CA3AF] bg-[#141820] border border-[#2A3040] rounded-lg hover:bg-[#1C2230] hover:text-[#FF6600] transition-all ${className}`}
+        disabled={loadingFile}
+        className={`flex items-center gap-2 px-3 py-2 text-sm font-medium text-[#9CA3AF] bg-[#141820] border border-[#2A3040] rounded-lg hover:bg-[#1C2230] hover:text-[#FF6600] transition-all disabled:opacity-50 ${className}`}
       >
-        <Upload size={16} />
-        {label}
+        {loadingFile ? (
+          <Loader2 size={16} className="animate-spin" />
+        ) : (
+          <Upload size={16} />
+        )}
+        {loadingFile ? 'Cargando...' : label}
       </button>
 
-      {/* ═══ MODAL ═══ */}
+      {/* MODAL */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={!importing ? handleClose : undefined} />
@@ -376,13 +563,33 @@ export function ImportButton({
 
             {/* Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-[#1E2330]">
-              <div>
-                <h2 className="text-lg font-semibold text-[#F0F2F5]">Importar datos</h2>
-                <p className="text-xs text-[#6B7280] mt-0.5">
-                  <FileText size={12} className="inline mr-1" />
-                  {fileName} &mdash; {csvRows.length} filas detectadas
-                </p>
+              <div className="flex items-center gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-[#F0F2F5]">Importar datos</h2>
+                  <p className="text-xs text-[#6B7280] mt-0.5">
+                    {isXLSXFile({ name: fileName } as File) ? (
+                      <FileSpreadsheet size={12} className="inline mr-1 text-green-400" />
+                    ) : (
+                      <FileText size={12} className="inline mr-1" />
+                    )}
+                    {fileName} &mdash; {csvRows.length} filas detectadas
+                  </p>
+                </div>
+
+                {/* StelOrder badge */}
+                {stelDetection?.isStelOrder && (
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/30 rounded-lg">
+                    <CheckCircle size={14} className="text-emerald-400" />
+                    <span className="text-xs font-semibold text-emerald-400">
+                      Formato StelOrder detectado
+                    </span>
+                    <span className="text-[10px] text-emerald-500/70 ml-1">
+                      ({stelDetection.matchedColumns} columnas mapeadas)
+                    </span>
+                  </div>
+                )}
               </div>
+
               {!importing && (
                 <button
                   onClick={handleClose}
@@ -396,37 +603,104 @@ export function ImportButton({
             {/* Content */}
             <div className="overflow-y-auto flex-1 p-6 space-y-6">
 
-              {/* ─── Column Mapping ─── */}
-              <div>
-                <h3 className="text-sm font-semibold text-[#F0F2F5] mb-3">Mapeo de columnas</h3>
-                <p className="text-xs text-[#6B7280] mb-3">
-                  Selecciona a que campo corresponde cada columna del CSV. Los campos marcados con * son obligatorios.
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {csvHeaders.map((header, idx) => (
-                    <div key={idx} className="flex items-center gap-2 bg-[#1C2230] rounded-lg p-3">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs text-[#9CA3AF] truncate" title={header}>
-                          CSV: <span className="text-[#F0F2F5] font-medium">{header}</span>
-                        </p>
-                      </div>
-                      <ArrowRight size={14} className="text-[#4B5563] shrink-0" />
-                      <select
-                        value={mapping[idx] || ''}
-                        onChange={(e) => updateMapping(idx, e.target.value)}
-                        className="bg-[#141820] border border-[#2A3040] rounded-lg px-2 py-1.5 text-xs text-[#F0F2F5] max-w-[160px] focus:outline-none focus:border-[#FF6600]"
-                      >
-                        <option value="">-- No importar --</option>
-                        {fields.map((f) => (
-                          <option key={f.key} value={f.key}>
-                            {f.label}{f.required ? ' *' : ''}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  ))}
-                </div>
+              {/* ─── UPSERT Toggle ─── */}
+              <div className="flex items-center gap-4 bg-[#1C2230] rounded-lg p-4">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <div
+                    className={`relative w-10 h-5 rounded-full transition-colors ${upsertMode ? 'bg-[#FF6600]' : 'bg-[#2A3040]'}`}
+                    onClick={() => setUpsertMode(!upsertMode)}
+                  >
+                    <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${upsertMode ? 'left-5.5 translate-x-0.5' : 'left-0.5'}`} />
+                  </div>
+                  <div>
+                    <span className="text-sm font-medium text-[#F0F2F5] flex items-center gap-2">
+                      <RefreshCw size={14} className={upsertMode ? 'text-[#FF6600]' : 'text-[#6B7280]'} />
+                      Actualizar existentes
+                    </span>
+                    <p className="text-[10px] text-[#6B7280] mt-0.5">
+                      {upsertMode
+                        ? `Si un registro con el mismo ${UPSERT_KEYS[targetTable] || 'ID'} ya existe, se actualiza en vez de duplicar`
+                        : 'Solo se insertan registros nuevos; los duplicados se omiten'
+                      }
+                    </p>
+                  </div>
+                </label>
               </div>
+
+              {/* ─── Column Mapping ─── */}
+              {stelDetection?.isStelOrder ? (
+                <div>
+                  <h3 className="text-sm font-semibold text-[#F0F2F5] mb-3 flex items-center gap-2">
+                    Mapeo automatico StelOrder
+                    <span className="text-[10px] text-[#6B7280] font-normal">
+                      (podes ajustarlo si necesitas)
+                    </span>
+                  </h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {csvHeaders.map((header, idx) => {
+                      const mappedKey = mapping[idx]
+                      const isMapped = !!mappedKey
+                      return (
+                        <div key={idx} className={`flex items-center gap-2 rounded-lg p-3 ${isMapped ? 'bg-emerald-500/5 border border-emerald-500/20' : 'bg-[#1C2230]'}`}>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs text-[#9CA3AF] truncate" title={header}>
+                              StelOrder: <span className="text-[#F0F2F5] font-medium">{header}</span>
+                            </p>
+                          </div>
+                          <ArrowRight size={14} className={isMapped ? 'text-emerald-400 shrink-0' : 'text-[#4B5563] shrink-0'} />
+                          <select
+                            value={mappedKey || ''}
+                            onChange={(e) => updateMapping(idx, e.target.value)}
+                            className="bg-[#141820] border border-[#2A3040] rounded-lg px-2 py-1.5 text-xs text-[#F0F2F5] max-w-[160px] focus:outline-none focus:border-[#FF6600]"
+                          >
+                            <option value="">-- No importar --</option>
+                            {allFields.map((f) => (
+                              <option key={f.key} value={f.key}>
+                                {f.label}{f.required ? ' *' : ''}
+                              </option>
+                            ))}
+                            {/* Extra: show mapped key if not in allFields */}
+                            {mappedKey && !allFields.find(f => f.key === mappedKey) && (
+                              <option value={mappedKey}>{mappedKey}</option>
+                            )}
+                          </select>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <h3 className="text-sm font-semibold text-[#F0F2F5] mb-3">Mapeo de columnas</h3>
+                  <p className="text-xs text-[#6B7280] mb-3">
+                    Selecciona a que campo corresponde cada columna del archivo. Los campos marcados con * son obligatorios.
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {csvHeaders.map((header, idx) => (
+                      <div key={idx} className="flex items-center gap-2 bg-[#1C2230] rounded-lg p-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs text-[#9CA3AF] truncate" title={header}>
+                            Columna: <span className="text-[#F0F2F5] font-medium">{header}</span>
+                          </p>
+                        </div>
+                        <ArrowRight size={14} className="text-[#4B5563] shrink-0" />
+                        <select
+                          value={mapping[idx] || ''}
+                          onChange={(e) => updateMapping(idx, e.target.value)}
+                          className="bg-[#141820] border border-[#2A3040] rounded-lg px-2 py-1.5 text-xs text-[#F0F2F5] max-w-[160px] focus:outline-none focus:border-[#FF6600]"
+                        >
+                          <option value="">-- No importar --</option>
+                          {fields.map((f) => (
+                            <option key={f.key} value={f.key}>
+                              {f.label}{f.required ? ' *' : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* ─── Preview Table ─── */}
               <div>
@@ -439,13 +713,14 @@ export function ImportButton({
                       <tr className="bg-[#1C2230]">
                         <th className="px-3 py-2 text-left text-[#6B7280] font-medium">#</th>
                         {csvHeaders.map((h, idx) => {
-                          const mappedField = fields.find(f => f.key === mapping[idx])
+                          const mappedFieldKey = mapping[idx]
+                          const mappedField = fields.find(f => f.key === mappedFieldKey)
                           return (
                             <th key={idx} className="px-3 py-2 text-left min-w-[120px]">
                               <span className="text-[#6B7280]">{h}</span>
-                              {mappedField && (
-                                <span className="block text-[#FF6600] text-[10px] mt-0.5">
-                                  &rarr; {mappedField.label}
+                              {mappedFieldKey && (
+                                <span className={`block text-[10px] mt-0.5 ${stelDetection?.isStelOrder ? 'text-emerald-400' : 'text-[#FF6600]'}`}>
+                                  &rarr; {mappedField?.label || mappedFieldKey}
                                 </span>
                               )}
                             </th>
@@ -502,7 +777,7 @@ export function ImportButton({
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-[#9CA3AF] flex items-center gap-2">
                       <Loader2 size={14} className="animate-spin text-[#FF6600]" />
-                      Importando...
+                      {upsertMode ? 'Importando con actualizacion...' : 'Importando...'}
                     </span>
                     <span className="text-[#FF6600] font-bold">{progress}%</span>
                   </div>
@@ -523,10 +798,10 @@ export function ImportButton({
                     <div className="bg-[#141820] rounded-lg p-3 text-center">
                       <CheckCircle size={18} className="text-green-400 mx-auto mb-1" />
                       <p className="text-lg font-bold text-green-400">{results.inserted}</p>
-                      <p className="text-[10px] text-[#6B7280]">Insertados</p>
+                      <p className="text-[10px] text-[#6B7280]">Insertados nuevos</p>
                     </div>
                     <div className="bg-[#141820] rounded-lg p-3 text-center">
-                      <CheckCircle size={18} className="text-blue-400 mx-auto mb-1" />
+                      <RefreshCw size={18} className="text-blue-400 mx-auto mb-1" />
                       <p className="text-lg font-bold text-blue-400">{results.updated}</p>
                       <p className="text-[10px] text-[#6B7280]">Actualizados</p>
                     </div>
@@ -541,6 +816,41 @@ export function ImportButton({
                       <p className="text-[10px] text-[#6B7280]">Errores</p>
                     </div>
                   </div>
+
+                  {/* Summary bar */}
+                  {(results.inserted + results.updated + results.skipped) > 0 && (
+                    <div className="w-full h-3 rounded-full overflow-hidden flex bg-[#141820]">
+                      {results.inserted > 0 && (
+                        <div
+                          className="h-full bg-green-500 transition-all"
+                          style={{ width: `${(results.inserted / (results.inserted + results.updated + results.skipped + results.errors.length)) * 100}%` }}
+                          title={`${results.inserted} insertados`}
+                        />
+                      )}
+                      {results.updated > 0 && (
+                        <div
+                          className="h-full bg-blue-500 transition-all"
+                          style={{ width: `${(results.updated / (results.inserted + results.updated + results.skipped + results.errors.length)) * 100}%` }}
+                          title={`${results.updated} actualizados`}
+                        />
+                      )}
+                      {results.skipped > 0 && (
+                        <div
+                          className="h-full bg-yellow-500 transition-all"
+                          style={{ width: `${(results.skipped / (results.inserted + results.updated + results.skipped + results.errors.length)) * 100}%` }}
+                          title={`${results.skipped} omitidos`}
+                        />
+                      )}
+                      {results.errors.length > 0 && (
+                        <div
+                          className="h-full bg-red-500 transition-all"
+                          style={{ width: `${(results.errors.length / (results.inserted + results.updated + results.skipped + results.errors.length)) * 100}%` }}
+                          title={`${results.errors.length} errores`}
+                        />
+                      )}
+                    </div>
+                  )}
+
                   {results.errors.length > 0 && (
                     <div className="mt-2 space-y-1 max-h-32 overflow-y-auto">
                       {results.errors.slice(0, 20).map((err, i) => (
@@ -554,9 +864,9 @@ export function ImportButton({
                 </div>
               )}
 
-              {/* ─── CSV Tip ─── */}
+              {/* ─── File format tip ─── */}
               <p className="text-[10px] text-[#4B5563]">
-                Solo se aceptan archivos CSV. Si tenes un Excel (.xlsx), guardalo como CSV desde Archivo &gt; Guardar como &gt; CSV UTF-8.
+                Se aceptan archivos CSV (.csv) y Excel (.xlsx). Las exportaciones de StelOrder se detectan automaticamente.
               </p>
             </div>
 
@@ -564,6 +874,9 @@ export function ImportButton({
             <div className="flex items-center justify-between px-6 py-4 border-t border-[#1E2330] bg-[#0F1318]">
               <p className="text-xs text-[#6B7280]">
                 {Object.keys(mapping).length} columnas mapeadas de {csvHeaders.length}
+                {stelDetection?.isStelOrder && (
+                  <span className="text-emerald-400 ml-2">(StelOrder)</span>
+                )}
               </p>
               <div className="flex gap-3">
                 {!importing && !results && (

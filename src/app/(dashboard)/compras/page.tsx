@@ -841,7 +841,7 @@ function ProveedoresTab() {
         <KPICard label="Con contactos" value={0} icon={<Contact size={22} />} />
       </div>
       <div className="flex justify-end gap-2">
-        <ExportButton data={filtered as unknown as Record<string, unknown>[]} filename="proveedores_torquetools" columns={[
+        <ExportButton data={filtered as unknown as Record<string, unknown>[]} filename="proveedores_torquetools" targetTable="tt_suppliers" columns={[
           { key: 'name', label: 'Nombre' }, { key: 'legal_name', label: 'Razon Social' }, { key: 'tax_id', label: 'CIF/NIF' },
           { key: 'email', label: 'Email' }, { key: 'phone', label: 'Telefono' }, { key: 'country', label: 'Pais' },
           { key: 'city', label: 'Ciudad' }, { key: 'category', label: 'Categoria' }, { key: 'payment_terms', label: 'Condiciones Pago' },
@@ -851,11 +851,19 @@ function ProveedoresTab() {
           fields={[
             { key: 'name', label: 'Nombre', required: true },
             { key: 'legal_name', label: 'Razon social' },
+            { key: 'reference', label: 'Referencia' },
             { key: 'tax_id', label: 'CIF/CUIT' },
             { key: 'email', label: 'Email' },
             { key: 'phone', label: 'Telefono' },
+            { key: 'address', label: 'Direccion' },
+            { key: 'city', label: 'Ciudad' },
+            { key: 'state', label: 'Provincia' },
+            { key: 'postal_code', label: 'Codigo postal' },
             { key: 'country', label: 'Pais' },
             { key: 'category', label: 'Categoria' },
+            { key: 'payment_terms', label: 'Condiciones pago' },
+            { key: 'notes', label: 'Observaciones' },
+            { key: 'active', label: 'Activa', type: 'boolean' },
           ]}
           permission="manage_suppliers"
         />

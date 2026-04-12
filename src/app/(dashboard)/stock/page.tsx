@@ -107,6 +107,7 @@ function InventarioTab() {
             <ExportButton
               data={stockItems as unknown as Record<string, unknown>[]}
               filename="stock_torquetools"
+              targetTable="tt_stock"
               columns={[
                 { key: 'product_sku', label: 'SKU' },
                 { key: 'product_name', label: 'Producto' },
