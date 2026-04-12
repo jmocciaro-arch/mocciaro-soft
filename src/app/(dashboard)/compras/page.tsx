@@ -14,10 +14,12 @@ import { Tabs } from '@/components/ui/tabs'
 import { useToast } from '@/components/ui/toast'
 import { ExportButton } from '@/components/ui/export-button'
 import { ImportButton } from '@/components/ui/import-button'
+import { DataTable, type DataTableColumn } from '@/components/ui/data-table'
 import { formatCurrency, formatDate, formatRelative, getInitials } from '@/lib/utils'
 import { DocumentDetailLayout, type WorkflowStep } from '@/components/workflow/document-detail-layout'
 import { DocumentItemsTree, type DocumentItem } from '@/components/workflow/document-items-tree'
 import { DocumentListCard } from '@/components/workflow/document-list-card'
+import { documentToTableRow, localPOToRow, purchaseInvoiceToRow, mapStatus, extractClientName, extractDocRef } from '@/lib/document-helpers'
 import type { Supplier, SupplierContact, PurchaseInvoice, PurchasePayment } from '@/types'
 import {
   ShoppingCart, Plus, Package, Truck, CheckCircle, Clock,
@@ -1115,54 +1117,48 @@ function PedidosCompraTab() {
     )
   }
 
-  const totalPOs = orders.length
-  const draftCount = orders.filter(o => o.status === 'draft').length
-  const pendingCount = orders.filter(o => o.status === 'sent' || o.status === 'partial').length
-  const totalVal = orders.reduce((s, o) => s + ((o.total as number) || 0), 0)
+  // Build DataTable rows
+  const tableRows = useMemo(() => {
+    return orders.map((po) => {
+      const isDoc = (po as Row & { _source?: string })._source === 'tt_documents'
+      if (isDoc) {
+        const r = documentToTableRow(po)
+        r.proveedor = r.cliente
+        r._raw = po
+        return r
+      }
+      return localPOToRow(po)
+    })
+  }, [orders])
+
+  const PO_TABLE_COLS: DataTableColumn[] = [
+    { key: 'referencia', label: 'Referencia', sortable: true, searchable: true, width: '140px' },
+    { key: 'proveedor', label: 'Proveedor', sortable: true, searchable: true },
+    { key: 'titulo', label: 'Titulo', searchable: true },
+    { key: 'estado', label: 'Estado', sortable: true, type: 'status', width: '120px' },
+    { key: 'fecha', label: 'Fecha', sortable: true, type: 'date', width: '110px' },
+    { key: 'importe', label: 'Importe', sortable: true, type: 'currency', width: '120px' },
+  ]
+
+  const handleRowClick = (row: Record<string, unknown>) => {
+    const po = row._raw as Row
+    openDetail(po)
+  }
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end gap-2">
-        <ExportButton data={orders as Record<string, unknown>[]} filename="ordenes_compra_torquetools" columns={[
-          { key: 'supplier_name', label: 'Proveedor' }, { key: 'status', label: 'Estado' },
-          { key: 'total', label: 'Total' }, { key: 'notes', label: 'Notas' }, { key: 'created_at', label: 'Fecha' },
-        ]} />
-        <Button onClick={() => { setShowCreate(true); loadProducts() }}><Plus size={16} /> Nueva OC</Button>
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <KPICard label="Total OCs" value={totalPOs} icon={<ShoppingCart size={22} />} />
-        <KPICard label="Borradores" value={draftCount} icon={<FileText size={22} />} color="#6B7280" />
-        <KPICard label="Pendientes" value={pendingCount} icon={<Clock size={22} />} color="#F59E0B" />
-        <KPICard label="Valor total" value={formatCurrency(totalVal)} icon={<Package size={22} />} color="#10B981" />
-      </div>
-      <div className="bg-[#141820] rounded-xl border border-[#2A3040] p-3">
-        <div className="flex flex-col sm:flex-row gap-3">
-          <SearchBar placeholder="Buscar proveedor..." value={search} onChange={setSearch} className="flex-1" />
-          <Select options={[{ value: '', label: 'Todos' }, ...Object.entries(PO_STATUS).map(([k, v]) => ({ value: k, label: v.label }))]} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} />
-        </div>
-      </div>
-      {loading ? (
-        <div className="flex items-center justify-center py-20"><Loader2 className="animate-spin text-[#FF6600]" size={32} /></div>
-      ) : orders.length === 0 ? (
-        <div className="text-center py-20 text-[#6B7280]"><ShoppingCart size={48} className="mx-auto mb-3 opacity-30" /><p>No hay ordenes de compra</p></div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {orders.map((po) => {
-            const isDoc = (po as Row & { _source?: string })._source === 'tt_documents'
-            const st = (po.status as string) || 'draft'
-            const ref = isDoc ? getDocRef(po) : `PAP-${(po.id as string).slice(0, 8).toUpperCase()}`
-            const statusMap = isDoc ? DOC_STATUS : PO_STATUS
-            return (
-              <DocumentListCard key={po.id as string} type="pap" systemCode={ref}
-                clientName={(po.supplier_name as string) || 'Sin proveedor'}
-                date={po.created_at ? formatDate(po.created_at as string) : '-'}
-                total={(po.total as number) || 0} currency="EUR" status={st} statusLabel={statusMap[st]?.label || st}
-                onClick={() => openDetail(po)}
-              />
-            )
-          })}
-        </div>
-      )}
+      <DataTable
+        data={tableRows}
+        columns={PO_TABLE_COLS}
+        loading={loading}
+        totalLabel="ordenes de compra"
+        showTotals
+        onRowClick={handleRowClick}
+        onNewClick={() => { setShowCreate(true); loadProducts() }}
+        newLabel="Nueva OC"
+        exportFilename="ordenes_compra_torquetools"
+        pageSize={25}
+      />
       <Modal isOpen={showCreate} onClose={() => setShowCreate(false)} title="Nueva Orden de Compra" size="xl">
         <div className="space-y-4">
           <Input label="Proveedor" value={supplier} onChange={(e) => setSupplier(e.target.value)} placeholder="Nombre del proveedor" />
@@ -1202,62 +1198,55 @@ function PedidosCompraTab() {
 // ===============================================================
 function RecepcionesTab() {
   const supabase = createClient()
-  const [receptions, setReceptions] = useState<Row[]>([])
+  const [rows, setRows] = useState<Record<string, unknown>[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     (async () => {
       setLoading(true)
-      // Load from tt_documents (StelOrder recepciones)
-      const { data: docData } = await supabase.from('tt_documents').select('*')
-        .eq('type', 'recepcion')
-        .order('created_at', { ascending: false })
-        .range(0, 99)
+      const [{ data: docData }, { data: localData }] = await Promise.all([
+        supabase.from('tt_documents').select('*').eq('type', 'recepcion').order('created_at', { ascending: false }).range(0, 499),
+        supabase.from('tt_purchase_orders').select('*').in('status', ['partial', 'received']).order('updated_at', { ascending: false }),
+      ])
 
-      // Also load from tt_purchase_orders with reception statuses
-      const { data: localData } = await supabase.from('tt_purchase_orders').select('*').in('status', ['partial', 'received']).order('updated_at', { ascending: false })
-
-      const localMapped = (localData || []).map((r: Row) => ({
-        ...r, _source: 'local' as const,
+      const localRows = (localData || []).map((r: Row) => ({
+        id: r.id,
+        referencia: `REC-${(r.id as string).slice(0, 8).toUpperCase()}`,
+        proveedor: (r.supplier_name as string) || 'Sin proveedor',
+        estado: mapStatus(r.status as string),
+        fecha: r.updated_at || r.created_at,
+        importe: (r.total as number) || 0,
+        _raw: r,
+        _source: 'local',
       }))
-      const docMapped = (docData || []).map((d: Row) => ({
-        ...d, _source: 'tt_documents' as const,
-        supplier_name: getClientName(d),
-      }))
-      setReceptions([...localMapped, ...docMapped])
+      const docRows = (docData || []).map((d: Row) => {
+        const r = documentToTableRow(d)
+        r.proveedor = r.cliente
+        return r
+      })
+      setRows([...localRows, ...docRows])
       setLoading(false)
     })()
   }, [])
 
+  const REC_COLS: DataTableColumn[] = [
+    { key: 'referencia', label: 'Referencia', sortable: true, searchable: true, width: '140px' },
+    { key: 'proveedor', label: 'Proveedor', sortable: true, searchable: true },
+    { key: 'estado', label: 'Estado', sortable: true, type: 'status', width: '120px' },
+    { key: 'fecha', label: 'Fecha', sortable: true, type: 'date', width: '110px' },
+    { key: 'importe', label: 'Importe', sortable: true, type: 'currency', width: '120px' },
+  ]
+
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <KPICard label="Recepciones" value={receptions.length} icon={<Truck size={22} />} />
-      </div>
-      {loading ? (
-        <div className="flex items-center justify-center py-20"><Loader2 className="animate-spin text-[#FF6600]" size={32} /></div>
-      ) : receptions.length === 0 ? (
-        <div className="text-center py-20 text-[#6B7280]"><Truck size={48} className="mx-auto mb-3 opacity-30" /><p>No hay recepciones registradas</p></div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {receptions.map((r) => {
-            const isDoc = (r as Row & { _source?: string })._source === 'tt_documents'
-            const st = (r.status as string) || 'partial'
-            const ref = isDoc ? getDocRef(r) : `REC-${(r.id as string).slice(0, 8).toUpperCase()}`
-            return (
-              <DocumentListCard key={r.id as string} type="recepcion"
-                systemCode={ref}
-                clientName={isDoc ? getClientName(r) : (r.supplier_name as string) || 'Sin proveedor'}
-                date={(r.updated_at || r.created_at) ? formatDate((r.updated_at || r.created_at) as string) : '-'}
-                total={(r.total as number) || 0} currency="EUR"
-                status={st} statusLabel={isDoc ? (DOC_STATUS[st]?.label || st) : (st === 'received' ? 'Completa' : 'Parcial')}
-                onClick={() => {}}
-              />
-            )
-          })}
-        </div>
-      )}
-    </div>
+    <DataTable
+      data={rows}
+      columns={REC_COLS}
+      loading={loading}
+      totalLabel="recepciones"
+      showTotals
+      exportFilename="recepciones_torquetools"
+      pageSize={25}
+    />
   )
 }
 
@@ -1524,74 +1513,63 @@ function FacturasCompraTab() {
     )
   }
 
+  // Build combined DataTable rows from local invoices + historical docs
+  const tableRows = useMemo(() => {
+    const localRows = filtered.map((inv) => {
+      const ds = getInvoiceDisplayStatus(inv)
+      const sName = (inv.supplier as Supplier | undefined)?.name || 'Proveedor'
+      return {
+        id: inv.id,
+        referencia: inv.number || '-',
+        proveedor: sName,
+        ref_proveedor: inv.supplier_invoice_number || '',
+        estado: INVOICE_STATUS[ds]?.label || ds,
+        fecha: inv.created_at,
+        importe: inv.total || 0,
+        moneda: inv.currency || 'EUR',
+        fecha_vencimiento: inv.due_date,
+        _raw: inv,
+        _source: 'local',
+      }
+    })
+    const docRows = histDocs.map((d) => {
+      const r = documentToTableRow(d)
+      r.proveedor = r.cliente
+      return r
+    })
+    return [...localRows, ...docRows]
+  }, [filtered, histDocs])
+
+  const FC_COLS: DataTableColumn[] = [
+    { key: 'referencia', label: 'Referencia', sortable: true, searchable: true, width: '140px' },
+    { key: 'proveedor', label: 'Proveedor', sortable: true, searchable: true },
+    { key: 'ref_proveedor', label: 'Ref. proveedor', searchable: true, defaultVisible: true },
+    { key: 'estado', label: 'Estado', sortable: true, type: 'status', width: '120px' },
+    { key: 'fecha', label: 'Fecha', sortable: true, type: 'date', width: '110px' },
+    { key: 'importe', label: 'Importe', sortable: true, type: 'currency', width: '120px' },
+    { key: 'fecha_vencimiento', label: 'Vencimiento', sortable: true, type: 'date', width: '110px' },
+  ]
+
+  const handleInvRowClick = (row: Record<string, unknown>) => {
+    if (row._source === 'local') {
+      openInvoiceDetail(row._raw as PurchaseInvoice)
+    }
+  }
+
   return (
     <div className="space-y-4">
-      <div className="flex justify-end gap-2">
-        <ExportButton data={filtered as unknown as Record<string, unknown>[]} filename="facturas_compra" columns={[
-          { key: 'number', label: 'Numero' }, { key: 'supplier_invoice_number', label: 'Factura Proveedor' },
-          { key: 'total', label: 'Total' }, { key: 'due_date', label: 'Vencimiento' }, { key: 'status', label: 'Estado' },
-        ]} />
-        <Button variant="primary" onClick={() => { setShowCreate(true); loadSuppliers(); loadPOs() }}><Plus size={16} /> Registrar factura</Button>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <KPICard label="Facturas" value={filtered.length} icon={<FileCheck size={22} />} />
-        <KPICard label="Total pendiente" value={formatCurrency(totalPending)} icon={<DollarSign size={22} />} color="#F59E0B" />
-        <KPICard label="Vencen esta semana" value={dueThisWeek} icon={<CalendarClock size={22} />} color="#F97316" />
-        <KPICard label="Monto vencido" value={formatCurrency(overdueAmount)} icon={<AlertTriangle size={22} />} color="#EF4444" />
-      </div>
-
-      <div className="bg-[#141820] rounded-xl border border-[#2A3040] p-3 flex flex-col sm:flex-row gap-3">
-        <SearchBar placeholder="Buscar factura, proveedor..." value={search} onChange={setSearch} className="flex-1" />
-        <Select options={[{ value: '', label: 'Todos' }, { value: 'pending', label: 'Pendientes' }, { value: 'due_soon', label: 'Vencen pronto' }, { value: 'overdue', label: 'Vencidas' }, { value: 'paid', label: 'Pagadas' }, { value: 'partial', label: 'Pago parcial' }]} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} />
-      </div>
-
-      {loading ? (
-        <div className="flex items-center justify-center py-20"><Loader2 className="animate-spin text-[#FF6600]" size={32} /></div>
-      ) : filtered.length === 0 && histDocs.length === 0 ? (
-        <div className="text-center py-20 text-[#6B7280]"><FileCheck size={48} className="mx-auto mb-3 opacity-30" /><p>No hay facturas de compra</p></div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {filtered.map((inv) => {
-            const ds = getInvoiceDisplayStatus(inv)
-            const sName = (inv.supplier as Supplier | undefined)?.name || 'Proveedor'
-            return (
-              <Card key={inv.id} hover onClick={() => openInvoiceDetail(inv)}>
-                <div className="flex items-start justify-between mb-2">
-                  <div>
-                    <p className="text-sm font-bold text-[#F0F2F5]">{inv.number}</p>
-                    <p className="text-xs text-[#6B7280]">{sName}</p>
-                  </div>
-                  <Badge variant={INVOICE_STATUS[ds]?.variant || 'default'} size="sm">{INVOICE_STATUS[ds]?.label || ds}</Badge>
-                </div>
-                {inv.supplier_invoice_number && <p className="text-xs text-[#4B5563] mb-2">Factura prov: {inv.supplier_invoice_number}</p>}
-                <div className="flex items-center justify-between pt-2 border-t border-[#1E2330]">
-                  <span className="text-lg font-bold text-[#FF6600]">{formatCurrency(inv.total)}</span>
-                  {inv.due_date && (
-                    <span className="text-xs" style={{ color: getDueDateColor(inv.due_date) }}>
-                      Vence: {formatDate(inv.due_date)}
-                    </span>
-                  )}
-                </div>
-              </Card>
-            )
-          })}
-          {/* Historical purchase invoices from StelOrder */}
-          {histDocs.map((doc) => {
-            const st = (doc.status as string) || 'closed'
-            return (
-              <DocumentListCard key={doc.id as string} type="factura_compra"
-                systemCode={getDocRef(doc)}
-                clientName={getClientName(doc)}
-                date={doc.created_at ? formatDate(doc.created_at as string) : '-'}
-                total={(doc.total as number) || 0} currency={(doc.currency as string) || 'EUR'}
-                status={st} statusLabel={DOC_STATUS[st]?.label || st}
-                onClick={() => {}}
-              />
-            )
-          })}
-        </div>
-      )}
+      <DataTable
+        data={tableRows}
+        columns={FC_COLS}
+        loading={loading}
+        totalLabel="facturas de compra"
+        showTotals
+        onRowClick={handleInvRowClick}
+        onNewClick={() => { setShowCreate(true); loadSuppliers(); loadPOs() }}
+        newLabel="Registrar factura"
+        exportFilename="facturas_compra"
+        pageSize={25}
+      />
 
       {/* Create invoice modal */}
       <Modal isOpen={showCreate} onClose={() => setShowCreate(false)} title="Registrar factura de compra" size="xl">
