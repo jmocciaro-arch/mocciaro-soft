@@ -16,15 +16,17 @@ export function KpiPendingInvoices() {
     async function load() {
       try {
         const supabase = createClient()
-        const { data, count: c, error: e } = await supabase
-          .from('tt_quotes')
-          .select('total', { count: 'exact' })
-          .in('status', ['accepted', 'aceptada'])
-
-        if (e) throw e
-        setCount(c ?? 0)
-        const sum = (data || []).reduce((acc: number, d: { total: number }) => acc + (d.total || 0), 0)
-        setValue(sum)
+        // Count pending invoicing from tt_documents + tt_invoices
+        const [docRes, localRes] = await Promise.all([
+          supabase.from('tt_documents').select('total', { count: 'exact' }).in('type', ['factura', 'factura_abono']).in('status', ['draft', 'pending', 'sent', 'open']),
+          supabase.from('tt_invoices').select('total', { count: 'exact' }).eq('type', 'sale').in('status', ['draft', 'pending']),
+        ])
+        if (docRes.error) throw docRes.error
+        if (localRes.error) throw localRes.error
+        setCount((docRes.count ?? 0) + (localRes.count ?? 0))
+        const docSum = (docRes.data || []).reduce((acc: number, d: { total: number }) => acc + (d.total || 0), 0)
+        const localSum = (localRes.data || []).reduce((acc: number, d: { total: number }) => acc + (d.total || 0), 0)
+        setValue(docSum + localSum)
       } catch {
         setError(true)
       } finally {

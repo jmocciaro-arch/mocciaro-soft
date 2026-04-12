@@ -24,13 +24,14 @@ export function WidgetSalesChart() {
         const now = new Date()
         const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1)
 
-        const { data: quotes, error: e } = await supabase
-          .from('tt_quotes')
-          .select('created_at, total')
-          .gte('created_at', sixMonthsAgo.toISOString())
-          .order('created_at', { ascending: true })
-
-        if (e) throw e
+        // Load from both tt_documents and tt_quotes
+        const [docRes, localRes] = await Promise.all([
+          supabase.from('tt_documents').select('created_at, total').eq('type', 'coti').gte('created_at', sixMonthsAgo.toISOString()).order('created_at', { ascending: true }),
+          supabase.from('tt_quotes').select('created_at, total').gte('created_at', sixMonthsAgo.toISOString()).order('created_at', { ascending: true }),
+        ])
+        if (docRes.error) throw docRes.error
+        if (localRes.error) throw localRes.error
+        const quotes = [...(docRes.data || []), ...(localRes.data || [])]
 
         // Agrupar por mes
         const months: Record<string, { count: number; total: number }> = {}

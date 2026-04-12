@@ -16,6 +16,14 @@ interface RecentQuote {
   created_at: string
   status: string
   client?: { name: string } | null
+  _source?: 'local' | 'tt_documents'
+  _clientName?: string
+}
+
+function getClientNameFromDoc(doc: Record<string, unknown>): string {
+  const raw = (doc.metadata as Record<string, unknown>)?.stelorder_raw as Record<string, unknown> | undefined
+  if (!raw) return 'Sin cliente'
+  return (raw['account-name'] as string) || (raw['legal-name'] as string) || (raw['name'] as string) || 'Sin cliente'
 }
 
 export function WidgetRecentQuotes() {
@@ -28,14 +36,34 @@ export function WidgetRecentQuotes() {
     async function load() {
       try {
         const supabase = createClient()
-        const { data, error: e } = await supabase
-          .from('tt_quotes')
-          .select('id, number, total, currency, created_at, status, client:tt_clients(name)')
-          .order('created_at', { ascending: false })
-          .limit(10)
+        // Load from both sources
+        const [localRes, docRes] = await Promise.all([
+          supabase.from('tt_quotes').select('id, number, total, currency, created_at, status, client:tt_clients(name)').order('created_at', { ascending: false }).limit(5),
+          supabase.from('tt_documents').select('id, display_ref, system_code, total, currency, created_at, status, metadata').eq('type', 'coti').order('created_at', { ascending: false }).limit(10),
+        ])
 
-        if (e) throw e
-        setQuotes((data as unknown as RecentQuote[]) || [])
+        if (localRes.error) throw localRes.error
+        if (docRes.error) throw docRes.error
+
+        const localQuotes = ((localRes.data || []) as unknown as RecentQuote[]).map(q => ({
+          ...q, _source: 'local' as const,
+        }))
+        const docQuotes = (docRes.data || []).map((d: Record<string, unknown>) => ({
+          id: d.id as string,
+          number: (d.display_ref as string) || (d.system_code as string) || '-',
+          total: (d.total as number) || 0,
+          currency: (d.currency as string) || 'EUR',
+          created_at: d.created_at as string,
+          status: (d.status as string) || 'closed',
+          _source: 'tt_documents' as const,
+          _clientName: getClientNameFromDoc(d),
+        }))
+
+        // Merge and sort by created_at desc, take top 10
+        const merged = [...localQuotes, ...docQuotes]
+          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+          .slice(0, 10)
+        setQuotes(merged)
       } catch {
         setError(true)
       } finally {
@@ -76,7 +104,7 @@ export function WidgetRecentQuotes() {
             </Badge>
           </div>
           <p className="text-xs text-[#D1D5DB] truncate">
-            {q.client?.name || 'Sin cliente'}
+            {q._clientName || q.client?.name || 'Sin cliente'}
           </p>
           <div className="flex items-center justify-between mt-1">
             <p className="text-sm font-semibold text-[#F0F2F5]">

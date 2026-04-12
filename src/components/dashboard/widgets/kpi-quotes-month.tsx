@@ -19,15 +19,18 @@ export function KpiQuotesMonth() {
         const now = new Date()
         const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
 
-        const { data, count: c, error: e } = await supabase
-          .from('tt_quotes')
-          .select('total', { count: 'exact' })
-          .gte('created_at', startOfMonth)
-
-        if (e) throw e
-        setCount(c ?? 0)
-        const sum = (data || []).reduce((acc: number, q: { total: number }) => acc + (q.total || 0), 0)
-        setTotalValue(sum)
+        // Count from tt_documents (StelOrder historical) + tt_quotes (local)
+        const [docRes, localRes] = await Promise.all([
+          supabase.from('tt_documents').select('total', { count: 'exact' }).eq('type', 'coti').gte('created_at', startOfMonth),
+          supabase.from('tt_quotes').select('total', { count: 'exact' }).gte('created_at', startOfMonth),
+        ])
+        if (docRes.error) throw docRes.error
+        if (localRes.error) throw localRes.error
+        const totalCount = (docRes.count ?? 0) + (localRes.count ?? 0)
+        setCount(totalCount)
+        const docSum = (docRes.data || []).reduce((acc: number, q: { total: number }) => acc + (q.total || 0), 0)
+        const localSum = (localRes.data || []).reduce((acc: number, q: { total: number }) => acc + (q.total || 0), 0)
+        setTotalValue(docSum + localSum)
       } catch {
         setError(true)
       } finally {

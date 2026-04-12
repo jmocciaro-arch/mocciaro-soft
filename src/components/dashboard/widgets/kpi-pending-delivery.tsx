@@ -14,13 +14,14 @@ export function KpiPendingDelivery() {
     async function load() {
       try {
         const supabase = createClient()
-        const { count: c, error: e } = await supabase
-          .from('tt_quotes')
-          .select('*', { count: 'exact', head: true })
-          .in('status', ['accepted', 'aceptada', 'sent', 'enviada'])
-
-        if (e) throw e
-        setCount(c ?? 0)
+        // Count from tt_documents (pedidos without delivery) + tt_sales_orders
+        const [docRes, localRes] = await Promise.all([
+          supabase.from('tt_documents').select('*', { count: 'exact', head: true }).eq('type', 'pedido').in('status', ['open', 'sent', 'accepted', 'draft']),
+          supabase.from('tt_sales_orders').select('*', { count: 'exact', head: true }).in('status', ['open', 'partially_delivered']),
+        ])
+        if (docRes.error) throw docRes.error
+        if (localRes.error) throw localRes.error
+        setCount((docRes.count ?? 0) + (localRes.count ?? 0))
       } catch {
         setError(true)
       } finally {

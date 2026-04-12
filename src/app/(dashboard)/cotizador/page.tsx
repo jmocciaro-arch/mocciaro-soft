@@ -240,23 +240,77 @@ export default function CotizadorPage() {
   async function loadSavedQuotes() {
     setLoadingQuotes(true)
     const supabase = createClient()
-    const { data } = await supabase
+    // Load locally created quotes
+    const { data: localData } = await supabase
       .from('tt_quotes')
       .select('id, number, status, total, currency, created_at, subtotal, tax_amount, tax_rate, notes, internal_notes, incoterm, client_id, company_id, client:tt_clients(name, tax_id, country), company:tt_companies(name, country)')
       .order('created_at', { ascending: false })
       .limit(50)
-    setSavedQuotes((data as unknown as SavedQuote[]) || [])
+
+    // Load historical from tt_documents
+    const { data: docData } = await supabase
+      .from('tt_documents')
+      .select('id, display_ref, system_code, status, total, currency, created_at, subtotal, tax_amount, notes, metadata')
+      .eq('type', 'coti')
+      .order('created_at', { ascending: false })
+      .limit(50)
+
+    const localQuotes = ((localData || []) as unknown as SavedQuote[]).map(q => ({
+      ...q, _source: 'local' as string,
+    }))
+
+    const docQuotes: SavedQuote[] = (docData || []).map((d: Record<string, unknown>) => {
+      const raw = (d.metadata as Record<string, unknown>)?.stelorder_raw as Record<string, unknown> | undefined
+      const clientName = raw ? ((raw['account-name'] as string) || (raw['legal-name'] as string) || 'Sin cliente') : 'Sin cliente'
+      return {
+        id: d.id as string,
+        number: (d.display_ref as string) || (d.system_code as string) || '-',
+        status: (d.status as string) || 'closed',
+        total: (d.total as number) || 0,
+        currency: (d.currency as string) || 'EUR',
+        created_at: d.created_at as string,
+        subtotal: (d.subtotal as number) || 0,
+        tax_amount: (d.tax_amount as number) || 0,
+        notes: (d.notes as string) || '',
+        client: { name: clientName },
+        _source: 'tt_documents' as string,
+      }
+    })
+
+    const merged = [...localQuotes, ...docQuotes]
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    setSavedQuotes(merged as SavedQuote[])
     setLoadingQuotes(false)
   }
 
   async function openQuoteDetail(quote: SavedQuote) {
     const supabase = createClient()
-    const { data: quoteItems } = await supabase
-      .from('tt_quote_items')
-      .select('*')
-      .eq('quote_id', quote.id)
-      .order('sort_order')
-    setSelectedQuote({ ...quote, items: quoteItems || [] })
+    const isDoc = (quote as SavedQuote & { _source?: string })._source === 'tt_documents'
+    if (isDoc) {
+      // Load items from tt_document_items
+      const { data: docItems } = await supabase
+        .from('tt_document_items')
+        .select('*')
+        .eq('document_id', quote.id)
+        .order('sort_order')
+      const mappedItems = (docItems || []).map((it: Record<string, unknown>) => ({
+        id: (it.id as string) || '',
+        sku: (it.sku as string) || '',
+        description: (it.description as string) || '',
+        quantity: (it.quantity as number) || 0,
+        unit_price: (it.unit_price as number) || 0,
+        discount_pct: (it.discount_pct as number) || 0,
+        subtotal: (it.subtotal as number) || 0,
+      }))
+      setSelectedQuote({ ...quote, items: mappedItems })
+    } else {
+      const { data: quoteItems } = await supabase
+        .from('tt_quote_items')
+        .select('*')
+        .eq('quote_id', quote.id)
+        .order('sort_order')
+      setSelectedQuote({ ...quote, items: quoteItems || [] })
+    }
     setViewMode('detail')
   }
 

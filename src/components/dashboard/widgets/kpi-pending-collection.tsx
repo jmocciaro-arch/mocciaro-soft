@@ -15,17 +15,16 @@ export function KpiPendingCollection() {
     async function load() {
       try {
         const supabase = createClient()
-        const { data, error: e } = await supabase
-          .from('tt_quotes')
-          .select('total')
-          .in('status', ['accepted', 'aceptada'])
-
-        if (e) throw e
-        const pending = (data || []).reduce(
-          (acc: number, q: { total: number }) => acc + (q.total || 0),
-          0
-        )
-        setValue(pending)
+        // Pending collection from tt_documents (facturas not paid) + tt_invoices
+        const [docRes, localRes] = await Promise.all([
+          supabase.from('tt_documents').select('total').in('type', ['factura']).in('status', ['sent', 'open', 'pending', 'draft']),
+          supabase.from('tt_invoices').select('total').eq('type', 'sale').in('status', ['draft', 'pending', 'partial']),
+        ])
+        if (docRes.error) throw docRes.error
+        if (localRes.error) throw localRes.error
+        const docPending = (docRes.data || []).reduce((acc: number, q: { total: number }) => acc + (q.total || 0), 0)
+        const localPending = (localRes.data || []).reduce((acc: number, q: { total: number }) => acc + (q.total || 0), 0)
+        setValue(docPending + localPending)
       } catch {
         setError(true)
       } finally {

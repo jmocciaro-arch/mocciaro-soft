@@ -14,16 +14,17 @@ export function WidgetWelcome() {
         const now = new Date()
         const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
 
-        const [p, c, q] = await Promise.all([
+        const [p, c, qLocal, qDoc] = await Promise.all([
           supabase.from('tt_products').select('*', { count: 'exact', head: true }),
           supabase.from('tt_clients').select('*', { count: 'exact', head: true }),
           supabase.from('tt_quotes').select('*', { count: 'exact', head: true }).gte('created_at', startOfMonth),
+          supabase.from('tt_documents').select('*', { count: 'exact', head: true }).eq('type', 'coti').gte('created_at', startOfMonth),
         ])
 
         setStats({
           products: p.count ?? 0,
           clients: c.count ?? 0,
-          quotes: q.count ?? 0,
+          quotes: (qLocal.count ?? 0) + (qDoc.count ?? 0),
         })
       } catch {
         // silently fail

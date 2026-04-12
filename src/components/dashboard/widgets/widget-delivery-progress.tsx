@@ -22,22 +22,45 @@ export function WidgetDeliveryProgress() {
     async function load() {
       try {
         const supabase = createClient()
-        const { data, error: e } = await supabase
-          .from('tt_quotes')
-          .select('id, number, total, status, client:tt_clients(name)')
-          .in('status', ['accepted', 'aceptada', 'sent', 'enviada'])
+        // Load pedidos from tt_documents
+        const { data: docData, error: e1 } = await supabase
+          .from('tt_documents')
+          .select('id, display_ref, system_code, total, status, metadata')
+          .eq('type', 'pedido')
+          .in('status', ['open', 'sent', 'accepted', 'draft'])
           .order('created_at', { ascending: false })
           .limit(8)
 
-        if (e) throw e
+        // Also load from tt_sales_orders
+        const { data: localData, error: e2 } = await supabase
+          .from('tt_sales_orders')
+          .select('id, doc_number, total, status, tt_clients(name)')
+          .in('status', ['open', 'partially_delivered'])
+          .order('created_at', { ascending: false })
+          .limit(4)
 
-        const items: DeliveryItem[] = (data || []).map((d: any) => ({
-          id: d.id,
-          doc_number: d.number || 'S/N',
+        if (e1) throw e1
+        if (e2) throw e2
+
+        const docItems: DeliveryItem[] = (docData || []).map((d: Record<string, unknown>) => {
+          const raw = (d.metadata as Record<string, unknown>)?.stelorder_raw as Record<string, unknown> | undefined
+          const clientName = raw ? ((raw['account-name'] as string) || (raw['legal-name'] as string) || 'Sin cliente') : 'Sin cliente'
+          return {
+            id: d.id as string,
+            doc_number: (d.display_ref as string) || (d.system_code as string) || 'S/N',
+            total_qty: 100,
+            delivered_qty: (d.status as string) === 'closed' ? 100 : 30,
+            client_name: clientName,
+          }
+        })
+        const localItems: DeliveryItem[] = (localData || []).map((d: Record<string, unknown>) => ({
+          id: d.id as string,
+          doc_number: (d.doc_number as string) || 'S/N',
           total_qty: 100,
-          delivered_qty: d.status === 'accepted' || d.status === 'aceptada' ? 100 : 50,
-          client_name: d.client?.name || 'Sin cliente',
+          delivered_qty: (d.status as string) === 'partially_delivered' ? 50 : 0,
+          client_name: ((d.tt_clients as Record<string, unknown>)?.name as string) || 'Sin cliente',
         }))
+        const items: DeliveryItem[] = [...localItems, ...docItems].slice(0, 8)
         setDeliveries(items)
       } catch {
         setError(true)

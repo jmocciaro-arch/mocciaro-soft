@@ -26,6 +26,33 @@ import {
 type Row = Record<string, unknown>
 
 // ===============================================================
+// HELPERS: tt_documents unified data
+// ===============================================================
+function getClientName(doc: Row): string {
+  const raw = (doc.metadata as Record<string, unknown>)?.stelorder_raw as Record<string, unknown> | undefined
+  if (!raw) return (doc.client_name as string) || 'Sin cliente'
+  return (raw['account-name'] as string) || (raw['legal-name'] as string) || (raw['name'] as string) || 'Sin cliente'
+}
+
+function getDocRef(doc: Row): string {
+  return (doc.display_ref as string) || (doc.metadata as Record<string, unknown>)?.stelorder_reference as string || (doc.system_code as string) || '-'
+}
+
+const DOC_STATUS: Record<string, { label: string; variant: 'default' | 'success' | 'warning' | 'danger' | 'info' | 'orange' }> = {
+  draft: { label: 'Borrador', variant: 'default' },
+  sent: { label: 'Enviada', variant: 'info' },
+  accepted: { label: 'Aceptada', variant: 'success' },
+  rejected: { label: 'Rechazada', variant: 'danger' },
+  closed: { label: 'Cerrado', variant: 'default' },
+  open: { label: 'Abierto', variant: 'info' },
+  pending: { label: 'Pendiente', variant: 'warning' },
+  partial: { label: 'Parcial', variant: 'orange' },
+  paid: { label: 'Pagada', variant: 'success' },
+  completed: { label: 'Completado', variant: 'success' },
+  cancelled: { label: 'Cancelado', variant: 'danger' },
+}
+
+// ===============================================================
 // STATUS MAPS
 // ===============================================================
 const SO_STATUS: Record<string, { label: string; variant: 'default' | 'success' | 'warning' | 'danger' | 'info' | 'orange' }> = {
@@ -99,30 +126,72 @@ function PresupuestosTab() {
   const [statusFilter, setStatusFilter] = useState('')
   const [selectedQuote, setSelectedQuote] = useState<Row | null>(null)
   const [quoteItems, setQuoteItems] = useState<Row[]>([])
+  const [page, setPage] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+  const [totalCount, setTotalCount] = useState(0)
+  const PAGE_SIZE = 100
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (loadPage = 0) => {
     setLoading(true)
-    let q = supabase.from('tt_quotes').select('*, tt_clients(name, name, tax_id, country)').order('created_at', { ascending: false })
+    // Load from tt_documents (StelOrder historical data)
+    let q = supabase.from('tt_documents').select('*', { count: 'exact' })
+      .eq('type', 'coti')
+      .order('created_at', { ascending: false })
+      .range(loadPage * PAGE_SIZE, (loadPage + 1) * PAGE_SIZE - 1)
     if (statusFilter) q = q.eq('status', statusFilter)
-    if (search) q = q.or(`doc_number.ilike.%${search}%,number.ilike.%${search}%`)
-    const { data } = await q
-    setQuotes(data || [])
+    if (search) q = q.or(`display_ref.ilike.%${search}%,system_code.ilike.%${search}%`)
+    const { data: docData, count } = await q
+
+    // Also load from tt_quotes (locally created)
+    let q2 = supabase.from('tt_quotes').select('*, tt_clients(name, tax_id, country)').order('created_at', { ascending: false })
+    if (statusFilter) q2 = q2.eq('status', statusFilter)
+    if (search) q2 = q2.or(`doc_number.ilike.%${search}%,number.ilike.%${search}%`)
+    const { data: localData } = await q2
+
+    // Merge: local quotes first (they are user-created), then tt_documents
+    const localMapped = (localData || []).map((lq: Row) => ({
+      ...lq,
+      _source: 'local' as const,
+      _clientName: ((lq.tt_clients as Row)?.name as string) || 'Sin cliente',
+    }))
+    const docMapped = (docData || []).map((d: Row) => ({
+      ...d,
+      _source: 'tt_documents' as const,
+      _clientName: getClientName(d),
+    }))
+
+    if (loadPage === 0) {
+      setQuotes([...localMapped, ...docMapped])
+    } else {
+      setQuotes(prev => [...prev, ...docMapped])
+    }
+    setTotalCount((localData?.length || 0) + (count || 0))
+    setHasMore((count || 0) > (loadPage + 1) * PAGE_SIZE)
+    setPage(loadPage)
     setLoading(false)
   }, [supabase, statusFilter, search])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load(0) }, [load])
 
   const openDetail = async (quote: Row) => {
-    const { data } = await supabase.from('tt_quote_items').select('*').eq('quote_id', quote.id).order('sort_order')
-    setQuoteItems(data || [])
+    if ((quote as Row & { _source: string })._source === 'tt_documents') {
+      // Load items from tt_document_items
+      const { data } = await supabase.from('tt_document_items').select('*').eq('document_id', quote.id).order('sort_order')
+      setQuoteItems(data || [])
+    } else {
+      // Load from tt_quote_items (local)
+      const { data } = await supabase.from('tt_quote_items').select('*').eq('quote_id', quote.id).order('sort_order')
+      setQuoteItems(data || [])
+    }
     setSelectedQuote(quote)
   }
 
   // Detail view
   if (selectedQuote) {
-    const clientObj = selectedQuote.tt_clients as Row | null
-    const clientName = (clientObj?.name as string) || (clientObj?.name as string) || 'Sin cliente'
-    const ref = (selectedQuote.doc_number as string) || (selectedQuote.number as string) || ''
+    const isDoc = (selectedQuote as Row & { _source?: string })._source === 'tt_documents'
+    const clientObj = isDoc ? null : selectedQuote.tt_clients as Row | null
+    const clientName = isDoc ? getClientName(selectedQuote) : (clientObj?.name as string) || 'Sin cliente'
+    const ref = isDoc ? getDocRef(selectedQuote) : (selectedQuote.doc_number as string) || (selectedQuote.number as string) || ''
 
     const steps: WorkflowStep[] = [
       { key: 'coti', label: 'Cotizacion', icon: '\uD83D\uDCCB', status: 'current', documentRef: ref },
@@ -205,23 +274,33 @@ function PresupuestosTab() {
       ) : quotes.length === 0 ? (
         <div className="text-center py-20 text-[#6B7280]"><FileText size={48} className="mx-auto mb-3 opacity-30" /><p>No hay presupuestos</p></div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {quotes.map((q) => {
-            const clientObj = q.tt_clients as Row | null
-            const clientName = (clientObj?.name as string) || (clientObj?.name as string) || 'Sin cliente'
-            const ref = (q.doc_number as string) || (q.number as string) || '-'
-            const st = (q.status as string) || 'draft'
-            return (
-              <DocumentListCard
-                key={q.id as string} type="coti" systemCode={ref} clientName={clientName}
-                date={q.created_at ? formatDate(q.created_at as string) : '-'}
-                total={(q.total as number) || 0} currency={(q.currency as string) || 'EUR'}
-                status={st} statusLabel={QUOTE_STATUS[st]?.label || st}
-                onClick={() => openDetail(q)}
-              />
-            )
-          })}
-        </div>
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {quotes.map((q) => {
+              const isDoc = (q as Row & { _source?: string })._source === 'tt_documents'
+              const clientName = (q as Row & { _clientName?: string })._clientName || 'Sin cliente'
+              const ref = isDoc ? getDocRef(q) : (q.doc_number as string) || (q.number as string) || '-'
+              const st = (q.status as string) || 'draft'
+              const statusMap = isDoc ? DOC_STATUS : QUOTE_STATUS
+              return (
+                <DocumentListCard
+                  key={q.id as string} type="coti" systemCode={ref} clientName={clientName}
+                  date={q.created_at ? formatDate(q.created_at as string) : '-'}
+                  total={(q.total as number) || 0} currency={(q.currency as string) || 'EUR'}
+                  status={st} statusLabel={statusMap[st]?.label || st}
+                  onClick={() => openDetail(q)}
+                />
+              )
+            })}
+          </div>
+          {hasMore && (
+            <div className="flex justify-center pt-4">
+              <Button variant="secondary" onClick={() => load(page + 1)}>
+                Cargar mas ({totalCount - quotes.length} restantes)
+              </Button>
+            </div>
+          )}
+        </>
       )}
     </div>
   )
@@ -255,11 +334,30 @@ function PedidosTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    let q = supabase.from('tt_sales_orders').select('*, tt_clients(name, name, tax_id, country)').order('created_at', { ascending: false })
-    if (statusFilter) q = q.eq('status', statusFilter)
-    if (search) q = q.ilike('doc_number', `%${search}%`)
-    const { data } = await q
-    setOrders(data || [])
+    // Load from tt_documents (StelOrder historical pedidos)
+    let qDoc = supabase.from('tt_documents').select('*')
+      .eq('type', 'pedido')
+      .order('created_at', { ascending: false })
+      .range(0, 99)
+    if (statusFilter) qDoc = qDoc.eq('status', statusFilter)
+    if (search) qDoc = qDoc.or(`display_ref.ilike.%${search}%,system_code.ilike.%${search}%`)
+    const { data: docData } = await qDoc
+
+    // Also load from tt_sales_orders (locally created)
+    let qLocal = supabase.from('tt_sales_orders').select('*, tt_clients(name, tax_id, country)').order('created_at', { ascending: false })
+    if (statusFilter) qLocal = qLocal.eq('status', statusFilter)
+    if (search) qLocal = qLocal.ilike('doc_number', `%${search}%`)
+    const { data: localData } = await qLocal
+
+    const localMapped = (localData || []).map((o: Row) => ({
+      ...o, _source: 'local' as const,
+      _clientName: ((o.tt_clients as Row)?.name as string) || 'Sin cliente',
+    }))
+    const docMapped = (docData || []).map((d: Row) => ({
+      ...d, _source: 'tt_documents' as const,
+      _clientName: getClientName(d),
+    }))
+    setOrders([...localMapped, ...docMapped])
     setLoading(false)
   }, [supabase, statusFilter, search])
 
@@ -306,8 +404,13 @@ function PedidosTab() {
 
   const openDetail = async (so: Row) => {
     setSelectedSO(so)
-    const { data } = await supabase.from('tt_so_items').select('*').eq('sales_order_id', so.id).order('sort_order')
-    setSOItems(data || [])
+    if ((so as Row & { _source?: string })._source === 'tt_documents') {
+      const { data } = await supabase.from('tt_document_items').select('*').eq('document_id', so.id).order('sort_order')
+      setSOItems(data || [])
+    } else {
+      const { data } = await supabase.from('tt_so_items').select('*').eq('sales_order_id', so.id).order('sort_order')
+      setSOItems(data || [])
+    }
   }
 
   const openDelivery = async (so: Row) => {
@@ -343,8 +446,9 @@ function PedidosTab() {
 
   // Detail view using DocumentDetailLayout
   if (selectedSO && !showDelivery) {
-    const clientObj = selectedSO.tt_clients as Row | null
-    const clientName = (clientObj?.name as string) || (clientObj?.name as string) || 'Sin cliente'
+    const isDoc = (selectedSO as Row & { _source?: string })._source === 'tt_documents'
+    const clientObj = isDoc ? null : selectedSO.tt_clients as Row | null
+    const clientName = isDoc ? getClientName(selectedSO) : (clientObj?.name as string) || 'Sin cliente'
     const st = (selectedSO.status as string) || 'open'
 
     const totalOrdered = soItems.reduce((s, it) => s + ((it.qty_ordered as number) || (it.quantity as number) || 0), 0)
@@ -463,19 +567,20 @@ function PedidosTab() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {orders.map((so) => {
-            const clientObj = so.tt_clients as Row | null
-            const clientName = (clientObj?.name as string) || (clientObj?.name as string) || '-'
+            const isDoc = (so as Row & { _source?: string })._source === 'tt_documents'
+            const clientName = (so as Row & { _clientName?: string })._clientName || '-'
             const st = (so.status as string) || 'open'
-            const totalOrdered = 1 // Placeholder - real calc needs items
+            const ref = isDoc ? getDocRef(so) : (so.doc_number as string) || '-'
+            const statusMap = isDoc ? DOC_STATUS : SO_STATUS
             return (
               <DocumentListCard
                 key={so.id as string} type="pedido"
-                systemCode={(so.doc_number as string) || '-'}
+                systemCode={ref}
                 clientName={clientName}
                 date={so.created_at ? formatDate(so.created_at as string) : '-'}
                 total={(so.total as number) || 0}
                 currency={(so.currency as string) || 'EUR'}
-                status={st} statusLabel={SO_STATUS[st]?.label || st}
+                status={st} statusLabel={statusMap[st]?.label || st}
                 onClick={() => openDetail(so)}
               />
             )
@@ -543,11 +648,30 @@ function AlbaranesTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    let q = supabase.from('tt_delivery_notes').select('*, tt_clients(name, name), tt_sales_orders(doc_number)').order('created_at', { ascending: false })
-    if (statusFilter) q = q.eq('status', statusFilter)
-    if (search) q = q.ilike('doc_number', `%${search}%`)
-    const { data } = await q
-    setNotes(data || [])
+    // Load from tt_documents (StelOrder historical albaranes)
+    let qDoc = supabase.from('tt_documents').select('*')
+      .eq('type', 'delivery_note')
+      .order('created_at', { ascending: false })
+      .range(0, 99)
+    if (statusFilter) qDoc = qDoc.eq('status', statusFilter)
+    if (search) qDoc = qDoc.or(`display_ref.ilike.%${search}%,system_code.ilike.%${search}%`)
+    const { data: docData } = await qDoc
+
+    // Also load from tt_delivery_notes (locally created)
+    let qLocal = supabase.from('tt_delivery_notes').select('*, tt_clients(name), tt_sales_orders(doc_number)').order('created_at', { ascending: false })
+    if (statusFilter) qLocal = qLocal.eq('status', statusFilter)
+    if (search) qLocal = qLocal.ilike('doc_number', `%${search}%`)
+    const { data: localData } = await qLocal
+
+    const localMapped = (localData || []).map((n: Row) => ({
+      ...n, _source: 'local' as const,
+      _clientName: ((n.tt_clients as Row)?.name as string) || '-',
+    }))
+    const docMapped = (docData || []).map((d: Row) => ({
+      ...d, _source: 'tt_documents' as const,
+      _clientName: getClientName(d),
+    }))
+    setNotes([...localMapped, ...docMapped])
     setLoading(false)
   }, [supabase, statusFilter, search])
 
@@ -586,18 +710,20 @@ function AlbaranesTab() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {notes.map((n) => {
-            const clientObj = n.tt_clients as Row | null
-            const clientName = (clientObj?.name as string) || (clientObj?.name as string) || '-'
+            const isDoc = (n as Row & { _source?: string })._source === 'tt_documents'
+            const clientName = (n as Row & { _clientName?: string })._clientName || '-'
             const st = (n.status as string) || 'pending'
+            const ref = isDoc ? getDocRef(n) : (n.doc_number as string) || '-'
+            const statusMap = isDoc ? DOC_STATUS : DN_STATUS
             return (
               <DocumentListCard
                 key={n.id as string} type="delivery_note"
-                systemCode={(n.doc_number as string) || '-'}
-                displayRef={(n.tt_sales_orders as Row)?.doc_number as string}
+                systemCode={ref}
+                displayRef={isDoc ? undefined : (n.tt_sales_orders as Row)?.doc_number as string}
                 clientName={clientName}
                 date={n.created_at ? formatDate(n.created_at as string) : '-'}
-                total={0} currency="EUR" status={st}
-                statusLabel={DN_STATUS[st]?.label || st}
+                total={isDoc ? ((n.total as number) || 0) : 0} currency="EUR" status={st}
+                statusLabel={statusMap[st]?.label || st}
                 onClick={() => {}}
               />
             )
@@ -621,11 +747,30 @@ function FacturasTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    let q = supabase.from('tt_invoices').select('*, tt_clients(name, name)').eq('type', 'sale').order('created_at', { ascending: false })
-    if (statusFilter) q = q.eq('status', statusFilter)
-    if (search) q = q.ilike('doc_number', `%${search}%`)
-    const { data } = await q
-    setInvoices(data || [])
+    // Load from tt_documents (StelOrder historical facturas)
+    let qDoc = supabase.from('tt_documents').select('*')
+      .in('type', ['factura', 'factura_abono'])
+      .order('created_at', { ascending: false })
+      .range(0, 99)
+    if (statusFilter) qDoc = qDoc.eq('status', statusFilter)
+    if (search) qDoc = qDoc.or(`display_ref.ilike.%${search}%,system_code.ilike.%${search}%`)
+    const { data: docData } = await qDoc
+
+    // Also load from tt_invoices (locally created)
+    let qLocal = supabase.from('tt_invoices').select('*, tt_clients(name)').eq('type', 'sale').order('created_at', { ascending: false })
+    if (statusFilter) qLocal = qLocal.eq('status', statusFilter)
+    if (search) qLocal = qLocal.ilike('doc_number', `%${search}%`)
+    const { data: localData } = await qLocal
+
+    const localMapped = (localData || []).map((inv: Row) => ({
+      ...inv, _source: 'local' as const,
+      _clientName: ((inv.tt_clients as Row)?.name as string) || '-',
+    }))
+    const docMapped = (docData || []).map((d: Row) => ({
+      ...d, _source: 'tt_documents' as const,
+      _clientName: getClientName(d),
+    }))
+    setInvoices([...localMapped, ...docMapped])
     setLoading(false)
   }, [supabase, statusFilter, search])
 
@@ -674,19 +819,21 @@ function FacturasTab() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {invoices.map((inv) => {
-            const clientObj = inv.tt_clients as Row | null
-            const clientName = (clientObj?.name as string) || (clientObj?.name as string) || '-'
+            const isDoc = (inv as Row & { _source?: string })._source === 'tt_documents'
+            const clientName = (inv as Row & { _clientName?: string })._clientName || '-'
             const st = (inv.status as string) || 'draft'
+            const ref = isDoc ? getDocRef(inv) : (inv.doc_number as string) || '-'
+            const statusMap = isDoc ? DOC_STATUS : INV_STATUS
             return (
               <DocumentListCard
                 key={inv.id as string} type="factura"
-                systemCode={(inv.doc_number as string) || '-'}
+                systemCode={ref}
                 clientName={clientName}
                 date={inv.created_at ? formatDate(inv.created_at as string) : '-'}
                 total={(inv.total as number) || 0}
                 currency={(inv.currency as string) || 'EUR'}
-                status={st} statusLabel={INV_STATUS[st]?.label || st}
-                onClick={() => { if (st !== 'paid') registerPayment(inv) }}
+                status={st} statusLabel={statusMap[st]?.label || st}
+                onClick={() => { if (!isDoc && st !== 'paid') registerPayment(inv) }}
               />
             )
           })}

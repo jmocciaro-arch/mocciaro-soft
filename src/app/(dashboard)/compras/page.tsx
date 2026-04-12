@@ -30,6 +30,31 @@ import {
 
 type Row = Record<string, unknown>
 
+// ===============================================================
+// HELPERS: tt_documents unified data
+// ===============================================================
+function getClientName(doc: Row): string {
+  const raw = (doc.metadata as Record<string, unknown>)?.stelorder_raw as Record<string, unknown> | undefined
+  if (!raw) return (doc.client_name as string) || 'Sin proveedor'
+  return (raw['account-name'] as string) || (raw['legal-name'] as string) || (raw['name'] as string) || 'Sin proveedor'
+}
+
+function getDocRef(doc: Row): string {
+  return (doc.display_ref as string) || (doc.metadata as Record<string, unknown>)?.stelorder_reference as string || (doc.system_code as string) || '-'
+}
+
+const DOC_STATUS: Record<string, { label: string; variant: 'default' | 'success' | 'warning' | 'danger' | 'info' | 'orange' }> = {
+  draft: { label: 'Borrador', variant: 'default' },
+  sent: { label: 'Enviada', variant: 'info' },
+  closed: { label: 'Cerrado', variant: 'default' },
+  open: { label: 'Abierto', variant: 'info' },
+  pending: { label: 'Pendiente', variant: 'warning' },
+  partial: { label: 'Parcial', variant: 'orange' },
+  received: { label: 'Recibida', variant: 'success' },
+  paid: { label: 'Pagada', variant: 'success' },
+  completed: { label: 'Completado', variant: 'success' },
+}
+
 const PO_STATUS: Record<string, { label: string; variant: 'default' | 'success' | 'warning' | 'danger' | 'info' | 'orange' }> = {
   draft: { label: 'Borrador', variant: 'default' },
   sent: { label: 'Enviada', variant: 'info' },
@@ -933,11 +958,30 @@ function PedidosCompraTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    let q = supabase.from('tt_purchase_orders').select('*').order('created_at', { ascending: false })
-    if (statusFilter) q = q.eq('status', statusFilter)
-    if (search) q = q.ilike('supplier_name', `%${search}%`)
-    const { data } = await q
-    setOrders(data || [])
+    // Load from tt_documents (StelOrder historical PAPs)
+    let qDoc = supabase.from('tt_documents').select('*')
+      .eq('type', 'pap')
+      .order('created_at', { ascending: false })
+      .range(0, 99)
+    if (statusFilter) qDoc = qDoc.eq('status', statusFilter)
+    if (search) qDoc = qDoc.or(`display_ref.ilike.%${search}%,system_code.ilike.%${search}%`)
+    const { data: docData } = await qDoc
+
+    // Also load from tt_purchase_orders (locally created)
+    let qLocal = supabase.from('tt_purchase_orders').select('*').order('created_at', { ascending: false })
+    if (statusFilter) qLocal = qLocal.eq('status', statusFilter)
+    if (search) qLocal = qLocal.ilike('supplier_name', `%${search}%`)
+    const { data: localData } = await qLocal
+
+    const localMapped = (localData || []).map((o: Row) => ({
+      ...o, _source: 'local' as const,
+      supplier_name: (o.supplier_name as string) || 'Sin proveedor',
+    }))
+    const docMapped = (docData || []).map((d: Row) => ({
+      ...d, _source: 'tt_documents' as const,
+      supplier_name: getClientName(d),
+    }))
+    setOrders([...localMapped, ...docMapped])
     setLoading(false)
   }, [supabase, statusFilter, search])
 
@@ -962,8 +1006,13 @@ function PedidosCompraTab() {
 
   const openDetail = async (po: Row) => {
     setSelectedPO(po)
-    const { data } = await supabase.from('tt_po_items').select('*').eq('purchase_order_id', po.id).order('sort_order')
-    setPOItems(data || [])
+    if ((po as Row & { _source?: string })._source === 'tt_documents') {
+      const { data } = await supabase.from('tt_document_items').select('*').eq('document_id', po.id).order('sort_order')
+      setPOItems(data || [])
+    } else {
+      const { data } = await supabase.from('tt_po_items').select('*').eq('purchase_order_id', po.id).order('sort_order')
+      setPOItems(data || [])
+    }
   }
 
   const openReceive = async (po: Row) => {
@@ -1077,12 +1126,15 @@ function PedidosCompraTab() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {orders.map((po) => {
+            const isDoc = (po as Row & { _source?: string })._source === 'tt_documents'
             const st = (po.status as string) || 'draft'
+            const ref = isDoc ? getDocRef(po) : `PAP-${(po.id as string).slice(0, 8).toUpperCase()}`
+            const statusMap = isDoc ? DOC_STATUS : PO_STATUS
             return (
-              <DocumentListCard key={po.id as string} type="pap" systemCode={`PAP-${(po.id as string).slice(0, 8).toUpperCase()}`}
+              <DocumentListCard key={po.id as string} type="pap" systemCode={ref}
                 clientName={(po.supplier_name as string) || 'Sin proveedor'}
                 date={po.created_at ? formatDate(po.created_at as string) : '-'}
-                total={(po.total as number) || 0} currency="EUR" status={st} statusLabel={PO_STATUS[st]?.label || st}
+                total={(po.total as number) || 0} currency="EUR" status={st} statusLabel={statusMap[st]?.label || st}
                 onClick={() => openDetail(po)}
               />
             )
@@ -1134,8 +1186,23 @@ function RecepcionesTab() {
   useEffect(() => {
     (async () => {
       setLoading(true)
-      const { data } = await supabase.from('tt_purchase_orders').select('*').in('status', ['partial', 'received']).order('updated_at', { ascending: false })
-      setReceptions(data || [])
+      // Load from tt_documents (StelOrder recepciones)
+      const { data: docData } = await supabase.from('tt_documents').select('*')
+        .eq('type', 'recepcion')
+        .order('created_at', { ascending: false })
+        .range(0, 99)
+
+      // Also load from tt_purchase_orders with reception statuses
+      const { data: localData } = await supabase.from('tt_purchase_orders').select('*').in('status', ['partial', 'received']).order('updated_at', { ascending: false })
+
+      const localMapped = (localData || []).map((r: Row) => ({
+        ...r, _source: 'local' as const,
+      }))
+      const docMapped = (docData || []).map((d: Row) => ({
+        ...d, _source: 'tt_documents' as const,
+        supplier_name: getClientName(d),
+      }))
+      setReceptions([...localMapped, ...docMapped])
       setLoading(false)
     })()
   }, [])
@@ -1152,14 +1219,16 @@ function RecepcionesTab() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {receptions.map((r) => {
+            const isDoc = (r as Row & { _source?: string })._source === 'tt_documents'
             const st = (r.status as string) || 'partial'
+            const ref = isDoc ? getDocRef(r) : `REC-${(r.id as string).slice(0, 8).toUpperCase()}`
             return (
               <DocumentListCard key={r.id as string} type="recepcion"
-                systemCode={`REC-${(r.id as string).slice(0, 8).toUpperCase()}`}
-                clientName={(r.supplier_name as string) || 'Sin proveedor'}
-                date={r.updated_at ? formatDate(r.updated_at as string) : '-'}
+                systemCode={ref}
+                clientName={isDoc ? getClientName(r) : (r.supplier_name as string) || 'Sin proveedor'}
+                date={(r.updated_at || r.created_at) ? formatDate((r.updated_at || r.created_at) as string) : '-'}
                 total={(r.total as number) || 0} currency="EUR"
-                status={st} statusLabel={st === 'received' ? 'Completa' : 'Parcial'}
+                status={st} statusLabel={isDoc ? (DOC_STATUS[st]?.label || st) : (st === 'received' ? 'Completa' : 'Parcial')}
                 onClick={() => {}}
               />
             )
@@ -1190,6 +1259,9 @@ function FacturasCompraTab() {
   const [newPay, setNewPay] = useState({ amount: 0, payment_date: new Date().toISOString().split('T')[0], payment_method: 'transferencia', bank_reference: '', bank_account: '', notes: '' })
   const [invoicePayments, setInvoicePayments] = useState<PurchasePayment[]>([])
 
+  // Historical purchase invoices from tt_documents
+  const [histDocs, setHistDocs] = useState<Row[]>([])
+
   const load = useCallback(async () => {
     setLoading(true)
     const { data } = await supabase
@@ -1197,6 +1269,14 @@ function FacturasCompraTab() {
       .select('*, supplier:tt_suppliers(id, name, legal_name)')
       .order('created_at', { ascending: false })
     setInvoices((data || []) as PurchaseInvoice[])
+
+    // Also load historical from tt_documents
+    const { data: docData } = await supabase.from('tt_documents').select('*')
+      .eq('type', 'factura_compra')
+      .order('created_at', { ascending: false })
+      .range(0, 99)
+    setHistDocs(docData || [])
+
     setLoading(false)
   }, [supabase])
 
@@ -1446,7 +1526,7 @@ function FacturasCompraTab() {
 
       {loading ? (
         <div className="flex items-center justify-center py-20"><Loader2 className="animate-spin text-[#FF6600]" size={32} /></div>
-      ) : filtered.length === 0 ? (
+      ) : filtered.length === 0 && histDocs.length === 0 ? (
         <div className="text-center py-20 text-[#6B7280]"><FileCheck size={48} className="mx-auto mb-3 opacity-30" /><p>No hay facturas de compra</p></div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
@@ -1472,6 +1552,20 @@ function FacturasCompraTab() {
                   )}
                 </div>
               </Card>
+            )
+          })}
+          {/* Historical purchase invoices from StelOrder */}
+          {histDocs.map((doc) => {
+            const st = (doc.status as string) || 'closed'
+            return (
+              <DocumentListCard key={doc.id as string} type="factura_compra"
+                systemCode={getDocRef(doc)}
+                clientName={getClientName(doc)}
+                date={doc.created_at ? formatDate(doc.created_at as string) : '-'}
+                total={(doc.total as number) || 0} currency={(doc.currency as string) || 'EUR'}
+                status={st} statusLabel={DOC_STATUS[st]?.label || st}
+                onClick={() => {}}
+              />
             )
           })}
         </div>
