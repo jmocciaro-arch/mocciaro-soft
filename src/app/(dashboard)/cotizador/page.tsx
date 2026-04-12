@@ -15,6 +15,7 @@ import type { Company, Client } from '@/types'
 import { DocumentDetailLayout, type WorkflowStep, type Alert, type InternalNote } from '@/components/workflow/document-detail-layout'
 import { DocumentItemsTree, type DocumentItem, type DocumentItemComponent } from '@/components/workflow/document-items-tree'
 import { DocumentActions } from '@/components/workflow/document-actions'
+import { DocumentForm } from '@/components/workflow/document-form'
 import { DocumentListCard } from '@/components/workflow/document-list-card'
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table'
 import { mapStatus } from '@/lib/document-helpers'
@@ -427,47 +428,18 @@ export default function CotizadorPage() {
   // DETAIL VIEW
   // ================================================================
   if (viewMode === 'detail' && selectedQuote) {
-    const { workflowSteps, document, client, comp, docItems, mockNotes } = buildQuoteDetailData(selectedQuote)
     const quoteSource = ((selectedQuote as SavedQuote & { _source?: string })._source === 'tt_documents' ? 'tt_documents' : 'local') as 'local' | 'tt_documents'
+    const allIds = savedQuotes.map(q => q.id)
 
     return (
-      <DocumentDetailLayout
-        workflowSteps={workflowSteps}
-        document={document}
-        client={client}
-        company={comp}
-        assignedTo="Juan Manuel"
-        onRefChange={(ref) => console.log('Ref changed:', ref)}
-        notes={mockNotes}
-        onAddNote={(content) => console.log('New note:', content)}
-        trackingSummary={[
-          { label: 'Items', value: docItems.length.toString(), color: '#F0F2F5' },
-          { label: 'Estado', value: selectedQuote.status, color: selectedQuote.status === 'aceptada' ? '#00C853' : '#4285F4' },
-          { label: 'Moneda', value: selectedQuote.currency || 'EUR', color: '#FF6600' },
-        ]}
-        onBack={() => { setViewMode('list'); setSelectedQuote(null) }}
-        backLabel="Volver a cotizaciones"
-      >
-        <DocumentActions
-          document={{ ...selectedQuote, doc_number: selectedQuote.number }}
-          documentType="coti"
-          source={quoteSource}
-          clientName={client?.name}
-          clientEmail={undefined}
-          onAction={(action) => {
-            if (action === 'order_created') {
-              setViewMode('list')
-              setSelectedQuote(null)
-              loadSavedQuotes()
-            } else {
-              loadSavedQuotes()
-              // Recargar detalle con datos frescos
-              openQuoteDetail(selectedQuote)
-            }
-          }}
-        />
-        <DocumentItemsTree items={docItems} components={[]} showStock={false} />
-      </DocumentDetailLayout>
+      <DocumentForm
+        documentId={selectedQuote.id}
+        documentType="coti"
+        source={quoteSource}
+        onBack={() => { setViewMode('list'); setSelectedQuote(null); loadSavedQuotes() }}
+        onUpdate={loadSavedQuotes}
+        siblingIds={allIds}
+      />
     )
   }
 

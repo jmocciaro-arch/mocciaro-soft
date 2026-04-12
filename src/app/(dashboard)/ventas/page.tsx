@@ -13,6 +13,7 @@ import { formatCurrency, formatDate } from '@/lib/utils'
 import { DocumentDetailLayout, type WorkflowStep } from '@/components/workflow/document-detail-layout'
 import { DocumentItemsTree, type DocumentItem } from '@/components/workflow/document-items-tree'
 import { DocumentActions } from '@/components/workflow/document-actions'
+import { DocumentForm } from '@/components/workflow/document-form'
 import {
   documentToTableRow, localQuoteToRow, localSOToRow, localDNToRow,
   localInvoiceToRow, paymentToRow, mapStatus
@@ -120,8 +121,7 @@ function PresupuestosTab() {
   const supabase = createClient()
   const [rows, setRows] = useState<Record<string, unknown>[]>([])
   const [loading, setLoading] = useState(true)
-  const [selectedQuote, setSelectedQuote] = useState<Row | null>(null)
-  const [quoteItems, setQuoteItems] = useState<Row[]>([])
+  const [selectedDoc, setSelectedDoc] = useState<{ id: string; source: 'local' | 'tt_documents' } | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -137,92 +137,23 @@ function PresupuestosTab() {
 
   useEffect(() => { load() }, [load])
 
-  const openDetail = async (row: Record<string, unknown>) => {
+  const openDetail = (row: Record<string, unknown>) => {
     const doc = row._raw as Row
-    const source = row._source as string
-    if (!source || source !== 'local') {
-      const { data } = await supabase.from('tt_document_items').select('*').eq('document_id', doc.id).order('sort_order')
-      setQuoteItems(data || [])
-    } else {
-      const { data } = await supabase.from('tt_quote_items').select('*').eq('quote_id', doc.id).order('sort_order')
-      setQuoteItems(data || [])
-    }
-    setSelectedQuote(doc)
+    const src = row._source as string
+    setSelectedDoc({ id: doc.id as string, source: src === 'local' ? 'local' : 'tt_documents' })
   }
 
-  if (selectedQuote) {
-    const isDoc = !(selectedQuote as Row & { _source?: string })._source || ((selectedQuote as Row & { _source?: string })._source !== 'local')
-    // Check if it came from documentToTableRow or localQuoteToRow by looking at source on the parent
-    const clientObj = !isDoc ? selectedQuote.tt_clients as Row | null : null
-    const joinedClient = isDoc ? selectedQuote.client as Record<string, unknown> | undefined : undefined
-    const clientName = isDoc
-      ? (joinedClient?.legal_name as string) || (joinedClient?.name as string)
-        || ((selectedQuote.metadata as Record<string, unknown>)?.stelorder_raw as Record<string, unknown>)?.['account-name'] as string || 'Sin cliente'
-      : (clientObj?.name as string) || 'Sin cliente'
-    const ref = isDoc
-      ? ((selectedQuote.display_ref as string) || (selectedQuote.system_code as string) || '')
-      : ((selectedQuote.doc_number as string) || (selectedQuote.number as string) || '')
-
-    const steps: WorkflowStep[] = [
-      { key: 'coti', label: 'Cotizacion', icon: '\uD83D\uDCCB', status: 'current', documentRef: ref },
-      { key: 'pedido', label: 'Pedido', icon: '\uD83D\uDCE6', status: 'pending' },
-      { key: 'delivery_note', label: 'Albaran', icon: '\uD83D\uDE9A', status: 'pending' },
-      { key: 'factura', label: 'Factura', icon: '\uD83D\uDCB3', status: 'pending' },
-      { key: 'cobro', label: 'Cobro', icon: '\uD83D\uDCB0', status: 'pending' },
-    ]
-
-    const docItems: DocumentItem[] = quoteItems.map((it, idx) => ({
-      id: (it.id as string) || `qi-${idx}`,
-      sku: (it.sku as string) || '',
-      description: (it.description as string) || '',
-      quantity: (it.quantity as number) || 0,
-      unit_price: (it.unit_price as number) || 0,
-      subtotal: (it.subtotal as number) || (it.line_total as number) || 0,
-      qty_delivered: 0, qty_invoiced: 0, qty_reserved: 0,
-      status: 'pending', statusColor: '#6B7280', statusLabel: 'Sin pedido',
-      stockAvailable: 0, stockReserved: 0, stockIndicator: 'ok' as const,
-      requires_po: false, hasComponents: false,
-    }))
-
-    const quoteSource = isDoc ? 'tt_documents' : 'local' as const
-
+  if (selectedDoc) {
+    const allIds = rows.map(r => (r._raw as Row).id as string)
     return (
-      <DocumentDetailLayout
-        workflowSteps={steps}
-        document={{
-          id: selectedQuote.id as string, type: 'coti', system_code: ref,
-          display_ref: `Presupuesto ${clientName}`,
-          status: (selectedQuote.status as string) || 'draft',
-          currency: (selectedQuote.currency as string) || 'EUR',
-          total: (selectedQuote.total as number) || 0,
-          subtotal: (selectedQuote.subtotal as number) || 0,
-          tax_amount: (selectedQuote.tax_amount as number) || 0,
-          created_at: (selectedQuote.created_at as string) || new Date().toISOString(),
-        }}
-        client={clientObj ? { id: '', name: clientName, tax_id: clientObj.tax_id as string, country: clientObj.country as string } : undefined}
-        notes={[]}
-        onAddNote={() => {}}
-        onBack={() => setSelectedQuote(null)}
-        backLabel="Volver a presupuestos"
-      >
-        <DocumentActions
-          document={selectedQuote}
-          documentType="coti"
-          source={quoteSource}
-          clientName={clientName}
-          onAction={(action) => {
-            if (action === 'order_created') {
-              setSelectedQuote(null)
-              load()
-            } else {
-              load()
-              // Recargar el detalle
-              if (selectedQuote) openDetail({ _raw: selectedQuote, _source: quoteSource } as Record<string, unknown>)
-            }
-          }}
-        />
-        <DocumentItemsTree items={docItems} components={[]} showStock={false} />
-      </DocumentDetailLayout>
+      <DocumentForm
+        documentId={selectedDoc.id}
+        documentType="coti"
+        source={selectedDoc.source}
+        onBack={() => { setSelectedDoc(null); load() }}
+        onUpdate={load}
+        siblingIds={allIds}
+      />
     )
   }
 
@@ -316,22 +247,16 @@ function PedidosTab() {
     setShowCreate(false); setSelectedClient(''); setNewLines([]); load(); setSaving(false)
   }
 
-  const openDetail = async (row: Record<string, unknown>) => {
+  const openDetail = (row: Record<string, unknown>) => {
     const doc = row._raw as Row
-    const source = row._source as string
-    if (!source || source !== 'local') {
-      const { data } = await supabase.from('tt_document_items').select('*').eq('document_id', doc.id).order('sort_order')
-      setSOItems(data || [])
-    } else {
-      const { data } = await supabase.from('tt_so_items').select('*').eq('sales_order_id', doc.id).order('sort_order')
-      setSOItems(data || [])
-    }
-    setSelectedSO(doc)
+    const src = row._source as string
+    setSelectedSO({ id: doc.id as string, source: src === 'local' ? 'local' : 'tt_documents' } as unknown as Row)
   }
 
   const openDelivery = async (so: Row) => {
-    setSelectedSO(so)
-    const { data } = await supabase.from('tt_so_items').select('*').eq('sales_order_id', so.id).order('sort_order')
+    const rawSO = so as Row
+    setSelectedSO(rawSO)
+    const { data } = await supabase.from('tt_so_items').select('*').eq('sales_order_id', rawSO.id).order('sort_order')
     setDeliveryLines((data || []).map((it: Row) => ({ id: it.id as string, desc: (it.description || '') as string, ordered: (it.qty_ordered || it.quantity || 0) as number, delivered: (it.qty_delivered || 0) as number, toDeliver: 0 })))
     setShowDelivery(true)
   }
@@ -360,89 +285,19 @@ function PedidosTab() {
     setSelectedSO(null); load()
   }
 
-  // Detail view
+  // Detail view via DocumentForm
   if (selectedSO && !showDelivery) {
-    const isDoc = !(selectedSO as Row & { _source?: string })._source
-    const clientObj = !isDoc ? selectedSO.tt_clients as Row | null : null
-    const joinedClient = isDoc ? selectedSO.client as Record<string, unknown> | undefined : undefined
-    const raw = isDoc ? (selectedSO.metadata as Record<string, unknown>)?.stelorder_raw as Record<string, unknown> | undefined : undefined
-    const clientName = isDoc
-      ? (joinedClient?.legal_name as string) || (joinedClient?.name as string) || (raw?.['account-name'] as string) || 'Sin cliente'
-      : (clientObj?.name as string) || 'Sin cliente'
-    const st = (selectedSO.status as string) || 'open'
-
-    const totalOrdered = soItems.reduce((s, it) => s + ((it.qty_ordered as number) || (it.quantity as number) || 0), 0)
-    const totalDelivered = soItems.reduce((s, it) => s + ((it.qty_delivered as number) || 0), 0)
-    const totalInvoiced = soItems.reduce((s, it) => s + ((it.qty_invoiced as number) || 0), 0)
-    const deliveredPct = totalOrdered > 0 ? Math.round((totalDelivered / totalOrdered) * 100) : 0
-    const invoicedPct = totalOrdered > 0 ? Math.round((totalInvoiced / totalOrdered) * 100) : 0
-
-    const docItems: DocumentItem[] = soItems.map((it, idx) => {
-      const ordered = (it.qty_ordered as number) || (it.quantity as number) || 0
-      const delivered = (it.qty_delivered as number) || 0
-      const invoiced = (it.qty_invoiced as number) || 0
-      const isDone = delivered >= ordered
-      return {
-        id: (it.id as string) || `si-${idx}`,
-        sku: (it.sku as string) || '',
-        description: (it.description as string) || '',
-        quantity: ordered,
-        unit_price: (it.unit_price as number) || 0,
-        subtotal: (it.line_total as number) || 0,
-        qty_delivered: delivered,
-        qty_invoiced: invoiced,
-        qty_reserved: (it.qty_reserved as number) || 0,
-        status: isDone ? 'completed' : delivered > 0 ? 'partial' : 'pending',
-        statusColor: isDone ? '#00C853' : delivered > 0 ? '#FFB300' : '#6B7280',
-        statusLabel: isDone ? 'Entregado' : delivered > 0 ? 'Parcial' : 'Pendiente',
-        stockAvailable: 0, stockReserved: 0, stockIndicator: 'ok' as const,
-        requires_po: false, hasComponents: false,
-      }
-    })
-
-    const soSource = isDoc ? 'tt_documents' : 'local' as const
-
+    const docInfo = selectedSO as unknown as { id: string; source: 'local' | 'tt_documents' }
+    const allIds = rows.map(r => (r._raw as Row).id as string)
     return (
-      <DocumentDetailLayout
-        workflowSteps={buildSOWorkflow(selectedSO)}
-        document={{
-          id: selectedSO.id as string, type: 'pedido',
-          system_code: (selectedSO.doc_number as string) || '',
-          display_ref: `Pedido ${clientName}`,
-          status: st, currency: (selectedSO.currency as string) || 'EUR',
-          total: (selectedSO.total as number) || 0,
-          subtotal: (selectedSO.subtotal as number) || 0,
-          tax_amount: (selectedSO.tax_amount as number) || 0,
-          created_at: (selectedSO.created_at as string) || new Date().toISOString(),
-        }}
-        client={clientObj ? { id: '', name: clientName, tax_id: (clientObj.tax_id as string), country: (clientObj.country as string) } : undefined}
-        deliveryProgress={{
-          clientName, deliveredPct, invoicedPct, collectedPct: 0,
-          itemStatuses: docItems.map((i) => ({ label: i.statusLabel, color: i.statusColor })),
-        }}
-        trackingSummary={[
-          { label: 'Items', value: soItems.length, color: '#F0F2F5' },
-          { label: 'Entregado', value: `${deliveredPct}%`, color: deliveredPct >= 100 ? '#00C853' : '#FFB300' },
-          { label: 'Facturado', value: `${invoicedPct}%`, color: invoicedPct >= 100 ? '#00C853' : '#6B7280' },
-        ]}
-        overallProgress={deliveredPct}
-        notes={[]}
-        onAddNote={() => {}}
-        onBack={() => setSelectedSO(null)}
-        backLabel="Volver a pedidos"
-      >
-        <DocumentActions
-          document={selectedSO}
-          documentType="pedido"
-          source={soSource}
-          clientName={clientName}
-          onAction={(action) => {
-            setSelectedSO(null)
-            load()
-          }}
-        />
-        <DocumentItemsTree items={docItems} components={[]} showStock={false} />
-      </DocumentDetailLayout>
+      <DocumentForm
+        documentId={docInfo.id}
+        documentType="pedido"
+        source={docInfo.source}
+        onBack={() => { setSelectedSO(null); load() }}
+        onUpdate={load}
+        siblingIds={allIds}
+      />
     )
   }
 
@@ -516,6 +371,7 @@ function AlbaranesTab() {
   const supabase = createClient()
   const [rows, setRows] = useState<Record<string, unknown>[]>([])
   const [loading, setLoading] = useState(true)
+  const [selectedDoc, setSelectedDoc] = useState<{ id: string; source: 'local' | 'tt_documents' } | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -531,6 +387,26 @@ function AlbaranesTab() {
 
   useEffect(() => { load() }, [load])
 
+  const openDetail = (row: Record<string, unknown>) => {
+    const doc = row._raw as Row
+    const src = row._source as string
+    setSelectedDoc({ id: doc.id as string, source: src === 'local' ? 'local' : 'tt_documents' })
+  }
+
+  if (selectedDoc) {
+    const allIds = rows.map(r => (r._raw as Row).id as string)
+    return (
+      <DocumentForm
+        documentId={selectedDoc.id}
+        documentType="delivery_note"
+        source={selectedDoc.source}
+        onBack={() => { setSelectedDoc(null); load() }}
+        onUpdate={load}
+        siblingIds={allIds}
+      />
+    )
+  }
+
   return (
     <DataTable
       data={rows}
@@ -538,6 +414,7 @@ function AlbaranesTab() {
       loading={loading}
       totalLabel="albaranes"
       showTotals
+      onRowClick={openDetail}
       exportFilename="albaranes_torquetools"
       pageSize={25}
     />
@@ -549,9 +426,9 @@ function AlbaranesTab() {
 // ===============================================================
 function FacturasTab() {
   const supabase = createClient()
-  const { addToast } = useToast()
   const [rows, setRows] = useState<Record<string, unknown>[]>([])
   const [loading, setLoading] = useState(true)
+  const [selectedDoc, setSelectedDoc] = useState<{ id: string; source: 'local' | 'tt_documents' } | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -567,15 +444,24 @@ function FacturasTab() {
 
   useEffect(() => { load() }, [load])
 
-  const handleRowClick = async (row: Record<string, unknown>) => {
-    const source = row._source as string
-    if (source === 'local' && row.estado !== 'Pagada') {
-      const doc = row._raw as Row
-      await supabase.from('tt_invoices').update({ status: 'paid' }).eq('id', doc.id)
-      await supabase.from('tt_payments').insert({ invoice_id: doc.id, amount: doc.total, method: 'transferencia', status: 'completed' })
-      addToast({ type: 'success', title: 'Pago registrado' })
-      load()
-    }
+  const openDetail = (row: Record<string, unknown>) => {
+    const doc = row._raw as Row
+    const src = row._source as string
+    setSelectedDoc({ id: doc.id as string, source: src === 'local' ? 'local' : 'tt_documents' })
+  }
+
+  if (selectedDoc) {
+    const allIds = rows.map(r => (r._raw as Row).id as string)
+    return (
+      <DocumentForm
+        documentId={selectedDoc.id}
+        documentType="factura"
+        source={selectedDoc.source}
+        onBack={() => { setSelectedDoc(null); load() }}
+        onUpdate={load}
+        siblingIds={allIds}
+      />
+    )
   }
 
   return (
@@ -585,7 +471,7 @@ function FacturasTab() {
       loading={loading}
       totalLabel="facturas"
       showTotals
-      onRowClick={handleRowClick}
+      onRowClick={openDetail}
       exportFilename="facturas_venta_torquetools"
       pageSize={25}
     />

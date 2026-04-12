@@ -19,6 +19,7 @@ import { formatCurrency, formatDate, formatRelative, getInitials } from '@/lib/u
 import { DocumentDetailLayout, type WorkflowStep } from '@/components/workflow/document-detail-layout'
 import { DocumentItemsTree, type DocumentItem } from '@/components/workflow/document-items-tree'
 import { DocumentListCard } from '@/components/workflow/document-list-card'
+import { DocumentForm } from '@/components/workflow/document-form'
 import { documentToTableRow, localPOToRow, purchaseInvoiceToRow, mapStatus, extractClientName, extractDocRef } from '@/lib/document-helpers'
 import type { Supplier, SupplierContact, PurchaseInvoice, PurchasePayment } from '@/types'
 import {
@@ -1078,55 +1079,17 @@ function PedidosCompraTab() {
   }
 
   if (selectedPO && !showReceive) {
-    const st = (selectedPO.status as string) || 'draft'
-    const supplierName = (selectedPO.supplier_name as string) || 'Sin proveedor'
-    const totalOrdered = poItems.reduce((s, it) => s + ((it.quantity as number) || 0), 0)
-    const totalReceived = poItems.reduce((s, it) => s + ((it.qty_received as number) || 0), 0)
-    const receivedPct = totalOrdered > 0 ? Math.round((totalReceived / totalOrdered) * 100) : 0
-    const docItems: DocumentItem[] = poItems.map((it, idx) => {
-      const ordered = (it.quantity as number) || 0
-      const received = (it.qty_received as number) || 0
-      const isDone = received >= ordered
-      return {
-        id: (it.id as string) || `pi-${idx}`, sku: (it.sku as string) || '',
-        description: (it.description as string) || '', quantity: ordered,
-        unit_price: (it.unit_cost as number) || 0, subtotal: (it.line_total as number) || 0,
-        qty_delivered: received, qty_invoiced: 0, qty_reserved: 0,
-        status: isDone ? 'completed' : received > 0 ? 'partial' : 'pending',
-        statusColor: isDone ? '#00C853' : received > 0 ? '#FFB300' : '#6B7280',
-        statusLabel: isDone ? 'Recibido' : received > 0 ? 'Parcial' : 'Pendiente',
-        stockAvailable: 0, stockReserved: 0, stockIndicator: 'ok' as const,
-        requires_po: false, hasComponents: false,
-      }
-    })
-    const alerts = st === 'sent' && selectedPO.created_at ? (() => {
-      const daysSince = Math.floor((Date.now() - new Date(selectedPO.created_at as string).getTime()) / (1000 * 60 * 60 * 24))
-      if (daysSince > 14) return [{ id: 'overdue-alert', type: 'po_overdue', severity: 'warning' as const, title: `OC enviada hace ${daysSince} dias sin confirmacion`, description: `Verificar con ${supplierName} el estado del envio.`, status: 'active' }]
-      return []
-    })() : []
-    const actionButtons = (
-      <div className="flex gap-2 mt-4">
-        {st === 'draft' && <Button variant="secondary" onClick={() => changeStatus(selectedPO.id as string, 'sent')}><Send size={14} /> Marcar Enviada</Button>}
-        {(st === 'sent' || st === 'partial') && <Button variant="secondary" onClick={() => openReceive(selectedPO)}><Truck size={14} /> Registrar Recepcion</Button>}
-        {st === 'received' && <Button variant="secondary" onClick={() => changeStatus(selectedPO.id as string, 'closed')}><CheckCircle size={14} /> Cerrar OC</Button>}
-      </div>
-    )
+    const src = (selectedPO as Row & { _source?: string })._source === 'tt_documents' ? 'tt_documents' : 'local' as const
+    const allIds = orders.map(o => o.id as string)
     return (
-      <DocumentDetailLayout
-        workflowSteps={buildPOWorkflow(selectedPO)}
-        document={{ id: selectedPO.id as string, type: 'pap', system_code: `PAP-${(selectedPO.id as string).slice(0, 8).toUpperCase()}`, display_ref: `Compra ${supplierName}`, status: st, currency: 'EUR', total: (selectedPO.total as number) || 0, subtotal: (selectedPO.total as number) || 0, tax_amount: 0, created_at: (selectedPO.created_at as string) || new Date().toISOString() }}
-        alerts={alerts}
-        deliveryProgress={{ clientName: supplierName, deliveredPct: receivedPct, invoicedPct: 0, collectedPct: 0, ocRef: supplierName, itemStatuses: docItems.map((i) => ({ label: i.statusLabel, color: i.statusColor })) }}
-        trackingSummary={[
-          { label: 'Proveedor', value: supplierName, color: '#F0F2F5' },
-          { label: 'Items', value: poItems.length, color: '#F0F2F5' },
-          { label: 'Recibido', value: `${receivedPct}%`, color: receivedPct >= 100 ? '#00C853' : '#FFB300' },
-        ]}
-        overallProgress={receivedPct} notes={[]} onAddNote={() => {}} onBack={() => setSelectedPO(null)} backLabel="Volver a pedidos de compra"
-      >
-        <DocumentItemsTree items={docItems} components={[]} showStock={false} />
-        {actionButtons}
-      </DocumentDetailLayout>
+      <DocumentForm
+        documentId={selectedPO.id as string}
+        documentType="pap"
+        source={src}
+        onBack={() => { setSelectedPO(null); load() }}
+        onUpdate={load}
+        siblingIds={allIds}
+      />
     )
   }
 
