@@ -23,6 +23,7 @@ import {
   CreditCard, Truck, Clock, ChevronRight, Trash2, Star,
   Globe, Hash, ArrowLeft, Search
 } from 'lucide-react'
+import { DocLink } from '@/components/ui/doc-link'
 
 // ═══════════════════════════════════════════════════════
 // CONSTANTS
@@ -607,7 +608,7 @@ function CompanyDetail({ company, onClose, onUpdate }: {
                         return (
                           <TableRow key={doc.id as string}>
                             <TableCell><Badge variant="info" size="sm">{typeLabels[docType] || docType}</Badge></TableCell>
-                            <TableCell className="font-mono text-xs text-[#FF6600]">{(doc.display_ref || doc.system_code) as string}</TableCell>
+                            <TableCell><DocLink docRef={(doc.display_ref || doc.system_code) as string} docId={doc.id as string} docType={doc.type as string} className="text-xs font-mono" /></TableCell>
                             <TableCell><Badge variant={(statusColors[(doc.status as string)] || 'default') as 'default' | 'success' | 'warning' | 'danger' | 'info' | 'orange'} size="sm">{doc.status as string}</Badge></TableCell>
                             <TableCell className="font-semibold text-[#F0F2F5]">{formatCurrency((doc.total as number) || 0, ((doc.currency as string) || 'EUR') as 'EUR' | 'ARS' | 'USD')}</TableCell>
                             <TableCell className="text-xs text-[#9CA3AF]">{formatDate(doc.created_at as string)}</TableCell>
@@ -651,7 +652,7 @@ function CompanyDetail({ company, onClose, onUpdate }: {
               <div className="space-y-2">
                 {documents.filter(d => d.type === 'sales_order' && d.status !== 'delivered' && d.status !== 'cancelled').slice(0, 5).map(d => (
                   <div key={d.id as string} className="flex items-center justify-between p-2 rounded-lg bg-[#0F1218]">
-                    <span className="text-xs font-mono text-[#FF6600]">{(d.display_ref || d.system_code) as string}</span>
+                    <DocLink docRef={(d.display_ref || d.system_code) as string} docId={d.id as string} docType={d.type as string} className="text-xs font-mono" />
                     <Badge variant="warning" size="sm">{d.status as string}</Badge>
                   </div>
                 ))}
@@ -668,7 +669,7 @@ function CompanyDetail({ company, onClose, onUpdate }: {
               <div className="space-y-2">
                 {documents.filter(d => d.type === 'invoice' && d.status !== 'paid' && d.status !== 'cancelled').slice(0, 5).map(d => (
                   <div key={d.id as string} className="flex items-center justify-between p-2 rounded-lg bg-[#0F1218]">
-                    <span className="text-xs font-mono text-[#FF6600]">{(d.display_ref || d.system_code) as string}</span>
+                    <DocLink docRef={(d.display_ref || d.system_code) as string} docId={d.id as string} docType={d.type as string} className="text-xs font-mono" />
                     <span className="text-xs font-semibold text-red-400">{formatCurrency((d.total as number) || 0, ((d.currency as string) || 'EUR') as 'EUR' | 'ARS' | 'USD')}</span>
                   </div>
                 ))}
@@ -686,7 +687,7 @@ function CompanyDetail({ company, onClose, onUpdate }: {
                 {documents.slice(0, 5).map(d => (
                   <div key={d.id as string} className="flex items-center justify-between p-2 rounded-lg bg-[#0F1218]">
                     <div>
-                      <span className="text-xs font-mono text-[#FF6600]">{(d.display_ref || d.system_code) as string}</span>
+                      <DocLink docRef={(d.display_ref || d.system_code) as string} docId={d.id as string} docType={d.type as string} className="text-xs font-mono" />
                       <p className="text-[10px] text-[#4B5563]">{formatRelative(d.created_at as string)}</p>
                     </div>
                     <span className="text-xs font-semibold text-[#F0F2F5]">{formatCurrency((d.total as number) || 0, ((d.currency as string) || 'EUR') as 'EUR' | 'ARS' | 'USD')}</span>

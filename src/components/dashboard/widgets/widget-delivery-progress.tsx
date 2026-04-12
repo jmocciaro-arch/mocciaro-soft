@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { Truck } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
+import { DocLink } from '@/components/ui/doc-link'
 import { WidgetSkeleton, WidgetError } from '../widget-wrapper'
 
 interface DeliveryItem {
@@ -92,7 +93,7 @@ export function WidgetDeliveryProgress() {
             <div className="flex items-center justify-between">
               <div className="flex-1 min-w-0">
                 <p className="text-xs text-[#F0F2F5] truncate">{d.client_name}</p>
-                <p className="text-[10px] text-[#6B7280] font-mono">{d.doc_number}</p>
+                <DocLink docRef={d.doc_number} docId={d.id} docType="delivery_note" className="text-[10px] font-mono" />
               </div>
               <span className="text-xs font-medium text-[#FF6600] ml-2">{pct}%</span>
             </div>

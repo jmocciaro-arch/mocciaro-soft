@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
 import { Edit3, Check, X, ExternalLink, User, Calendar, Building2 } from 'lucide-react'
+import { DocLink } from '@/components/ui/doc-link'
 
 interface Document {
   id: string
@@ -242,14 +243,15 @@ export function DocumentHeader({
         {/* Quick links to parent docs */}
         {parentDocs && parentDocs.length > 0 && (
           <div className="flex items-center gap-2">
-            {parentDocs.map((doc) => (
-              <button
-                key={doc.id}
-                className="flex items-center gap-1 px-2 py-1 rounded-md bg-[#1C2230] border border-[#2A3040] hover:border-[#FF6600] text-[10px] text-[#9CA3AF] hover:text-[#FF6600] transition-colors"
+            {parentDocs.map((pdoc) => (
+              <span
+                key={pdoc.id}
+                className="flex items-center gap-1 px-2 py-1 rounded-md bg-[#1C2230] border border-[#2A3040] text-[10px] text-[#9CA3AF]"
               >
                 <ExternalLink size={10} />
-                Ver {typeLabels[doc.type] || doc.type}: {doc.ref}
-              </button>
+                Ver {typeLabels[pdoc.type] || pdoc.type}:{' '}
+                <DocLink docRef={pdoc.ref} docId={pdoc.id} docType={pdoc.type} className="text-[10px]" />
+              </span>
             ))}
           </div>
         )}

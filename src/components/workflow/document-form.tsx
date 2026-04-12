@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Modal } from '@/components/ui/modal'
 import { useToast } from '@/components/ui/toast'
-import { formatCurrency, formatDate, INCOTERMS } from '@/lib/utils'
+import { formatCurrency, formatDate, formatRelative, INCOTERMS } from '@/lib/utils'
 import { mapStatus } from '@/lib/document-helpers'
 import { DocumentActions, type DocumentActionType } from './document-actions'
 import { SendDocumentModal } from './send-document-modal'
@@ -15,8 +15,9 @@ import {
   ArrowLeft, Edit3, Save, Printer, Mail, MoreVertical,
   ChevronLeft, ChevronRight, Trash2, Copy, RefreshCw,
   Plus, X, Search, FileText, Link2, Clock, Paperclip,
-  PenTool, Loader2, ExternalLink, GripVertical,
+  PenTool, Loader2, ExternalLink, GripVertical, Eye, Send,
 } from 'lucide-react'
+import { DocLink } from '@/components/ui/doc-link'
 
 type Row = Record<string, unknown>
 
@@ -235,6 +236,14 @@ export function DocumentForm({
   const [showSendModal, setShowSendModal] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
+  // Send tracking
+  const [lastSend, setLastSend] = useState<{
+    sent_at: string
+    open_count: number
+    delivery_status: string
+    first_opened_at: string | null
+  } | null>(null)
+
   // Navigation
   const currentIndex = siblingIds ? siblingIds.indexOf(documentId) : -1
   const totalSiblings = siblingIds?.length ?? 0
@@ -452,6 +461,23 @@ export function DocumentForm({
           })))
         }
       }
+      // Load last send tracking info
+      try {
+        const { data: sendData } = await supabase
+          .from('tt_document_sends')
+          .select('sent_at, open_count, delivery_status, first_opened_at')
+          .eq('document_id', documentId)
+          .order('sent_at', { ascending: false })
+          .limit(1)
+          .single()
+        if (sendData) {
+          setLastSend(sendData as typeof lastSend)
+        }
+      } catch {
+        // No sends yet, that's ok
+        setLastSend(null)
+      }
+
     } catch (err) {
       addToast({ type: 'error', title: 'Error cargando documento', message: (err as Error).message })
     } finally {
@@ -923,6 +949,25 @@ export function DocumentForm({
 
           {/* Right: Actions */}
           <div className="flex items-center gap-2">
+            {/* Send tracking indicator */}
+            {lastSend && (
+              <button
+                onClick={() => setShowSendModal(true)}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                  lastSend.open_count > 0
+                    ? 'bg-[#10B981]/15 text-[#10B981] hover:bg-[#10B981]/25'
+                    : 'bg-[#F59E0B]/15 text-[#F59E0B] hover:bg-[#F59E0B]/25'
+                }`}
+                title="Ver historial de envios"
+              >
+                {lastSend.open_count > 0 ? <Eye size={12} /> : <Send size={12} />}
+                {lastSend.open_count > 0
+                  ? `Abierto ${lastSend.open_count}x`
+                  : `Enviado ${formatRelative(lastSend.sent_at)}`
+                }
+              </button>
+            )}
+
             <Button variant="outline" size="sm" onClick={handlePrint}>
               <Printer size={14} />
             </Button>
@@ -982,9 +1027,12 @@ export function DocumentForm({
             <span key={pl.id} className="inline-flex items-center gap-1.5 text-xs text-[#9CA3AF]">
               <Link2 size={12} className="text-[#6B7280]" />
               Generado a partir de:
-              <button className="text-[#FF6600] hover:underline font-medium">
-                {PREFIX_MAP[pl.type] || pl.type}{pl.display_ref ? ` ${pl.display_ref}` : ''}
-              </button>
+              <DocLink
+                docRef={pl.display_ref || `${PREFIX_MAP[pl.type] || pl.type}`}
+                docId={pl.id}
+                docType={pl.type}
+                className="text-xs"
+              />
               {pl.created_at && (
                 <span className="text-[#4B5563]">({formatDate(pl.created_at)})</span>
               )}
@@ -1628,13 +1676,18 @@ export function DocumentForm({
                   {parentLinks.map((link) => (
                     <div
                       key={link.id}
-                      className="flex items-center justify-between px-4 py-3 rounded-lg bg-[#0F1218] border border-[#1E2330] hover:border-[#FF6600] transition-colors cursor-pointer"
+                      className="flex items-center justify-between px-4 py-3 rounded-lg bg-[#0F1218] border border-[#1E2330] hover:border-[#FF6600]/30 transition-colors"
                     >
                       <div className="flex items-center gap-3">
                         <span className="px-2 py-0.5 rounded text-xs font-bold bg-[#FF6600]/20 text-[#FF6600] uppercase">
                           {PREFIX_MAP[link.type] || link.type}
                         </span>
-                        <span className="text-sm text-[#F0F2F5] font-mono">{link.display_ref}</span>
+                        <DocLink
+                          docRef={link.display_ref || link.system_code}
+                          docId={link.id}
+                          docType={link.type}
+                          className="text-sm font-mono"
+                        />
                       </div>
                       <div className="flex items-center gap-2 text-xs text-[#6B7280]">
                         {link.created_at && <span>{formatDate(link.created_at)}</span>}
@@ -1654,13 +1707,18 @@ export function DocumentForm({
                   {childLinks.map((link) => (
                     <div
                       key={link.id}
-                      className="flex items-center justify-between px-4 py-3 rounded-lg bg-[#0F1218] border border-[#1E2330] hover:border-[#FF6600] transition-colors cursor-pointer"
+                      className="flex items-center justify-between px-4 py-3 rounded-lg bg-[#0F1218] border border-[#1E2330] hover:border-[#10B981]/30 transition-colors"
                     >
                       <div className="flex items-center gap-3">
                         <span className="px-2 py-0.5 rounded text-xs font-bold bg-[#10B981]/20 text-[#10B981] uppercase">
                           {PREFIX_MAP[link.type] || link.type}
                         </span>
-                        <span className="text-sm text-[#F0F2F5] font-mono">{link.display_ref}</span>
+                        <DocLink
+                          docRef={link.display_ref || link.system_code}
+                          docId={link.id}
+                          docType={link.type}
+                          className="text-sm font-mono"
+                        />
                       </div>
                       <div className="flex items-center gap-2 text-xs text-[#6B7280]">
                         {link.created_at && <span>{formatDate(link.created_at)}</span>}
@@ -1717,12 +1775,48 @@ export function DocumentForm({
         onClose={() => setShowSendModal(false)}
         documentType={documentType}
         documentNumber={doc.display_ref || doc.system_code}
+        documentId={documentId}
         clientName={client?.name || 'Cliente'}
         clientEmail={client?.email || undefined}
+        clientId={client?.id || undefined}
         total={totals.total}
         currency={(doc.currency || 'EUR') as 'EUR' | 'ARS' | 'USD'}
+        items={displayItems.map(i => ({
+          sku: i.sku,
+          description: i.description,
+          quantity: i.quantity,
+          unit_price: i.unit_price,
+          discount_pct: i.discount_pct,
+          subtotal: i.subtotal,
+          notes: i.notes,
+          is_section: i.is_section,
+          section_label: i.section_label,
+        }))}
+        document={{
+          type: doc.type,
+          display_ref: doc.display_ref,
+          system_code: doc.system_code,
+          status: doc.status,
+          currency: doc.currency,
+          subtotal: totals.subtotal,
+          tax_amount: totals.taxAmount,
+          tax_rate: doc.tax_rate,
+          total: totals.total,
+          notes: doc.notes,
+          created_at: doc.created_at,
+          valid_until: doc.valid_until,
+          delivery_date: doc.delivery_date,
+          incoterm: doc.incoterm,
+          payment_terms: doc.payment_terms,
+          shipping_address: doc.shipping_address,
+        }}
+        client={client ? {
+          name: client.name,
+          legal_name: client.legal_name,
+          tax_id: client.tax_id,
+          email: client.email,
+        } : undefined}
         onSent={() => {
-          setShowSendModal(false)
           loadDocument()
         }}
       />

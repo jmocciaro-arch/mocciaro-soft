@@ -6,6 +6,7 @@ import { FileText } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { formatCurrency, formatRelative } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
+import { DocLink } from '@/components/ui/doc-link'
 import { WidgetSkeleton, WidgetError } from '../widget-wrapper'
 
 interface RecentQuote {
@@ -94,7 +95,7 @@ export function WidgetRecentQuotes() {
           className="p-2.5 rounded-lg bg-[#0F1218] border border-[#1E2330] hover:border-[#2A3040] transition-all cursor-pointer"
         >
           <div className="flex items-center justify-between mb-0.5">
-            <span className="text-xs font-mono text-[#FF6600]">{q.number}</span>
+            <DocLink docRef={q.number} docId={q.id} docType="coti" className="text-xs font-mono" />
             <Badge variant={
               q.status === 'aceptada' ? 'success' :
               q.status === 'rechazada' ? 'danger' :
