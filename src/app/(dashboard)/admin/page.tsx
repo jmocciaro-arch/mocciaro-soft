@@ -67,16 +67,31 @@ interface UserForm {
   company_id: string
   active: boolean
   permissions: Record<string, boolean>
+  specialties: string[]
   // RBAC
   rbac_role_ids: string[]
   rbac_team_ids: string[]
 }
+
+const STAFF_SPECIALTIES = [
+  { value: 'torque', label: 'Torque (atornilladores, torquimetros)' },
+  { value: 'ingenieria', label: 'Ingenieria / Produccion' },
+  { value: 'produccion', label: 'Produccion' },
+  { value: 'epp_seguridad', label: 'EPP / Seguridad Industrial' },
+  { value: 'ecommerce', label: 'Comercio Electronico' },
+  { value: 'logistica', label: 'Logistica / Envios' },
+  { value: 'administracion', label: 'Administracion' },
+  { value: 'sat', label: 'Servicio Tecnico (SAT)' },
+  { value: 'calibracion', label: 'Calibracion' },
+  { value: 'all', label: 'Ve todo (Admin)' },
+]
 
 function emptyUserForm(): UserForm {
   return {
     username: '', full_name: '', email: '', role: 'vendedor',
     gmail: '', whatsapp: '', phone: '', company_id: '', active: true,
     permissions: {},
+    specialties: [],
     rbac_role_ids: [],
     rbac_team_ids: [],
   }
@@ -246,6 +261,7 @@ export default function AdminPage() {
       company_id: (u.company_id as string) || '',
       active: u.active !== false,
       permissions: {},
+      specialties: ((u.permissions as Record<string, unknown>)?.specialties as string[]) || [],
       rbac_role_ids: currentRbacRoleIds,
       rbac_team_ids: [],
     })
@@ -290,6 +306,9 @@ export default function AdminPage() {
               userForm.rbac_role_ids.map(rid => ({ user_id: editingUserId, role_id: rid }))
             )
           }
+          // Save specialties in permissions JSONB
+          const existingPerms = (usersData.find(u => (u as Row).id === editingUserId) as Row)?.permissions as Record<string, unknown> || {}
+          await supabase.from('tt_users').update({ permissions: { ...existingPerms, specialties: userForm.specialties } }).eq('id', editingUserId)
           addToast({ type: 'success', title: 'Usuario actualizado' })
           setShowUserModal(false)
           loadUsers()
@@ -978,6 +997,41 @@ export default function AdminPage() {
             </div>
 
             {/* RBAC Roles */}
+            {/* Specialties */}
+            <div>
+              <p className="text-xs font-medium text-[#6B7280] uppercase tracking-wider mb-3">
+                Especialidades
+                <span className="text-[10px] font-normal normal-case ml-2 text-[#4B5563]">
+                  (determina que leads/avisos recibe este usuario)
+                </span>
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {STAFF_SPECIALTIES.map(spec => {
+                  const isSelected = userForm.specialties.includes(spec.value)
+                  return (
+                    <button key={spec.value} type="button"
+                      onClick={() => setUserForm(prev => ({
+                        ...prev,
+                        specialties: isSelected
+                          ? prev.specialties.filter(s => s !== spec.value)
+                          : [...prev.specialties, spec.value]
+                      }))}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-all text-left ${
+                        isSelected
+                          ? 'bg-[#FF6600]/15 text-[#FF6600] border border-[#FF6600]/30'
+                          : 'bg-[#0F1218] text-[#6B7280] border border-[#1E2330] hover:border-[#2A3040]'
+                      }`}
+                    >
+                      <div className={`w-4 h-4 rounded border flex items-center justify-center ${isSelected ? 'bg-[#FF6600] border-[#FF6600]' : 'border-[#2A3040]'}`}>
+                        {isSelected && <span className="text-white text-[10px]">&#10003;</span>}
+                      </div>
+                      {spec.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
             <div>
               <p className="text-xs font-medium text-[#6B7280] uppercase tracking-wider mb-3">
                 Roles RBAC

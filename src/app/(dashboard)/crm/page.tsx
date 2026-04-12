@@ -45,15 +45,48 @@ const URGENCY_LEVELS = [
 ]
 
 const PRODUCT_INTEREST = [
-  { value: 'atornilladores', label: 'Atornilladores' },
-  { value: 'llaves_torque', label: 'Llaves de torque' },
+  { value: 'atornilladores', label: 'Atornilladores / Torque' },
+  { value: 'llaves_torque', label: 'Llaves de torque / Torquimetros' },
   { value: 'equilibradoras', label: 'Equilibradoras / Balancines' },
   { value: 'soldadura', label: 'Soldadura por puntos' },
+  { value: 'ingenieria', label: 'Ingenieria / Produccion' },
+  { value: 'epp_seguridad', label: 'EPP / Seguridad Industrial' },
   { value: 'accesorios', label: 'Accesorios / Repuestos' },
   { value: 'servicio_tecnico', label: 'Servicio tecnico (SAT)' },
   { value: 'calibracion', label: 'Calibracion' },
+  { value: 'ecommerce', label: 'Comercio electronico' },
+  { value: 'logistica', label: 'Logistica / Envios' },
   { value: 'varios', label: 'Varios productos' },
   { value: 'otro', label: 'Otro' },
+]
+
+// Mapeo: producto de interes → especialidad del vendedor
+const PRODUCT_TO_SPECIALTY: Record<string, string[]> = {
+  atornilladores: ['torque'],
+  llaves_torque: ['torque'],
+  equilibradoras: ['ingenieria', 'produccion'],
+  soldadura: ['ingenieria', 'produccion'],
+  ingenieria: ['ingenieria', 'produccion'],
+  epp_seguridad: ['epp_seguridad'],
+  accesorios: ['torque', 'ingenieria'],
+  servicio_tecnico: ['torque', 'ingenieria'],
+  calibracion: ['torque'],
+  ecommerce: ['ecommerce'],
+  logistica: ['logistica'],
+}
+
+/** Staff specialties categories (editable in Admin → Users) */
+export const STAFF_SPECIALTIES = [
+  { value: 'torque', label: 'Torque (atornilladores, torquimetros)' },
+  { value: 'ingenieria', label: 'Ingenieria / Produccion' },
+  { value: 'produccion', label: 'Produccion' },
+  { value: 'epp_seguridad', label: 'EPP / Seguridad Industrial' },
+  { value: 'ecommerce', label: 'Comercio Electronico' },
+  { value: 'logistica', label: 'Logistica / Envios' },
+  { value: 'administracion', label: 'Administracion' },
+  { value: 'sat', label: 'Servicio Tecnico (SAT)' },
+  { value: 'calibracion', label: 'Calibracion' },
+  { value: 'all', label: 'Ve todo (Admin)' },
 ]
 
 const crmTabs = [
@@ -467,7 +500,24 @@ function PipelineTab() {
 
           {/* Product interest + Urgency */}
           <div className="grid grid-cols-2 gap-4">
-            <Select label="Producto de interes" value={newOpp.product_interest} onChange={e => setNewOpp({ ...newOpp, product_interest: e.target.value })} options={PRODUCT_INTEREST} placeholder="Seleccionar..." />
+            <Select label="Producto de interes" value={newOpp.product_interest} onChange={e => {
+              const product = e.target.value
+              setNewOpp(prev => ({ ...prev, product_interest: product }))
+              // Auto-suggest vendor by specialty (only if not already assigned)
+              if (product && !newOpp.assigned_to && !newOpp.client_id) {
+                const neededSpecs = PRODUCT_TO_SPECIALTY[product] || []
+                if (neededSpecs.length > 0) {
+                  const match = users.find(u => {
+                    const specs = ((u as unknown as Row).permissions as Record<string, unknown>)?.specialties as string[] || []
+                    return neededSpecs.some(s => specs.includes(s)) && !specs.includes('all')
+                  })
+                  if (match) {
+                    setNewOpp(prev => ({ ...prev, assigned_to: match.id }))
+                    addToast({ type: 'info', title: `Auto-asignado a ${match.full_name}`, message: `Especialista en ${neededSpecs.join(', ')}` })
+                  }
+                }
+              }
+            }} options={PRODUCT_INTEREST} placeholder="Seleccionar..." />
             <Select label="Urgencia" value={newOpp.urgency} onChange={e => setNewOpp({ ...newOpp, urgency: e.target.value })} options={URGENCY_LEVELS} />
           </div>
 
