@@ -1245,12 +1245,13 @@ function TarifasTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    let q = supabase.from('tt_products').select('id, sku, name, brand, price_eur, cost_eur').eq('active', true).order('brand').order('name')
+    const sb = createClient()
+    let q = sb.from('tt_products').select('id, sku, name, brand, price_eur, cost_eur').eq('active', true).order('brand').order('name')
     if (brandFilter) q = q.ilike('brand', brandFilter)
     const { data } = await q.limit(200)
     setProducts(data || [])
     setLoading(false)
-  }, [supabase, brandFilter])
+  }, [brandFilter])
 
   useEffect(() => { load() }, [load])
 

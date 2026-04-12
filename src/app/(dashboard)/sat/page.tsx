@@ -62,14 +62,15 @@ function IncidenciasTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    let q = supabase.from('tt_sat_tickets').select('*, tt_clients(name)').order('created_at', { ascending: false })
+    const sb = createClient()
+    let q = sb.from('tt_sat_tickets').select('*, tt_clients(name)').order('created_at', { ascending: false })
     if (statusFilter) q = q.eq('status', statusFilter)
     if (priorityFilter) q = q.eq('priority', priorityFilter)
     if (search) q = q.ilike('description', `%${search}%`)
     const { data } = await q
     setTickets(data || [])
     setLoading(false)
-  }, [supabase, statusFilter, priorityFilter, search])
+  }, [statusFilter, priorityFilter, search])
 
   useEffect(() => { load() }, [load])
 
@@ -278,13 +279,14 @@ function ActivosTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
+    const sb = createClient()
     // Get unique equipments from SAT tickets (serial numbers)
-    let q = supabase.from('tt_sat_tickets').select('serial_number, product_id, tt_clients(name), description, created_at, status').not('serial_number', 'is', null).order('created_at', { ascending: false })
+    let q = sb.from('tt_sat_tickets').select('serial_number, product_id, tt_clients(name), description, created_at, status').not('serial_number', 'is', null).order('created_at', { ascending: false })
     if (search) q = q.ilike('serial_number', `%${search}%`)
     const { data } = await q
     setEquipment(data || [])
     setLoading(false)
-  }, [supabase, search])
+  }, [search])
 
   useEffect(() => { load() }, [load])
 

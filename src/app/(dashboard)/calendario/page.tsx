@@ -61,10 +61,11 @@ export default function CalendarioPage() {
 
   const loadEvents = useCallback(async () => {
     setLoading(true)
+    const sb = createClient()
     const start = new Date(year, month, 1)
     const end = new Date(year, month + 1, 0, 23, 59, 59)
 
-    const { data } = await supabase
+    const { data } = await sb
       .from('tt_activity_log')
       .select('id, entity_type, action, detail, created_at')
       .gte('created_at', start.toISOString())
@@ -74,7 +75,7 @@ export default function CalendarioPage() {
 
     setEvents(data || [])
     setLoading(false)
-  }, [supabase, year, month])
+  }, [year, month])
 
   useEffect(() => { loadEvents() }, [loadEvents])
 

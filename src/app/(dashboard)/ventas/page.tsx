@@ -125,15 +125,16 @@ function PresupuestosTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
+    const sb = createClient()
     const [{ data: docData }, { data: localData }] = await Promise.all([
-      supabase.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').eq('type', 'coti').order('created_at', { ascending: false }).range(0, 499),
-      supabase.from('tt_quotes').select('*, tt_clients(name, tax_id, country)').order('created_at', { ascending: false }),
+      sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').eq('type', 'coti').order('created_at', { ascending: false }).range(0, 499),
+      sb.from('tt_quotes').select('*, tt_clients(name, tax_id, country)').order('created_at', { ascending: false }),
     ])
     const localRows = (localData || []).map(localQuoteToRow)
     const docRows = (docData || []).map(documentToTableRow)
     setRows([...localRows, ...docRows])
     setLoading(false)
-  }, [supabase])
+  }, [])
 
   useEffect(() => { load() }, [load])
 
@@ -196,15 +197,16 @@ function PedidosTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
+    const sb = createClient()
     const [{ data: docData }, { data: localData }] = await Promise.all([
-      supabase.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').eq('type', 'pedido').order('created_at', { ascending: false }).range(0, 499),
-      supabase.from('tt_sales_orders').select('*, tt_clients(name, tax_id, country)').order('created_at', { ascending: false }),
+      sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').eq('type', 'pedido').order('created_at', { ascending: false }).range(0, 499),
+      sb.from('tt_sales_orders').select('*, tt_clients(name, tax_id, country)').order('created_at', { ascending: false }),
     ])
     const localRows = (localData || []).map(localSOToRow)
     const docRows = (docData || []).map(documentToTableRow)
     setRows([...localRows, ...docRows])
     setLoading(false)
-  }, [supabase])
+  }, [])
 
   useEffect(() => { load() }, [load])
 
@@ -375,15 +377,16 @@ function AlbaranesTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
+    const sb = createClient()
     const [{ data: docData }, { data: localData }] = await Promise.all([
-      supabase.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').eq('type', 'delivery_note').order('created_at', { ascending: false }).range(0, 499),
-      supabase.from('tt_delivery_notes').select('*, tt_clients(name), tt_sales_orders(doc_number)').order('created_at', { ascending: false }),
+      sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').eq('type', 'delivery_note').order('created_at', { ascending: false }).range(0, 499),
+      sb.from('tt_delivery_notes').select('*, tt_clients(name), tt_sales_orders(doc_number)').order('created_at', { ascending: false }),
     ])
     const localRows = (localData || []).map(localDNToRow)
     const docRows = (docData || []).map(documentToTableRow)
     setRows([...localRows, ...docRows])
     setLoading(false)
-  }, [supabase])
+  }, [])
 
   useEffect(() => { load() }, [load])
 
@@ -432,15 +435,16 @@ function FacturasTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
+    const sb = createClient()
     const [{ data: docData }, { data: localData }] = await Promise.all([
-      supabase.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').in('type', ['factura', 'factura_abono']).order('created_at', { ascending: false }).range(0, 499),
-      supabase.from('tt_invoices').select('*, tt_clients(name)').eq('type', 'sale').order('created_at', { ascending: false }),
+      sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').in('type', ['factura', 'factura_abono']).order('created_at', { ascending: false }).range(0, 499),
+      sb.from('tt_invoices').select('*, tt_clients(name)').eq('type', 'sale').order('created_at', { ascending: false }),
     ])
     const localRows = (localData || []).map(localInvoiceToRow)
     const docRows = (docData || []).map(documentToTableRow)
     setRows([...localRows, ...docRows])
     setLoading(false)
-  }, [supabase])
+  }, [])
 
   useEffect(() => { load() }, [load])
 
@@ -488,10 +492,11 @@ function CobrosTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const { data } = await supabase.from('tt_payments').select('*, tt_invoices(doc_number)').order('created_at', { ascending: false })
+    const sb = createClient()
+    const { data } = await sb.from('tt_payments').select('*, tt_invoices(doc_number)').order('created_at', { ascending: false })
     setRows((data || []).map(paymentToRow))
     setLoading(false)
-  }, [supabase])
+  }, [])
 
   useEffect(() => { load() }, [load])
 

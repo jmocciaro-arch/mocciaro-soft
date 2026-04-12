@@ -278,18 +278,20 @@ function SupplierDetail({ supplier, onClose, onUpdate }: {
 
   const loadContacts = useCallback(async () => {
     setLoadingContacts(true)
-    const { data } = await supabase
+    const sb = createClient()
+    const { data } = await sb
       .from('tt_supplier_contacts')
       .select('*')
       .eq('supplier_id', supplier.id)
       .order('is_primary', { ascending: false })
     setContacts((data || []) as SupplierContact[])
     setLoadingContacts(false)
-  }, [supplier.id, supabase])
+  }, [supplier.id])
 
   const loadPurchaseOrders = useCallback(async () => {
     setLoadingPOs(true)
-    const { data } = await supabase
+    const sb = createClient()
+    const { data } = await sb
       .from('tt_purchase_orders')
       .select('*')
       .ilike('supplier_name', `%${supplier.name}%`)
@@ -297,11 +299,12 @@ function SupplierDetail({ supplier, onClose, onUpdate }: {
       .limit(30)
     setPurchaseOrders(data || [])
     setLoadingPOs(false)
-  }, [supplier.name, supabase])
+  }, [supplier.name])
 
   const loadPaymentInfo = useCallback(async () => {
+    const sb = createClient()
     // Pending invoices for this supplier
-    const { data: invs } = await supabase
+    const { data: invs } = await sb
       .from('tt_purchase_invoices')
       .select('*')
       .eq('supplier_id', supplier.id)
@@ -311,7 +314,7 @@ function SupplierDetail({ supplier, onClose, onUpdate }: {
 
     // Total paid this year
     const yearStart = new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0]
-    const { data: payments } = await supabase
+    const { data: payments } = await sb
       .from('tt_purchase_payments')
       .select('amount')
       .eq('supplier_id', supplier.id)
@@ -319,14 +322,14 @@ function SupplierDetail({ supplier, onClose, onUpdate }: {
     setTotalPaidYear((payments || []).reduce((s: number, p: { amount: number }) => s + (p.amount || 0), 0))
 
     // Last payment
-    const { data: lastP } = await supabase
+    const { data: lastP } = await sb
       .from('tt_purchase_payments')
       .select('*')
       .eq('supplier_id', supplier.id)
       .order('payment_date', { ascending: false })
       .limit(1)
     setLastPayment(lastP?.[0] as PurchasePayment || null)
-  }, [supplier.id, supabase])
+  }, [supplier.id])
 
   useEffect(() => { loadContacts(); loadPurchaseOrders(); loadPaymentInfo() }, [loadContacts, loadPurchaseOrders, loadPaymentInfo])
 
@@ -801,14 +804,15 @@ function ProveedoresTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const { data } = await supabase.from('tt_suppliers').select('*').eq('active', true).order('name')
+    const sb = createClient()
+    const { data } = await sb.from('tt_suppliers').select('*').eq('active', true).order('name')
     const list = (data || []) as Supplier[]
     setSuppliers(list)
     const uniqueCountries = [...new Set(list.map(s => s.country).filter(Boolean) as string[])]
     uniqueCountries.sort()
     setCountries(uniqueCountries)
     setLoading(false)
-  }, [supabase])
+  }, [])
 
   useEffect(() => { load() }, [load])
 
@@ -829,6 +833,7 @@ function ProveedoresTab() {
   async function createNewSupplier() {
     if (!newSupplier.name.trim()) { addToast({ type: 'error', title: 'El nombre es obligatorio' }); return }
     setSavingNew(true)
+    const supabase = createClient()
     const { error } = await supabase.from('tt_suppliers').insert({
       name: newSupplier.name, legal_name: newSupplier.legal_name || null, tax_id: newSupplier.tax_id || null,
       category: newSupplier.category || null, country: newSupplier.country, city: newSupplier.city || null,
@@ -996,8 +1001,9 @@ function PedidosCompraTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
+    const sb = createClient()
     // Load from tt_documents (StelOrder historical PAPs)
-    let qDoc = supabase.from('tt_documents').select('*, client:tt_clients(id, name, legal_name)')
+    let qDoc = sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name)')
       .eq('type', 'pap')
       .order('created_at', { ascending: false })
       .range(0, 99)
@@ -1006,7 +1012,7 @@ function PedidosCompraTab() {
     const { data: docData } = await qDoc
 
     // Also load from tt_purchase_orders (locally created)
-    let qLocal = supabase.from('tt_purchase_orders').select('*').order('created_at', { ascending: false })
+    let qLocal = sb.from('tt_purchase_orders').select('*').order('created_at', { ascending: false })
     if (statusFilter) qLocal = qLocal.eq('status', statusFilter)
     if (search) qLocal = qLocal.ilike('supplier_name', `%${search}%`)
     const { data: localData } = await qLocal
@@ -1021,7 +1027,7 @@ function PedidosCompraTab() {
     }))
     setOrders([...localMapped, ...docMapped])
     setLoading(false)
-  }, [supabase, statusFilter, search])
+  }, [statusFilter, search])
 
   useEffect(() => { load() }, [load])
 
@@ -1251,21 +1257,22 @@ function FacturasCompraTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const { data } = await supabase
+    const sb = createClient()
+    const { data } = await sb
       .from('tt_purchase_invoices')
       .select('*, supplier:tt_suppliers(id, name, legal_name)')
       .order('created_at', { ascending: false })
     setInvoices((data || []) as PurchaseInvoice[])
 
     // Also load historical from tt_documents
-    const { data: docData } = await supabase.from('tt_documents').select('*, client:tt_clients(id, name, legal_name)')
+    const { data: docData } = await sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name)')
       .eq('type', 'factura_compra')
       .order('created_at', { ascending: false })
       .range(0, 99)
     setHistDocs(docData || [])
 
     setLoading(false)
-  }, [supabase])
+  }, [])
 
   useEffect(() => { load(); checkPaymentAlerts() }, [load])
 
@@ -1594,13 +1601,14 @@ function PagosTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const { data } = await supabase
+    const sb = createClient()
+    const { data } = await sb
       .from('tt_purchase_payments')
       .select('*, supplier:tt_suppliers(id, name, legal_name)')
       .order('payment_date', { ascending: false })
     setPayments((data || []) as PurchasePayment[])
     setLoading(false)
-  }, [supabase])
+  }, [])
 
   useEffect(() => { load() }, [load])
 

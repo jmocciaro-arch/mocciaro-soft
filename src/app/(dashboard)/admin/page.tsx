@@ -164,17 +164,18 @@ export default function AdminPage() {
   // ─── RBAC loaders ───
   const loadRbacData = useCallback(async () => {
     setLoadingRoles(true)
+    const sb = createClient()
     const [rolesRes, permsRes, teamsRes] = await Promise.all([
-      supabase.from('tt_roles').select('*').order('category').order('label'),
-      supabase.from('tt_permissions').select('*').order('module').order('label'),
-      supabase.from('tt_teams').select('*').order('label'),
+      sb.from('tt_roles').select('*').order('category').order('label'),
+      sb.from('tt_permissions').select('*').order('module').order('label'),
+      sb.from('tt_teams').select('*').order('label'),
     ])
     setRbacRoles((rolesRes.data || []) as RbacRole[])
     setRbacPermissions((permsRes.data || []) as RbacPermission[])
     setRbacTeams((teamsRes.data || []) as RbacTeam[])
 
     // Load role->permission map
-    const { data: rp } = await supabase.from('tt_role_permissions').select('role_id, permission_id')
+    const { data: rp } = await sb.from('tt_role_permissions').select('role_id, permission_id')
     const map: Record<string, Set<string>> = {}
     ;(rp || []).forEach((row: Record<string, unknown>) => {
       const roleId = row.role_id as string
@@ -184,11 +185,12 @@ export default function AdminPage() {
     })
     setRolePermMap(map)
     setLoadingRoles(false)
-  }, [supabase])
+  }, [])
 
   // Load all user RBAC role assignments
   const loadUserRbacAssignments = useCallback(async () => {
-    const { data } = await supabase.from('tt_user_roles').select('user_id, role_id')
+    const sb = createClient()
+    const { data } = await sb.from('tt_user_roles').select('user_id, role_id')
     const map: Record<string, string[]> = {}
     ;(data || []).forEach((row: Record<string, unknown>) => {
       const uid = row.user_id as string
@@ -197,14 +199,15 @@ export default function AdminPage() {
       map[uid].push(rid)
     })
     setUserRbacRoles(map)
-  }, [supabase])
+  }, [])
 
   const loadUsers = useCallback(async () => {
     setLoadingUsers(true)
-    const { data } = await supabase.from('tt_users').select('*').order('full_name')
+    const sb = createClient()
+    const { data } = await sb.from('tt_users').select('*').order('full_name')
     setUsersData(data || [])
     setLoadingUsers(false)
-  }, [supabase])
+  }, [])
 
   // Compute effective permissions for a user based on their role IDs
   const computeEffectivePerms = useCallback((roleIds: string[]) => {
@@ -385,31 +388,35 @@ export default function AdminPage() {
   // ─── Other loaders ───
   const loadCompanies = useCallback(async () => {
     setLoadingCompanies(true)
-    const { data } = await supabase.from('tt_companies').select('*').order('name')
+    const sb = createClient()
+    const { data } = await sb.from('tt_companies').select('*').order('name')
     setCompanies(data || [])
     setLoadingCompanies(false)
-  }, [supabase])
+  }, [])
 
   const loadParams = useCallback(async () => {
     setLoadingParams(true)
-    const { data } = await supabase.from('tt_system_params').select('*').order('key')
+    const sb = createClient()
+    const { data } = await sb.from('tt_system_params').select('*').order('key')
     setParams(data || [])
     const edits: Record<string, string> = {}
     ;(data || []).forEach((p: Row) => { edits[p.key as string] = (p.value as string) || '' })
     setParamEdits(edits)
     setLoadingParams(false)
-  }, [supabase])
+  }, [])
 
   const loadWarehouses = useCallback(async () => {
     setLoadingWarehouses(true)
-    const { data } = await supabase.from('tt_warehouses').select('*').order('name')
+    const sb = createClient()
+    const { data } = await sb.from('tt_warehouses').select('*').order('name')
     setWarehouses(data || [])
     setLoadingWarehouses(false)
-  }, [supabase])
+  }, [])
 
   const loadAudit = useCallback(async () => {
     setLoadingAudit(true)
-    let q = supabase
+    const sb = createClient()
+    let q = sb
       .from('tt_activity_log')
       .select('*')
       .order('created_at', { ascending: false })
@@ -420,7 +427,7 @@ export default function AdminPage() {
     const { data } = await q
     setAuditLogs(data || [])
     setLoadingAudit(false)
-  }, [supabase, auditPage, auditEntityFilter])
+  }, [auditPage, auditEntityFilter])
 
   const handleTabChange = (tab: string) => {
     if (tab === 'users') { loadUsers(); loadCompanies(); loadRbacData(); loadUserRbacAssignments() }

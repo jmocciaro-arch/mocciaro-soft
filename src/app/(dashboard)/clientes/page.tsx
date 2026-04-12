@@ -151,7 +151,8 @@ function CompanyDetail({ company, onClose, onUpdate }: {
   const loadContacts = useCallback(async () => {
     setLoadingContacts(true)
     try {
-      const { data } = await supabase
+      const sb = createClient()
+      const { data } = await sb
         .from('tt_client_contacts')
         .select('*')
         .in('client_id', allClientIds)
@@ -159,11 +160,12 @@ function CompanyDetail({ company, onClose, onUpdate }: {
       setContacts((data || []) as ClientContact[])
     } catch { /* ignore */ }
     setLoadingContacts(false)
-  }, [allClientIds, supabase])
+  }, [allClientIds])
 
   // Load activity log
   const loadActivity = useCallback(async () => {
-    const { data } = await supabase
+    const sb = createClient()
+    const { data } = await sb
       .from('tt_activity_log')
       .select('*')
       .eq('entity_type', 'client')
@@ -171,18 +173,19 @@ function CompanyDetail({ company, onClose, onUpdate }: {
       .order('created_at', { ascending: false })
       .limit(20)
     setActivity((data || []) as ActivityLog[])
-  }, [allClientIds, supabase])
+  }, [allClientIds])
 
   // Load documents (quotes, orders, invoices) from tt_documents
   const loadDocuments = useCallback(async () => {
-    const { data } = await supabase
+    const sb = createClient()
+    const { data } = await sb
       .from('tt_documents')
       .select('id, type, system_code, display_ref, status, total, currency, created_at')
       .in('client_id', allClientIds)
       .order('created_at', { ascending: false })
       .limit(30)
     setDocuments((data || []) as Record<string, unknown>[])
-  }, [allClientIds, supabase])
+  }, [allClientIds])
 
   useEffect(() => {
     loadContacts()
@@ -1063,12 +1066,13 @@ function PotencialesTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    let q = supabase.from('tt_clients').select('*').or('category.eq.potential,category.eq.lead,source.eq.lead').eq('active', true).order('created_at', { ascending: false })
+    const sb = createClient()
+    let q = sb.from('tt_clients').select('*').or('category.eq.potential,category.eq.lead,source.eq.lead').eq('active', true).order('created_at', { ascending: false })
     if (search) q = q.or(`name.ilike.%${search}%,legal_name.ilike.%${search}%`)
     const { data } = await q
     setLeads((data || []) as Client[])
     setLoading(false)
-  }, [supabase, search])
+  }, [search])
 
   useEffect(() => { load() }, [load])
 
@@ -1123,15 +1127,16 @@ function ContactosTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
+    const sb = createClient()
     // Load contacts from tt_client_contacts table
-    const { data: ccData } = await supabase
+    const { data: ccData } = await sb
       .from('tt_client_contacts')
       .select('*, client:tt_clients!client_id(id, legal_name)')
       .order('name')
       .limit(500)
 
     // Also load from tt_clients (where name differs from legal_name = person contacts)
-    let q = supabase.from('tt_clients').select('id, name, legal_name, email, phone, city, country, category').eq('active', true).order('name')
+    let q = sb.from('tt_clients').select('id, name, legal_name, email, phone, city, country, category').eq('active', true).order('name')
     if (search) q = q.or(`name.ilike.%${search}%,email.ilike.%${search}%,phone.ilike.%${search}%`)
     const { data: clientData } = await q
 
@@ -1171,7 +1176,7 @@ function ContactosTab() {
     }
 
     setLoading(false)
-  }, [supabase, search])
+  }, [search])
 
   useEffect(() => { load() }, [load])
 
