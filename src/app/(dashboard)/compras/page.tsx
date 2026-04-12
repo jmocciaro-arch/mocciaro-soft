@@ -37,9 +37,22 @@ type Row = Record<string, unknown>
 // HELPERS: tt_documents unified data
 // ===============================================================
 function getClientName(doc: Row): string {
+  // 1. Try joined client data first (from Supabase FK join)
+  const client = doc.client as Record<string, unknown> | undefined
+  if (client) {
+    const joined = (client.legal_name as string) || (client.name as string)
+    if (joined) return joined
+  }
+
+  // 2. Try metadata from StelOrder raw
   const raw = (doc.metadata as Record<string, unknown>)?.stelorder_raw as Record<string, unknown> | undefined
-  if (!raw) return (doc.client_name as string) || 'Sin proveedor'
-  return (raw['account-name'] as string) || (raw['legal-name'] as string) || (raw['name'] as string) || 'Sin proveedor'
+  if (raw) {
+    const name = (raw['account-name'] as string) || (raw['legal-name'] as string) || (raw['name'] as string)
+    if (name) return name
+  }
+
+  // 3. Fallback
+  return (doc.client_name as string) || 'Sin proveedor'
 }
 
 function getDocRef(doc: Row): string {
@@ -983,7 +996,7 @@ function PedidosCompraTab() {
   const load = useCallback(async () => {
     setLoading(true)
     // Load from tt_documents (StelOrder historical PAPs)
-    let qDoc = supabase.from('tt_documents').select('*')
+    let qDoc = supabase.from('tt_documents').select('*, client:tt_clients(id, name, legal_name)')
       .eq('type', 'pap')
       .order('created_at', { ascending: false })
       .range(0, 99)
@@ -1205,7 +1218,7 @@ function RecepcionesTab() {
     (async () => {
       setLoading(true)
       const [{ data: docData }, { data: localData }] = await Promise.all([
-        supabase.from('tt_documents').select('*').eq('type', 'recepcion').order('created_at', { ascending: false }).range(0, 499),
+        supabase.from('tt_documents').select('*, client:tt_clients(id, name, legal_name)').eq('type', 'recepcion').order('created_at', { ascending: false }).range(0, 499),
         supabase.from('tt_purchase_orders').select('*').in('status', ['partial', 'received']).order('updated_at', { ascending: false }),
       ])
 
@@ -1282,7 +1295,7 @@ function FacturasCompraTab() {
     setInvoices((data || []) as PurchaseInvoice[])
 
     // Also load historical from tt_documents
-    const { data: docData } = await supabase.from('tt_documents').select('*')
+    const { data: docData } = await supabase.from('tt_documents').select('*, client:tt_clients(id, name, legal_name)')
       .eq('type', 'factura_compra')
       .order('created_at', { ascending: false })
       .range(0, 99)

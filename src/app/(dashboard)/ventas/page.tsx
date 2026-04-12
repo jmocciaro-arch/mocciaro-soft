@@ -125,7 +125,7 @@ function PresupuestosTab() {
   const load = useCallback(async () => {
     setLoading(true)
     const [{ data: docData }, { data: localData }] = await Promise.all([
-      supabase.from('tt_documents').select('*').eq('type', 'coti').order('created_at', { ascending: false }).range(0, 499),
+      supabase.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').eq('type', 'coti').order('created_at', { ascending: false }).range(0, 499),
       supabase.from('tt_quotes').select('*, tt_clients(name, tax_id, country)').order('created_at', { ascending: false }),
     ])
     const localRows = (localData || []).map(localQuoteToRow)
@@ -153,8 +153,10 @@ function PresupuestosTab() {
     const isDoc = !(selectedQuote as Row & { _source?: string })._source || ((selectedQuote as Row & { _source?: string })._source !== 'local')
     // Check if it came from documentToTableRow or localQuoteToRow by looking at source on the parent
     const clientObj = !isDoc ? selectedQuote.tt_clients as Row | null : null
+    const joinedClient = isDoc ? selectedQuote.client as Record<string, unknown> | undefined : undefined
     const clientName = isDoc
-      ? ((selectedQuote.metadata as Record<string, unknown>)?.stelorder_raw as Record<string, unknown>)?.['account-name'] as string || 'Sin cliente'
+      ? (joinedClient?.legal_name as string) || (joinedClient?.name as string)
+        || ((selectedQuote.metadata as Record<string, unknown>)?.stelorder_raw as Record<string, unknown>)?.['account-name'] as string || 'Sin cliente'
       : (clientObj?.name as string) || 'Sin cliente'
     const ref = isDoc
       ? ((selectedQuote.display_ref as string) || (selectedQuote.system_code as string) || '')
@@ -245,7 +247,7 @@ function PedidosTab() {
   const load = useCallback(async () => {
     setLoading(true)
     const [{ data: docData }, { data: localData }] = await Promise.all([
-      supabase.from('tt_documents').select('*').eq('type', 'pedido').order('created_at', { ascending: false }).range(0, 499),
+      supabase.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').eq('type', 'pedido').order('created_at', { ascending: false }).range(0, 499),
       supabase.from('tt_sales_orders').select('*, tt_clients(name, tax_id, country)').order('created_at', { ascending: false }),
     ])
     const localRows = (localData || []).map(localSOToRow)
@@ -343,9 +345,10 @@ function PedidosTab() {
   if (selectedSO && !showDelivery) {
     const isDoc = !(selectedSO as Row & { _source?: string })._source
     const clientObj = !isDoc ? selectedSO.tt_clients as Row | null : null
+    const joinedClient = isDoc ? selectedSO.client as Record<string, unknown> | undefined : undefined
     const raw = isDoc ? (selectedSO.metadata as Record<string, unknown>)?.stelorder_raw as Record<string, unknown> | undefined : undefined
     const clientName = isDoc
-      ? (raw?.['account-name'] as string || 'Sin cliente')
+      ? (joinedClient?.legal_name as string) || (joinedClient?.name as string) || (raw?.['account-name'] as string) || 'Sin cliente'
       : (clientObj?.name as string) || 'Sin cliente'
     const st = (selectedSO.status as string) || 'open'
 
@@ -498,7 +501,7 @@ function AlbaranesTab() {
   const load = useCallback(async () => {
     setLoading(true)
     const [{ data: docData }, { data: localData }] = await Promise.all([
-      supabase.from('tt_documents').select('*').eq('type', 'delivery_note').order('created_at', { ascending: false }).range(0, 499),
+      supabase.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').eq('type', 'delivery_note').order('created_at', { ascending: false }).range(0, 499),
       supabase.from('tt_delivery_notes').select('*, tt_clients(name), tt_sales_orders(doc_number)').order('created_at', { ascending: false }),
     ])
     const localRows = (localData || []).map(localDNToRow)
@@ -534,7 +537,7 @@ function FacturasTab() {
   const load = useCallback(async () => {
     setLoading(true)
     const [{ data: docData }, { data: localData }] = await Promise.all([
-      supabase.from('tt_documents').select('*').in('type', ['factura', 'factura_abono']).order('created_at', { ascending: false }).range(0, 499),
+      supabase.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').in('type', ['factura', 'factura_abono']).order('created_at', { ascending: false }).range(0, 499),
       supabase.from('tt_invoices').select('*, tt_clients(name)').eq('type', 'sale').order('created_at', { ascending: false }),
     ])
     const localRows = (localData || []).map(localInvoiceToRow)

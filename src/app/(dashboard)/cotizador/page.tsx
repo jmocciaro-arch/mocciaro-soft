@@ -15,6 +15,8 @@ import type { Company, Client } from '@/types'
 import { DocumentDetailLayout, type WorkflowStep, type Alert, type InternalNote } from '@/components/workflow/document-detail-layout'
 import { DocumentItemsTree, type DocumentItem, type DocumentItemComponent } from '@/components/workflow/document-items-tree'
 import { DocumentListCard } from '@/components/workflow/document-list-card'
+import { DataTable, type DataTableColumn } from '@/components/ui/data-table'
+import { mapStatus } from '@/lib/document-helpers'
 import {
   Plus, Minus, Trash2, Save, FileText,
   MessageSquare, Building2, User, Search, X, Loader2, Printer, List, PlusCircle
@@ -247,10 +249,10 @@ export default function CotizadorPage() {
       .order('created_at', { ascending: false })
       .limit(50)
 
-    // Load historical from tt_documents
+    // Load historical from tt_documents (with client JOIN)
     const { data: docData } = await supabase
       .from('tt_documents')
-      .select('id, display_ref, system_code, status, total, currency, created_at, subtotal, tax_amount, notes, metadata')
+      .select('id, display_ref, system_code, status, total, currency, created_at, subtotal, tax_amount, notes, metadata, client_id, client:tt_clients(id, name, legal_name, tax_id)')
       .eq('type', 'coti')
       .order('created_at', { ascending: false })
       .limit(50)
@@ -260,8 +262,11 @@ export default function CotizadorPage() {
     }))
 
     const docQuotes: SavedQuote[] = (docData || []).map((d: Record<string, unknown>) => {
+      const joinedClient = d.client as Record<string, unknown> | undefined
       const raw = (d.metadata as Record<string, unknown>)?.stelorder_raw as Record<string, unknown> | undefined
-      const clientName = raw ? ((raw['account-name'] as string) || (raw['legal-name'] as string) || 'Sin cliente') : 'Sin cliente'
+      // Prefer joined client name, fall back to metadata
+      const clientName = (joinedClient?.legal_name as string) || (joinedClient?.name as string)
+        || (raw ? ((raw['account-name'] as string) || (raw['legal-name'] as string) || 'Sin cliente') : 'Sin cliente')
       return {
         id: d.id as string,
         number: (d.display_ref as string) || (d.system_code as string) || '-',
@@ -382,6 +387,35 @@ export default function CotizadorPage() {
     return { workflowSteps, document, client, comp, docItems, mockNotes }
   }
 
+  // Column definitions for saved quotes DataTable
+  const SAVED_QUOTE_COLS: DataTableColumn[] = [
+    { key: 'referencia', label: 'Referencia', sortable: true, searchable: true, width: '140px' },
+    { key: 'cliente', label: 'Cliente', sortable: true, searchable: true },
+    { key: 'titulo', label: 'Titulo / Descripcion', searchable: true },
+    { key: 'estado', label: 'Estado', sortable: true, type: 'status', width: '120px' },
+    { key: 'fecha', label: 'Fecha', sortable: true, type: 'date', width: '110px' },
+    { key: 'importe', label: 'Importe', sortable: true, type: 'currency', width: '120px' },
+    { key: 'moneda', label: 'Moneda', sortable: true, width: '80px' },
+  ]
+
+  // Convert savedQuotes to DataTable rows
+  const savedQuoteRows = savedQuotes.map((q) => ({
+    id: q.id,
+    referencia: q.number || '-',
+    cliente: q.client?.name || 'Sin cliente',
+    titulo: q.notes || '',
+    estado: mapStatus(q.status),
+    fecha: q.created_at,
+    importe: q.total || 0,
+    moneda: q.currency || 'EUR',
+    _raw: q,
+  }))
+
+  const handleQuoteRowClick = (row: Record<string, unknown>) => {
+    const q = row._raw as SavedQuote
+    openQuoteDetail(q)
+  }
+
   const filteredQuotes = savedQuotes.filter((q) => {
     if (!listSearch) return true
     const s = listSearch.toLowerCase()
@@ -452,46 +486,18 @@ export default function CotizadorPage() {
 
       {/* LIST VIEW */}
       {viewMode === 'list' && (
-        <div className="space-y-4">
-          <div className="bg-[#141820] rounded-xl border border-[#2A3040] p-3">
-            <SearchBar
-              placeholder="Buscar por numero o cliente..."
-              value={listSearch}
-              onChange={setListSearch}
-            />
-          </div>
-
-          {loadingQuotes ? (
-            <div className="flex items-center justify-center py-20">
-              <Loader2 size={32} className="animate-spin text-[#FF6600]" />
-            </div>
-          ) : filteredQuotes.length === 0 ? (
-            <div className="text-center py-20">
-              <FileText size={48} className="mx-auto mb-3 text-[#2A3040]" />
-              <p className="text-sm text-[#6B7280]">No hay cotizaciones guardadas</p>
-              <Button variant="primary" size="sm" className="mt-4" onClick={() => setViewMode('create')}>
-                <Plus size={14} /> Crear primera cotizacion
-              </Button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-              {filteredQuotes.map((q) => (
-                <DocumentListCard
-                  key={q.id}
-                  type="coti"
-                  systemCode={q.number}
-                  clientName={q.client?.name || 'Sin cliente'}
-                  date={new Date(q.created_at).toLocaleDateString('es-ES')}
-                  total={q.total || 0}
-                  currency={q.currency || 'EUR'}
-                  status={q.status === 'borrador' ? 'draft' : q.status}
-                  statusLabel={q.status}
-                  onClick={() => openQuoteDetail(q)}
-                />
-              ))}
-            </div>
-          )}
-        </div>
+        <DataTable
+          data={savedQuoteRows}
+          columns={SAVED_QUOTE_COLS}
+          loading={loadingQuotes}
+          totalLabel="cotizaciones"
+          showTotals
+          onRowClick={handleQuoteRowClick}
+          onNewClick={() => setViewMode('create')}
+          newLabel="Nueva cotizacion"
+          exportFilename="cotizaciones_torquetools"
+          pageSize={25}
+        />
       )}
 
       {/* CREATE VIEW */}

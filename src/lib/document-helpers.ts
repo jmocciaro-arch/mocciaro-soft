@@ -44,9 +44,22 @@ export function mapStatus(status: string | null | undefined): string {
 // EXTRACT CLIENT / SUPPLIER NAME from tt_documents
 // ---------------------------------------------------------------
 export function extractClientName(doc: Row): string {
+  // 1. Try joined client data first (from Supabase FK join)
+  const client = doc.client as Record<string, unknown> | undefined
+  if (client) {
+    const joined = (client.legal_name as string) || (client.name as string)
+    if (joined) return joined
+  }
+
+  // 2. Try metadata from StelOrder raw
   const raw = (doc.metadata as Record<string, unknown>)?.stelorder_raw as Record<string, unknown> | undefined
-  if (!raw) return (doc.client_name as string) || (doc.supplier_name as string) || 'Sin asignar'
-  return (raw['account-name'] as string) || (raw['legal-name'] as string) || (raw['name'] as string) || 'Sin asignar'
+  if (raw) {
+    const name = (raw['account-name'] as string) || (raw['legal-name'] as string) || (raw['name'] as string)
+    if (name) return name
+  }
+
+  // 3. Fallback
+  return (doc.client_name as string) || (doc.supplier_name as string) || 'Sin asignar'
 }
 
 export function extractDocRef(doc: Row): string {
