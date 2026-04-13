@@ -17,7 +17,7 @@ import {
   ChevronLeft, ChevronRight, Trash2, Copy, RefreshCw,
   Plus, X, Search, FileText, Link2, Clock, Paperclip,
   PenTool, Loader2, ExternalLink, GripVertical, Eye, Send,
-  Building2, Minus,
+  Building2, Minus, TrendingUp, BarChart3,
 } from 'lucide-react'
 import { DocLink } from '@/components/ui/doc-link'
 
@@ -81,6 +81,7 @@ interface ItemData {
   description: string
   quantity: number
   unit_price: number
+  unit_cost?: number
   discount_pct: number
   subtotal: number
   sort_order: number
@@ -228,7 +229,8 @@ export function DocumentForm({
   const [editMode, setEditMode] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [activeTab, setActiveTab] = useState<'lineas' | 'mas_info' | 'adjuntos' | 'firma' | 'relacionados'>('lineas')
+  const [activeTab, setActiveTab] = useState<'lineas' | 'rentabilidad' | 'mas_info' | 'adjuntos' | 'firma' | 'relacionados'>('lineas')
+  const [productCosts, setProductCosts] = useState<Record<string, number>>({})
 
   // Data
   const [doc, setDoc] = useState<DocumentData | null>(null)
@@ -343,12 +345,13 @@ export function DocumentForm({
             .eq('document_id', documentId)
             .order('sort_order')
 
-          setItems((itemsData || []).map((it: Row, idx: number) => ({
+          const parsedItems = (itemsData || []).map((it: Row, idx: number) => ({
             id: (it.id as string) || `item-${idx}`,
             sku: (it.sku as string) || '',
             description: (it.description as string) || '',
             quantity: (it.quantity as number) || 0,
             unit_price: (it.unit_price as number) || 0,
+            unit_cost: (it.unit_cost as number) || 0,
             discount_pct: (it.discount_pct as number) || 0,
             subtotal: (it.subtotal as number) || (it.line_total as number) || 0,
             sort_order: (it.sort_order as number) || idx,
@@ -356,7 +359,17 @@ export function DocumentForm({
             product_id: (it.product_id as string) || null,
             is_section: (it.is_section as boolean) || false,
             section_label: (it.section_label as string) || '',
-          })))
+          }))
+          setItems(parsedItems)
+
+          // Load product costs for profitability analysis
+          const productIds = parsedItems.map(i => i.product_id).filter(Boolean) as string[]
+          if (productIds.length > 0) {
+            const { data: prods } = await supabase.from('tt_products').select('id, cost_eur').in('id', productIds)
+            const costs: Record<string, number> = {}
+            for (const p of (prods || [])) costs[p.id as string] = (p.cost_eur as number) || 0
+            setProductCosts(costs)
+          }
 
           // Load parent links
           const { data: parents } = await supabase
@@ -491,6 +504,7 @@ export function DocumentForm({
             description: (it.description as string) || '',
             quantity: (it.quantity as number) || 0,
             unit_price: (it.unit_price as number) || 0,
+            unit_cost: (it.unit_cost as number) || 0,
             discount_pct: (it.discount_pct as number) || 0,
             subtotal: (it.subtotal as number) || (it.line_total as number) || 0,
             sort_order: (it.sort_order as number) || idx,
@@ -1381,6 +1395,7 @@ export function DocumentForm({
         <div className="flex gap-1 p-1 bg-[#0F1218] rounded-lg border border-[#1E2330] mb-4 overflow-x-auto print:hidden">
           {[
             { id: 'lineas' as const, label: 'Lineas', icon: <FileText size={14} /> },
+            { id: 'rentabilidad' as const, label: 'Rentabilidad', icon: <TrendingUp size={14} /> },
             { id: 'mas_info' as const, label: 'Mas informacion', icon: <FileText size={14} /> },
             { id: 'adjuntos' as const, label: 'Adjuntos', icon: <Paperclip size={14} /> },
             { id: 'firma' as const, label: 'Firma', icon: <PenTool size={14} /> },
@@ -1610,6 +1625,130 @@ export function DocumentForm({
             </div>
           </div>
         )}
+
+        {/* ====== TAB: RENTABILIDAD ====== */}
+        {activeTab === 'rentabilidad' && (() => {
+          const displayItems = editMode ? editItems : items
+          const profitItems = displayItems.filter(i => !i.is_section).map(item => {
+            const cost = item.unit_cost || productCosts[item.product_id || ''] || 0
+            const revenue = item.subtotal || (item.quantity * item.unit_price * (1 - (item.discount_pct || 0) / 100))
+            const totalCost = item.quantity * cost
+            const profit = revenue - totalCost
+            const marginPct = revenue > 0 ? (profit / revenue) * 100 : 0
+            return { ...item, cost, totalCost, revenue, profit, marginPct }
+          })
+          const totRevenue = profitItems.reduce((s, i) => s + i.revenue, 0)
+          const totCost = profitItems.reduce((s, i) => s + i.totalCost, 0)
+          const totProfit = totRevenue - totCost
+          const avgMargin = totRevenue > 0 ? (totProfit / totRevenue) * 100 : 0
+          const curr = (displayDoc?.currency || 'EUR') as 'EUR' | 'USD' | 'ARS'
+
+          return (
+            <div className="space-y-4">
+              {/* KPI Summary */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="p-4 rounded-xl bg-[#141820] border border-[#2A3040]">
+                  <p className="text-[10px] text-[#6B7280] uppercase tracking-wider">Venta Total</p>
+                  <p className="text-lg font-bold text-[#F0F2F5] mt-1">{formatCurrency(totRevenue, curr)}</p>
+                </div>
+                <div className="p-4 rounded-xl bg-[#141820] border border-[#2A3040]">
+                  <p className="text-[10px] text-[#6B7280] uppercase tracking-wider">Costo Total</p>
+                  <p className="text-lg font-bold text-red-400 mt-1">{formatCurrency(totCost, curr)}</p>
+                </div>
+                <div className="p-4 rounded-xl bg-[#141820] border border-[#2A3040]">
+                  <p className="text-[10px] text-[#6B7280] uppercase tracking-wider">Beneficio</p>
+                  <p className={`text-lg font-bold mt-1 ${totProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatCurrency(totProfit, curr)}</p>
+                </div>
+                <div className="p-4 rounded-xl bg-[#141820] border border-[#2A3040]">
+                  <p className="text-[10px] text-[#6B7280] uppercase tracking-wider">Margen %</p>
+                  <p className={`text-lg font-bold mt-1 ${avgMargin >= 20 ? 'text-green-400' : avgMargin >= 10 ? 'text-yellow-400' : 'text-red-400'}`}>{avgMargin.toFixed(1)}%</p>
+                </div>
+              </div>
+
+              {/* Margin bar */}
+              <div className="p-3 rounded-xl bg-[#141820] border border-[#2A3040]">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-[#6B7280]">Distribucion costo vs beneficio</span>
+                  <span className="text-xs text-[#9CA3AF]">{formatCurrency(totRevenue, curr)}</span>
+                </div>
+                <div className="w-full h-4 rounded-full overflow-hidden flex bg-[#1E2330]">
+                  {totRevenue > 0 && (
+                    <>
+                      <div className="h-full bg-red-500/70" style={{ width: `${(totCost / totRevenue) * 100}%` }} title={`Costo: ${formatCurrency(totCost, curr)}`} />
+                      <div className="h-full bg-green-500/70" style={{ width: `${(totProfit / totRevenue) * 100}%` }} title={`Beneficio: ${formatCurrency(totProfit, curr)}`} />
+                    </>
+                  )}
+                </div>
+                <div className="flex justify-between mt-1">
+                  <span className="text-[10px] text-red-400">Costo {totRevenue > 0 ? ((totCost / totRevenue) * 100).toFixed(0) : 0}%</span>
+                  <span className="text-[10px] text-green-400">Beneficio {avgMargin.toFixed(0)}%</span>
+                </div>
+              </div>
+
+              {/* Per-line profitability table */}
+              <div className="bg-[#141820] rounded-xl border border-[#2A3040] overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-[#2A3040] text-[#6B7280] text-xs uppercase tracking-wider">
+                        <th className="text-left px-4 py-3">SKU</th>
+                        <th className="text-left px-4 py-3">Producto</th>
+                        <th className="text-right px-4 py-3">Uds</th>
+                        <th className="text-right px-4 py-3">P. Venta</th>
+                        <th className="text-right px-4 py-3">P. Costo</th>
+                        <th className="text-right px-4 py-3">Venta</th>
+                        <th className="text-right px-4 py-3">Costo</th>
+                        <th className="text-right px-4 py-3">Beneficio</th>
+                        <th className="text-right px-4 py-3">Margen</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {profitItems.map(item => (
+                        <tr key={item.id} className="border-b border-[#1E2330] hover:bg-[#1C2230]">
+                          <td className="px-4 py-2.5 text-xs font-mono text-[#FF6600]">{item.sku || '-'}</td>
+                          <td className="px-4 py-2.5 text-xs text-[#F0F2F5] max-w-[200px] truncate">{item.description}</td>
+                          <td className="px-4 py-2.5 text-right text-xs">{item.quantity}</td>
+                          <td className="px-4 py-2.5 text-right text-xs text-[#F0F2F5]">{formatCurrency(item.unit_price, curr)}</td>
+                          <td className="px-4 py-2.5 text-right text-xs text-red-400">{item.cost > 0 ? formatCurrency(item.cost, curr) : <span className="text-[#4B5563]">s/d</span>}</td>
+                          <td className="px-4 py-2.5 text-right text-xs text-[#F0F2F5] font-medium">{formatCurrency(item.revenue, curr)}</td>
+                          <td className="px-4 py-2.5 text-right text-xs text-red-400">{formatCurrency(item.totalCost, curr)}</td>
+                          <td className={`px-4 py-2.5 text-right text-xs font-bold ${item.profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatCurrency(item.profit, curr)}</td>
+                          <td className="px-4 py-2.5 text-right">
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                              item.marginPct >= 30 ? 'bg-green-500/20 text-green-400' :
+                              item.marginPct >= 15 ? 'bg-yellow-500/20 text-yellow-400' :
+                              item.marginPct > 0 ? 'bg-orange-500/20 text-orange-400' :
+                              'bg-red-500/20 text-red-400'
+                            }`}>
+                              {item.cost > 0 ? `${item.marginPct.toFixed(1)}%` : '-'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 border-[#FF6600]/30 bg-[#0F1218]">
+                        <td colSpan={5} className="px-4 py-3 text-xs font-bold text-[#FF6600] uppercase">TOTALES</td>
+                        <td className="px-4 py-3 text-right text-sm font-bold text-[#F0F2F5]">{formatCurrency(totRevenue, curr)}</td>
+                        <td className="px-4 py-3 text-right text-sm font-bold text-red-400">{formatCurrency(totCost, curr)}</td>
+                        <td className={`px-4 py-3 text-right text-sm font-bold ${totProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatCurrency(totProfit, curr)}</td>
+                        <td className="px-4 py-3 text-right">
+                          <span className={`text-sm font-bold px-2.5 py-1 rounded-full ${avgMargin >= 20 ? 'bg-green-500/20 text-green-400' : avgMargin >= 10 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-red-500/20 text-red-400'}`}>
+                            {avgMargin.toFixed(1)}%
+                          </span>
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+
+              {profitItems.some(i => i.cost === 0) && (
+                <p className="text-[10px] text-[#4B5563] italic">* Algunos productos no tienen precio de costo cargado. El margen se calcula solo para los que tienen costo &gt; 0.</p>
+              )}
+            </div>
+          )
+        })()}
 
         {/* ====== TAB: MAS INFORMACION ====== */}
         {activeTab === 'mas_info' && (
