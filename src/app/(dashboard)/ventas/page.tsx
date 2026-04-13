@@ -18,9 +18,10 @@ import {
   documentToTableRow, localQuoteToRow, localSOToRow, localDNToRow,
   localInvoiceToRow, paymentToRow, mapStatus
 } from '@/lib/document-helpers'
+import { KPICard } from '@/components/ui/kpi-card'
 import {
   Receipt, Plus, Loader2, FileText, Truck, CreditCard,
-  Clock, ArrowRight, X, DollarSign,
+  Clock, ArrowRight, X, DollarSign, Save,
   ClipboardList, FileCheck
 } from 'lucide-react'
 
@@ -487,8 +488,13 @@ function FacturasTab() {
 // ===============================================================
 function CobrosTab() {
   const supabase = createClient()
+  const { addToast } = useToast()
   const [rows, setRows] = useState<Record<string, unknown>[]>([])
   const [loading, setLoading] = useState(true)
+  const [showRegister, setShowRegister] = useState(false)
+  const [invoices, setInvoices] = useState<Record<string, unknown>[]>([])
+  const [newPayment, setNewPayment] = useState({ invoice_id: '', amount: 0, payment_method: 'transferencia', bank_reference: '', payment_date: new Date().toISOString().split('T')[0] })
+  const [saving, setSaving] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -500,16 +506,80 @@ function CobrosTab() {
 
   useEffect(() => { load() }, [load])
 
+  const loadInvoices = async () => {
+    const { data } = await supabase.from('tt_documents')
+      .select('id, display_ref, system_code, total, status, client:tt_clients(name, legal_name)')
+      .in('type', ['factura', 'factura_abono'])
+      .in('status', ['pending', 'partial', 'open', 'sent', 'draft'])
+      .order('created_at', { ascending: false })
+      .limit(50)
+    setInvoices(data || [])
+  }
+
+  const handleRegisterPayment = async () => {
+    if (!newPayment.amount || newPayment.amount <= 0) { addToast({ type: 'warning', title: 'El importe debe ser mayor a 0' }); return }
+    setSaving(true)
+    const { error } = await supabase.from('tt_payments').insert({
+      invoice_id: newPayment.invoice_id || null,
+      amount: newPayment.amount,
+      payment_method: newPayment.payment_method,
+      bank_reference: newPayment.bank_reference || null,
+      payment_date: newPayment.payment_date,
+    })
+    if (!error) {
+      addToast({ type: 'success', title: 'Cobro registrado' })
+      setShowRegister(false)
+      setNewPayment({ invoice_id: '', amount: 0, payment_method: 'transferencia', bank_reference: '', payment_date: new Date().toISOString().split('T')[0] })
+      load()
+    } else {
+      addToast({ type: 'error', title: 'Error', message: error.message })
+    }
+    setSaving(false)
+  }
+
+  const totalCobrado = rows.reduce((s, r) => s + ((r.importe as number) || 0), 0)
+
   return (
-    <DataTable
-      data={rows}
-      columns={COBRO_COLS}
-      loading={loading}
-      totalLabel="cobros"
-      showTotals
-      exportFilename="cobros_torquetools"
-      pageSize={25}
-    />
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+        <KPICard label="Total cobrado" value={formatCurrency(totalCobrado)} icon={<CreditCard size={22} />} color="#10B981" />
+        <KPICard label="Cobros registrados" value={rows.length} icon={<Receipt size={22} />} />
+        <div className="flex items-end justify-end">
+          <Button variant="primary" onClick={() => { setShowRegister(true); loadInvoices() }}>
+            <Plus size={16} /> Registrar Cobro
+          </Button>
+        </div>
+      </div>
+      <DataTable
+        data={rows}
+        columns={COBRO_COLS}
+        loading={loading}
+        totalLabel="cobros"
+        showTotals
+        exportFilename="cobros_torquetools"
+        pageSize={25}
+      />
+      <Modal isOpen={showRegister} onClose={() => setShowRegister(false)} title="Registrar Cobro" size="md">
+        <div className="space-y-4">
+          <Select label="Factura relacionada" value={newPayment.invoice_id} onChange={e => setNewPayment({ ...newPayment, invoice_id: e.target.value })}
+            options={invoices.map(inv => ({ value: inv.id as string, label: `${(inv.display_ref as string) || (inv.system_code as string) || 'S/N'} — ${formatCurrency((inv.total as number) || 0)} — ${((inv.client as Record<string, unknown>)?.legal_name as string) || 'Sin cliente'}` }))}
+            placeholder="Sin factura vinculada" />
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Importe *" type="number" min={0} step={0.01} value={newPayment.amount || ''} onChange={e => setNewPayment({ ...newPayment, amount: Number(e.target.value) })} />
+            <Input label="Fecha" type="date" value={newPayment.payment_date} onChange={e => setNewPayment({ ...newPayment, payment_date: e.target.value })} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Select label="Metodo de pago" value={newPayment.payment_method} onChange={e => setNewPayment({ ...newPayment, payment_method: e.target.value })}
+              options={[{ value: 'transferencia', label: 'Transferencia bancaria' }, { value: 'cheque', label: 'Cheque' }, { value: 'efectivo', label: 'Efectivo' }, { value: 'tarjeta', label: 'Tarjeta' }, { value: 'paypal', label: 'PayPal' }, { value: 'otro', label: 'Otro' }]} />
+            <Input label="Referencia bancaria" value={newPayment.bank_reference} onChange={e => setNewPayment({ ...newPayment, bank_reference: e.target.value })} placeholder="Nro transferencia, cheque..." />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="secondary" onClick={() => setShowRegister(false)}>Cancelar</Button>
+            <Button variant="primary" onClick={handleRegisterPayment} loading={saving}><Save size={14} /> Registrar</Button>
+          </div>
+        </div>
+      </Modal>
+    </div>
   )
 }
 
