@@ -937,7 +937,7 @@ function ProductosTab() {
                         {product.encastre || '-'}
                       </td>
                       {/* PRECIO */}
-                      <td className="px-3 py-2 text-right">
+                      <td className="px-3 py-2 text-right whitespace-nowrap">
                         <span className="font-bold text-[#FF6600]">
                           {product.price_eur > 0 ? formatCurrency(product.price_eur, 'EUR') : 'Consultar'}
                         </span>

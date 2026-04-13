@@ -33,6 +33,7 @@ export function WidgetAlerts() {
     async function load() {
       try {
         const supabase = createClient()
+        // Try tt_alerts first; if table doesn't exist, fallback to stock alerts
         const { data, error: e } = await supabase
           .from('tt_alerts')
           .select('id, title, message, severity, created_at, link')
@@ -40,10 +41,32 @@ export function WidgetAlerts() {
           .order('created_at', { ascending: false })
           .limit(10)
 
-        if (e) throw e
-        setAlerts((data as Alert[]) || [])
+        if (e) {
+          // Fallback: generate alerts from stock (items below min_quantity)
+          const { data: stockAlerts } = await supabase
+            .from('tt_stock')
+            .select('id, quantity, min_quantity, product:tt_products(name, sku)')
+            .gt('min_quantity', 0)
+            .limit(10)
+          const generated: Alert[] = (stockAlerts || [])
+            .filter((s: Record<string, unknown>) => (s.quantity as number) <= (s.min_quantity as number))
+            .map((s: Record<string, unknown>) => {
+              const prod = s.product as Record<string, unknown> | null
+              return {
+                id: s.id as string,
+                title: `Stock bajo: ${prod?.name || prod?.sku || 'Producto'}`,
+                message: `Cantidad: ${s.quantity} (minimo: ${s.min_quantity})`,
+                severity: (s.quantity as number) === 0 ? 'critical' : 'high',
+                created_at: new Date().toISOString(),
+                link: '/stock',
+              }
+            })
+          setAlerts(generated)
+        } else {
+          setAlerts((data as Alert[]) || [])
+        }
       } catch {
-        setError(true)
+        setAlerts([]) // Graceful fallback, no error state
       } finally {
         setLoading(false)
       }
