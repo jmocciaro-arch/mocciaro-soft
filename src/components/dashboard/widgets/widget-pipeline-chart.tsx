@@ -3,7 +3,6 @@
 import { useState, useEffect } from 'react'
 import { BarChart3 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import { CRM_STAGES, formatCurrency } from '@/lib/utils'
 import { WidgetSkeleton, WidgetError } from '../widget-wrapper'
 
@@ -63,44 +62,36 @@ export function WidgetPipelineChart() {
       <div className="flex flex-col items-center justify-center h-full text-[#4B5563] py-6">
         <BarChart3 size={28} className="mb-2" />
         <p className="text-xs">Sin datos de pipeline</p>
+        <p className="text-[10px] mt-1">Crea oportunidades en CRM / Leads</p>
       </div>
     )
   }
 
+  // Simple bar chart without recharts (avoids SSR issues)
+  const maxVal = Math.max(...data.map(d => d.value), 1)
+
   return (
-    <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={data} layout="vertical" margin={{ top: 5, right: 10, bottom: 5, left: 5 }}>
-        <XAxis
-          type="number"
-          tick={{ fill: '#6B7280', fontSize: 10 }}
-          tickFormatter={(v: number) => `${(v / 1000).toFixed(0)}k`}
-          axisLine={false}
-          tickLine={false}
-        />
-        <YAxis
-          dataKey="label"
-          type="category"
-          tick={{ fill: '#9CA3AF', fontSize: 11 }}
-          axisLine={false}
-          tickLine={false}
-          width={80}
-        />
-        <Tooltip
-          contentStyle={{
-            backgroundColor: '#141820',
-            border: '1px solid #1E2330',
-            borderRadius: '8px',
-            fontSize: '12px',
-          }}
-          formatter={(value) => [formatCurrency(Number(value), 'EUR'), 'Valor']}
-          labelStyle={{ color: '#9CA3AF' }}
-        />
-        <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={20}>
-          {data.map((entry) => (
-            <Cell key={entry.stage} fill={entry.color} />
-          ))}
-        </Bar>
-      </BarChart>
-    </ResponsiveContainer>
+    <div className="space-y-3 py-2">
+      {data.map(d => {
+        const width = Math.max((d.value / maxVal) * 100, 3)
+        return (
+          <div key={d.stage}>
+            <div className="flex justify-between text-xs mb-1">
+              <span className="text-[#9CA3AF] flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: d.color }} />
+                {d.label}
+              </span>
+              <span className="text-[#F0F2F5] font-medium">{formatCurrency(d.value)}</span>
+            </div>
+            <div className="w-full h-3 rounded-full bg-[#1E2330] overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all duration-500"
+                style={{ width: `${width}%`, backgroundColor: d.color }}
+              />
+            </div>
+          </div>
+        )
+      })}
+    </div>
   )
 }
