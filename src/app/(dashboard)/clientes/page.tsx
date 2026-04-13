@@ -25,6 +25,7 @@ import {
   Globe, Hash, ArrowLeft, Search, Grid3X3, List
 } from 'lucide-react'
 import { DocLink } from '@/components/ui/doc-link'
+import { useCompanyFilter } from '@/hooks/use-company-filter'
 
 // ═══════════════════════════════════════════════════════
 // CONSTANTS
@@ -789,6 +790,7 @@ function InfoField({ label, value, mono }: { label: string; value: string | null
 // ═══════════════════════════════════════════════════════
 
 function ClientesTab() {
+  const { filterByCompany } = useCompanyFilter()
   const { addToast } = useToast()
   const [allClients, setAllClients] = useState<Client[]>([])
   const [loading, setLoading] = useState(true)
@@ -826,12 +828,14 @@ function ClientesTab() {
       let from = 0
       let keepGoing = true
       while (keepGoing) {
-        const { data } = await supabase
+        let q = supabase
           .from('tt_clients')
           .select('*')
           .eq('active', true)
           .order('legal_name')
           .range(from, from + PAGE_SIZE - 1)
+        q = filterByCompany(q)
+        const { data } = await q
         const batch = (data || []) as Client[]
         allData = [...allData, ...batch]
         if (batch.length < PAGE_SIZE) keepGoing = false
@@ -854,9 +858,11 @@ function ClientesTab() {
   // Load client metrics (all transactional data)
   const loadMetrics = useCallback(async () => {
     const sb = createClient()
-    const { data } = await sb.from('tt_documents')
+    let qMetrics = sb.from('tt_documents')
       .select('client_id, type, status, total, created_at')
       .not('client_id', 'is', null)
+    qMetrics = filterByCompany(qMetrics)
+    const { data } = await qMetrics
     if (!data) return
     type M = typeof clientMetrics extends Record<string, infer V> ? V : never
     const empty = (): M => ({
@@ -1307,6 +1313,7 @@ function ClientesTab() {
 // ═══════════════════════════════════════════════════════
 
 function PotencialesTab() {
+  const { filterByCompany } = useCompanyFilter()
   const supabase = createClient()
   const { addToast } = useToast()
   const [leads, setLeads] = useState<Client[]>([])
@@ -1317,6 +1324,7 @@ function PotencialesTab() {
     setLoading(true)
     const sb = createClient()
     let q = sb.from('tt_clients').select('*').or('category.eq.potential,category.eq.lead,source.eq.lead').eq('active', true).order('created_at', { ascending: false })
+    q = filterByCompany(q)
     if (search) q = q.or(`name.ilike.%${search}%,legal_name.ilike.%${search}%`)
     const { data } = await q
     setLeads((data || []) as Client[])
@@ -1368,6 +1376,7 @@ function PotencialesTab() {
 // ═══════════════════════════════════════════════════════
 
 function ContactosTab() {
+  const { filterByCompany } = useCompanyFilter()
   const supabase = createClient()
   const [contacts, setContacts] = useState<(Client & { _companyName?: string })[]>([])
   const [dbContacts, setDbContacts] = useState<(ClientContact & { _companyName?: string })[]>([])
@@ -1386,6 +1395,7 @@ function ContactosTab() {
 
     // Also load from tt_clients (where name differs from legal_name = person contacts)
     let q = sb.from('tt_clients').select('id, name, legal_name, email, phone, city, country, category').eq('active', true).order('name')
+    q = filterByCompany(q)
     if (search) q = q.or(`name.ilike.%${search}%,email.ilike.%${search}%,phone.ilike.%${search}%`)
     const { data: clientData } = await q
 
@@ -1495,6 +1505,7 @@ function ContactosTab() {
 // ═══════════════════════════════════════════════════════
 
 function FavoritosTab() {
+  const { filterByCompany } = useCompanyFilter()
   const [favorites, setFavorites] = useState<GroupedCompany[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedCompany, setSelectedCompany] = useState<GroupedCompany | null>(null)
@@ -1504,7 +1515,9 @@ function FavoritosTab() {
   async function loadFavorites() {
     const supabase = createClient()
     setLoading(true)
-    const { data } = await supabase.from('tt_clients').select('*').eq('active', true).eq('is_favorite', true).order('legal_name')
+    let qFav = supabase.from('tt_clients').select('*').eq('active', true).eq('is_favorite', true).order('legal_name')
+    qFav = filterByCompany(qFav)
+    const { data } = await qFav
     const grouped = groupClientsByCompany((data || []) as Client[])
     setFavorites(grouped)
     setLoading(false)
@@ -1564,6 +1577,7 @@ function FavoritosTab() {
 // ═══════════════════════════════════════════════════════
 
 function RankingTab() {
+  const { filterByCompany } = useCompanyFilter()
   const [clients, setClients] = useState<(Client & { rank: number })[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -1572,7 +1586,9 @@ function RankingTab() {
   async function loadRanking() {
     const supabase = createClient()
     setLoading(true)
-    const { data } = await supabase.from('tt_clients').select('*').eq('active', true).order('total_revenue', { ascending: false, nullsFirst: false }).limit(50)
+    let qRank = supabase.from('tt_clients').select('*').eq('active', true).order('total_revenue', { ascending: false, nullsFirst: false }).limit(50)
+    qRank = filterByCompany(qRank)
+    const { data } = await qRank
     const ranked = (data || []).map((c: Record<string, unknown>, i: number) => ({ ...c, rank: i + 1 })) as (Client & { rank: number })[]
     setClients(ranked)
     setLoading(false)

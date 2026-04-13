@@ -16,6 +16,7 @@ import { createClient } from '@/lib/supabase/client'
 import { formatCurrency, formatDate, formatRelative, CRM_STAGES } from '@/lib/utils'
 import type { Opportunity, Client, User } from '@/types'
 import { ExportButton } from '@/components/ui/export-button'
+import { useCompanyFilter } from '@/hooks/use-company-filter'
 import {
   Plus, Target, Calendar, User as UserIcon, GripVertical, Save,
   Loader2, Activity, BarChart3, TrendingUp, PieChart, DollarSign,
@@ -99,6 +100,7 @@ const crmTabs = [
 // PIPELINE TAB
 // ═══════════════════════════════════════════════════════
 function PipelineTab() {
+  const { filterByCompany } = useCompanyFilter()
   const { addToast } = useToast()
   const [opportunities, setOpportunities] = useState<Opportunity[]>([])
   const [loading, setLoading] = useState(true)
@@ -128,8 +130,10 @@ function PipelineTab() {
 
   async function loadData() {
     const supabase = createClient(); setLoading(true)
+    let oppsQuery = supabase.from('tt_opportunities').select('*, client:tt_clients(id, name, legal_name, email, phone), assignee:tt_users(full_name)').order('created_at', { ascending: false })
+    oppsQuery = filterByCompany(oppsQuery)
     const [oppsRes, usersRes] = await Promise.all([
-      supabase.from('tt_opportunities').select('*, client:tt_clients(id, name, legal_name, email, phone), assignee:tt_users(full_name)').order('created_at', { ascending: false }),
+      oppsQuery,
       supabase.from('tt_users').select('*').eq('active', true),
     ])
     setOpportunities((oppsRes.data as unknown as Opportunity[]) || [])
@@ -595,6 +599,7 @@ function ActividadesTab() {
 // INFORMES TAB
 // ═══════════════════════════════════════════════════════
 function InformesTab() {
+  const { filterByCompany } = useCompanyFilter()
   const [stats, setStats] = useState<{ total: number; won: number; lost: number; pipelineValue: number; byStage: Array<{ stage: string; count: number; value: number }> }>({ total: 0, won: 0, lost: 0, pipelineValue: 0, byStage: [] })
   const [loading, setLoading] = useState(true)
 
@@ -602,7 +607,9 @@ function InformesTab() {
     (async () => {
       setLoading(true)
       const supabase = createClient()
-      const { data } = await supabase.from('tt_opportunities').select('stage, value, probability')
+      let q = supabase.from('tt_opportunities').select('stage, value, probability')
+      q = filterByCompany(q)
+      const { data } = await q
       const opps = data || []
       const won = opps.filter(o => (o.stage as string) === 'ganado').length
       const lost = opps.filter(o => (o.stage as string) === 'perdido').length

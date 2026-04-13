@@ -15,6 +15,7 @@ import { Tabs } from '@/components/ui/tabs'
 import { useToast } from '@/components/ui/toast'
 import { formatDate, formatRelative } from '@/lib/utils'
 import { ExportButton } from '@/components/ui/export-button'
+import { useCompanyFilter } from '@/hooks/use-company-filter'
 import {
   Wrench, Plus, Eye, Loader2, AlertTriangle, Clock, CheckCircle,
   User, MapPin, Package, ClipboardList, Cpu, QrCode
@@ -41,6 +42,7 @@ const satTabs = [
 // INCIDENCIAS TAB (existing SAT tickets)
 // ═══════════════════════════════════════════════════════
 function IncidenciasTab() {
+  const { filterByCompany } = useCompanyFilter()
   const supabase = createClient()
   const { addToast } = useToast()
   const [tickets, setTickets] = useState<Row[]>([])
@@ -64,6 +66,7 @@ function IncidenciasTab() {
     setLoading(true)
     const sb = createClient()
     let q = sb.from('tt_sat_tickets').select('*, tt_clients(name)').order('created_at', { ascending: false })
+    q = filterByCompany(q)
     if (statusFilter) q = q.eq('status', statusFilter)
     if (priorityFilter) q = q.eq('priority', priorityFilter)
     if (search) q = q.ilike('description', `%${search}%`)
@@ -223,6 +226,7 @@ function IncidenciasTab() {
 // ORDENES DE TRABAJO TAB
 // ═══════════════════════════════════════════════════════
 function OrdenesTrabajoTab() {
+  const { filterByCompany } = useCompanyFilter()
   const supabase = createClient()
   const [tickets, setTickets] = useState<Row[]>([])
   const [loading, setLoading] = useState(true)
@@ -230,7 +234,9 @@ function OrdenesTrabajoTab() {
   useEffect(() => {
     (async () => {
       setLoading(true)
-      const { data } = await supabase.from('tt_sat_tickets').select('*, tt_clients(name)').in('status', ['in_progress', 'waiting_parts']).order('updated_at', { ascending: false })
+      let q = supabase.from('tt_sat_tickets').select('*, tt_clients(name)').in('status', ['in_progress', 'waiting_parts']).order('updated_at', { ascending: false })
+      q = filterByCompany(q)
+      const { data } = await q
       setTickets(data || [])
       setLoading(false)
     })()
@@ -272,6 +278,7 @@ function OrdenesTrabajoTab() {
 // ACTIVOS/EQUIPOS TAB
 // ═══════════════════════════════════════════════════════
 function ActivosTab() {
+  const { filterByCompany } = useCompanyFilter()
   const supabase = createClient()
   const [equipment, setEquipment] = useState<Row[]>([])
   const [loading, setLoading] = useState(true)
@@ -282,6 +289,7 @@ function ActivosTab() {
     const sb = createClient()
     // Get unique equipments from SAT tickets (serial numbers)
     let q = sb.from('tt_sat_tickets').select('serial_number, product_id, tt_clients(name), description, created_at, status').not('serial_number', 'is', null).order('created_at', { ascending: false })
+    q = filterByCompany(q)
     if (search) q = q.ilike('serial_number', `%${search}%`)
     const { data } = await q
     setEquipment(data || [])

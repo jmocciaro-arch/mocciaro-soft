@@ -22,6 +22,7 @@ import { DocumentListCard } from '@/components/workflow/document-list-card'
 import { DocumentForm } from '@/components/workflow/document-form'
 import { documentToTableRow, localPOToRow, purchaseInvoiceToRow, mapStatus, extractClientName, extractDocRef } from '@/lib/document-helpers'
 import type { Supplier, SupplierContact, PurchaseInvoice, PurchasePayment } from '@/types'
+import { useCompanyFilter } from '@/hooks/use-company-filter'
 import {
   ShoppingCart, Plus, Package, Truck, CheckCircle, Clock,
   FileText, Loader2, X, Send, Users, DollarSign, FileCheck,
@@ -1130,6 +1131,7 @@ function ProveedoresTab() {
 // PEDIDOS COMPRA TAB
 // ===============================================================
 function PedidosCompraTab() {
+  const { filterByCompany } = useCompanyFilter()
   const supabase = createClient()
   const { addToast } = useToast()
   const [orders, setOrders] = useState<Row[]>([])
@@ -1155,12 +1157,14 @@ function PedidosCompraTab() {
       .eq('type', 'pap')
       .order('created_at', { ascending: false })
       .range(0, 99)
+    qDoc = filterByCompany(qDoc)
     if (statusFilter) qDoc = qDoc.eq('status', statusFilter)
     if (search) qDoc = qDoc.or(`display_ref.ilike.%${search}%,system_code.ilike.%${search}%`)
     const { data: docData } = await qDoc
 
     // Also load from tt_purchase_orders (locally created)
     let qLocal = sb.from('tt_purchase_orders').select('*').order('created_at', { ascending: false })
+    qLocal = filterByCompany(qLocal)
     if (statusFilter) qLocal = qLocal.eq('status', statusFilter)
     if (search) qLocal = qLocal.ilike('supplier_name', `%${search}%`)
     const { data: localData } = await qLocal

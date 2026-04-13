@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, Suspense } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { useCompanyFilter } from '@/hooks/use-company-filter'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
@@ -119,6 +120,7 @@ const COBRO_COLS: DataTableColumn[] = [
 // PRESUPUESTOS TAB
 // ===============================================================
 function PresupuestosTab() {
+  const { filterByCompany } = useCompanyFilter()
   const supabase = createClient()
   const [rows, setRows] = useState<Record<string, unknown>[]>([])
   const [loading, setLoading] = useState(true)
@@ -127,8 +129,10 @@ function PresupuestosTab() {
   const load = useCallback(async () => {
     setLoading(true)
     const sb = createClient()
+    let q = sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').eq('type', 'coti')
+    q = filterByCompany(q)
     const [{ data: docData }, { data: localData }] = await Promise.all([
-      sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').eq('type', 'coti').order('created_at', { ascending: false }).range(0, 499),
+      q.order('created_at', { ascending: false }).range(0, 499),
       sb.from('tt_quotes').select('*, tt_clients(name, tax_id, country)').order('created_at', { ascending: false }),
     ])
     const localRows = (localData || []).map(localQuoteToRow)
@@ -177,6 +181,7 @@ function PresupuestosTab() {
 // PEDIDOS TAB
 // ===============================================================
 function PedidosTab() {
+  const { filterByCompany } = useCompanyFilter()
   const supabase = createClient()
   const { addToast } = useToast()
 
@@ -199,8 +204,10 @@ function PedidosTab() {
   const load = useCallback(async () => {
     setLoading(true)
     const sb = createClient()
+    let q = sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').eq('type', 'pedido')
+    q = filterByCompany(q)
     const [{ data: docData }, { data: localData }] = await Promise.all([
-      sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').eq('type', 'pedido').order('created_at', { ascending: false }).range(0, 499),
+      q.order('created_at', { ascending: false }).range(0, 499),
       sb.from('tt_sales_orders').select('*, tt_clients(name, tax_id, country)').order('created_at', { ascending: false }),
     ])
     const localRows = (localData || []).map(localSOToRow)
@@ -371,6 +378,7 @@ function PedidosTab() {
 // ALBARANES TAB
 // ===============================================================
 function AlbaranesTab() {
+  const { filterByCompany } = useCompanyFilter()
   const supabase = createClient()
   const [rows, setRows] = useState<Record<string, unknown>[]>([])
   const [loading, setLoading] = useState(true)
@@ -379,8 +387,10 @@ function AlbaranesTab() {
   const load = useCallback(async () => {
     setLoading(true)
     const sb = createClient()
+    let q = sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').eq('type', 'delivery_note')
+    q = filterByCompany(q)
     const [{ data: docData }, { data: localData }] = await Promise.all([
-      sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').eq('type', 'delivery_note').order('created_at', { ascending: false }).range(0, 499),
+      q.order('created_at', { ascending: false }).range(0, 499),
       sb.from('tt_delivery_notes').select('*, tt_clients(name), tt_sales_orders(doc_number)').order('created_at', { ascending: false }),
     ])
     const localRows = (localData || []).map(localDNToRow)
@@ -429,6 +439,7 @@ function AlbaranesTab() {
 // FACTURAS TAB
 // ===============================================================
 function FacturasTab() {
+  const { filterByCompany } = useCompanyFilter()
   const supabase = createClient()
   const [rows, setRows] = useState<Record<string, unknown>[]>([])
   const [loading, setLoading] = useState(true)
@@ -437,8 +448,10 @@ function FacturasTab() {
   const load = useCallback(async () => {
     setLoading(true)
     const sb = createClient()
+    let q = sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').in('type', ['factura', 'factura_abono'])
+    q = filterByCompany(q)
     const [{ data: docData }, { data: localData }] = await Promise.all([
-      sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').in('type', ['factura', 'factura_abono']).order('created_at', { ascending: false }).range(0, 499),
+      q.order('created_at', { ascending: false }).range(0, 499),
       sb.from('tt_invoices').select('*, tt_clients(name)').eq('type', 'sale').order('created_at', { ascending: false }),
     ])
     const localRows = (localData || []).map(localInvoiceToRow)
@@ -487,6 +500,7 @@ function FacturasTab() {
 // COBROS TAB
 // ===============================================================
 function CobrosTab() {
+  const { filterByCompany } = useCompanyFilter()
   const supabase = createClient()
   const { addToast } = useToast()
   const [rows, setRows] = useState<Record<string, unknown>[]>([])
@@ -507,10 +521,12 @@ function CobrosTab() {
   useEffect(() => { load() }, [load])
 
   const loadInvoices = async () => {
-    const { data } = await supabase.from('tt_documents')
+    let q = supabase.from('tt_documents')
       .select('id, display_ref, system_code, total, status, client:tt_clients(name, legal_name)')
       .in('type', ['factura', 'factura_abono'])
       .in('status', ['pending', 'partial', 'open', 'sent', 'draft'])
+    q = filterByCompany(q)
+    const { data } = await q
       .order('created_at', { ascending: false })
       .limit(50)
     setInvoices(data || [])

@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input'
 import { ExportButton } from '@/components/ui/export-button'
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table'
 import { formatCurrency, formatDate } from '@/lib/utils'
+import { useCompanyFilter } from '@/hooks/use-company-filter'
 import {
   BarChart3, TrendingUp, TrendingDown, DollarSign, CreditCard,
   Users, Package, Loader2, Calendar, PieChart, Activity,
@@ -57,6 +58,7 @@ function getPeriodDates(period: string): { from: string; to: string } {
 // RESUMEN TAB — Overview con KPIs principales
 // ═══════════════════════════════════════════════════════
 function ResumenTab() {
+  const { filterByCompany } = useCompanyFilter()
   const [period, setPeriod] = useState('year')
   const [data, setData] = useState<{ ventas: number; compras: number; cobrado: number; pagado: number; facturasPend: number; docs: number; clientes: number; productos: number }>({ ventas: 0, compras: 0, cobrado: 0, pagado: 0, facturasPend: 0, docs: 0, clientes: 0, productos: 0 })
   const [loading, setLoading] = useState(true)
@@ -66,8 +68,11 @@ function ResumenTab() {
     const sb = createClient()
     const { from, to } = getPeriodDates(period)
 
+    let docsQuery = sb.from('tt_documents').select('type, status, total, created_at').gte('created_at', from).lte('created_at', to)
+    docsQuery = filterByCompany(docsQuery)
+
     const [docsRes, clientsRes, productsRes, paymentsRes] = await Promise.all([
-      sb.from('tt_documents').select('type, status, total, created_at').gte('created_at', from).lte('created_at', to),
+      docsQuery,
       sb.from('tt_clients').select('id', { count: 'exact', head: true }).eq('active', true),
       sb.from('tt_products').select('id', { count: 'exact', head: true }).eq('active', true),
       sb.from('tt_purchase_payments').select('amount').gte('created_at', from).lte('created_at', to),
@@ -142,6 +147,7 @@ function ResumenTab() {
 // RESULTADOS TAB — Ventas vs Gastos por Cliente/Empleado/Catalogo
 // ═══════════════════════════════════════════════════════
 function ResultadosTab() {
+  const { filterByCompany } = useCompanyFilter()
   const [period, setPeriod] = useState('year')
   const [groupBy, setGroupBy] = useState<'cliente' | 'tipo'>('cliente')
   const [rows, setRows] = useState<Row[]>([])
@@ -151,7 +157,9 @@ function ResultadosTab() {
     setLoading(true)
     const sb = createClient()
     const { from, to } = getPeriodDates(period)
-    const { data } = await sb.from('tt_documents').select('type, status, total, client:tt_clients(name, legal_name)').gte('created_at', from).lte('created_at', to)
+    let q = sb.from('tt_documents').select('type, status, total, client:tt_clients(name, legal_name)').gte('created_at', from).lte('created_at', to)
+    q = filterByCompany(q)
+    const { data } = await q
 
     if (groupBy === 'cliente') {
       const map = new Map<string, { cliente: string; ventas: number; compras: number }>()
@@ -208,6 +216,7 @@ function ResultadosTab() {
 // FACTURACION TAB — Por cliente, empleado, periodo
 // ═══════════════════════════════════════════════════════
 function FacturacionTab() {
+  const { filterByCompany } = useCompanyFilter()
   const [period, setPeriod] = useState('year')
   const [rows, setRows] = useState<Row[]>([])
   const [loading, setLoading] = useState(true)
@@ -216,7 +225,9 @@ function FacturacionTab() {
     setLoading(true)
     const sb = createClient()
     const { from, to } = getPeriodDates(period)
-    const { data } = await sb.from('tt_documents').select('type, status, total, client:tt_clients(name, legal_name)').in('type', ['factura', 'factura_abono']).gte('created_at', from).lte('created_at', to)
+    let q = sb.from('tt_documents').select('type, status, total, client:tt_clients(name, legal_name)').in('type', ['factura', 'factura_abono']).gte('created_at', from).lte('created_at', to)
+    q = filterByCompany(q)
+    const { data } = await q
 
     const map = new Map<string, { cliente: string; facturado: number; cobrado: number; pendiente: number; facturas: number }>()
     for (const d of (data || [])) {
@@ -257,6 +268,7 @@ function FacturacionTab() {
 // TESORERIA TAB — Cobros vs Pagos, facturas pendientes
 // ═══════════════════════════════════════════════════════
 function TesoreriaTab() {
+  const { filterByCompany } = useCompanyFilter()
   const [period, setPeriod] = useState('year')
   const [salesInvoices, setSalesInvoices] = useState<Row[]>([])
   const [purchaseInvoices, setPurchaseInvoices] = useState<Row[]>([])
@@ -267,9 +279,14 @@ function TesoreriaTab() {
     const sb = createClient()
     const { from, to } = getPeriodDates(period)
 
+    let salesQuery = sb.from('tt_documents').select('id, display_ref, system_code, type, status, total, created_at, client:tt_clients(legal_name, name)').in('type', ['factura', 'factura_abono']).gte('created_at', from).lte('created_at', to).order('created_at', { ascending: false })
+    salesQuery = filterByCompany(salesQuery)
+    let purchQuery = sb.from('tt_documents').select('id, display_ref, system_code, type, status, total, created_at, client:tt_clients(legal_name, name)').eq('type', 'factura_compra').gte('created_at', from).lte('created_at', to).order('created_at', { ascending: false })
+    purchQuery = filterByCompany(purchQuery)
+
     const [salesRes, purchRes] = await Promise.all([
-      sb.from('tt_documents').select('id, display_ref, system_code, type, status, total, created_at, client:tt_clients(legal_name, name)').in('type', ['factura', 'factura_abono']).gte('created_at', from).lte('created_at', to).order('created_at', { ascending: false }),
-      sb.from('tt_documents').select('id, display_ref, system_code, type, status, total, created_at, client:tt_clients(legal_name, name)').eq('type', 'factura_compra').gte('created_at', from).lte('created_at', to).order('created_at', { ascending: false }),
+      salesQuery,
+      purchQuery,
     ])
 
     setSalesInvoices((salesRes.data || []).map((d: Row) => {
@@ -337,6 +354,7 @@ function TesoreriaTab() {
 // VENTAS TAB — Desglose por tipo documento
 // ═══════════════════════════════════════════════════════
 function VentasTab() {
+  const { filterByCompany } = useCompanyFilter()
   const [period, setPeriod] = useState('year')
   const [stats, setStats] = useState<{ presupuestos: { count: number; total: number; abiertos: number }; pedidos: { count: number; total: number; abiertos: number }; albaranes: { count: number; total: number }; facturas: { count: number; total: number; cobradas: number; pendientes: number } }>({
     presupuestos: { count: 0, total: 0, abiertos: 0 }, pedidos: { count: 0, total: 0, abiertos: 0 },
@@ -348,7 +366,9 @@ function VentasTab() {
     setLoading(true)
     const sb = createClient()
     const { from, to } = getPeriodDates(period)
-    const { data } = await sb.from('tt_documents').select('type, status, total').gte('created_at', from).lte('created_at', to)
+    let q = sb.from('tt_documents').select('type, status, total').gte('created_at', from).lte('created_at', to)
+    q = filterByCompany(q)
+    const { data } = await q
 
     const s = { presupuestos: { count: 0, total: 0, abiertos: 0 }, pedidos: { count: 0, total: 0, abiertos: 0 }, albaranes: { count: 0, total: 0 }, facturas: { count: 0, total: 0, cobradas: 0, pendientes: 0 } }
     for (const d of (data || [])) {
@@ -401,6 +421,7 @@ function VentasTab() {
 // RENTABILIDAD TAB — Por producto y cliente
 // ═══════════════════════════════════════════════════════
 function RentabilidadTab() {
+  const { filterByCompany } = useCompanyFilter()
   const [period, setPeriod] = useState('year')
   const [groupBy, setGroupBy] = useState<'producto' | 'cliente'>('producto')
   const [rows, setRows] = useState<Row[]>([])
@@ -413,7 +434,9 @@ function RentabilidadTab() {
 
     // Load factura items with product costs
     // Load factura documents first, then their items
-    const { data: facturaDocs } = await sb.from('tt_documents').select('id, type, client:tt_clients(legal_name, name)').eq('type', 'factura').gte('created_at', from).lte('created_at', to)
+    let facturaQuery = sb.from('tt_documents').select('id, type, client:tt_clients(legal_name, name)').eq('type', 'factura').gte('created_at', from).lte('created_at', to)
+    facturaQuery = filterByCompany(facturaQuery)
+    const { data: facturaDocs } = await facturaQuery
     const facturaIds = (facturaDocs || []).map((d: Row) => d.id as string)
     const clientByDoc: Record<string, string> = {}
     for (const d of (facturaDocs || [])) {
