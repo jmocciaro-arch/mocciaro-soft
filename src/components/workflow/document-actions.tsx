@@ -22,6 +22,7 @@ import { formatCurrency } from '@/lib/utils'
 import {
   Mail, FileText, CheckCircle, XCircle, Package,
   Truck, CreditCard, DollarSign, Printer, Loader2,
+  RotateCcw, Trash2,
 } from 'lucide-react'
 
 type Row = Record<string, unknown>
@@ -47,20 +48,21 @@ function getAvailableActions(type: DocumentActionType, status: string): string[]
   switch (type) {
     case 'coti': {
       if (s === 'draft' || s === 'borrador') return ['send', 'pdf', 'accept', 'reject', 'generate_order']
-      if (s === 'sent' || s === 'enviada') return ['accept', 'reject', 'generate_order']
-      if (s === 'accepted' || s === 'aceptada') return ['generate_order']
-      if (s === 'closed') return ['pdf']
-      return ['send', 'pdf', 'accept', 'generate_order']
+      if (s === 'sent' || s === 'enviada') return ['accept', 'reject', 'reopen', 'generate_order']
+      if (s === 'accepted' || s === 'aceptada') return ['generate_order', 'reopen']
+      if (s === 'rejected' || s === 'rechazada') return ['reopen']
+      if (s === 'closed') return ['pdf', 'reopen']
+      return ['send', 'pdf', 'accept', 'generate_order', 'reopen']
     }
     case 'pedido': {
-      if (s === 'open' || s === 'accepted') return ['send', 'generate_delivery', 'invoice_direct']
+      if (s === 'open' || s === 'accepted' || s === 'confirmado') return ['send', 'generate_delivery', 'invoice_direct', 'reopen']
       if (s === 'partially_delivered') return ['send', 'generate_delivery', 'invoice_direct']
       if (s === 'fully_delivered') return ['invoice_direct']
-      return ['send']
+      return ['send', 'reopen']
     }
     case 'delivery_note': {
-      if (s === 'pending' || s === 'open') return ['generate_invoice']
-      if (s === 'closed') return []
+      if (s === 'pending' || s === 'open') return ['generate_invoice', 'reopen']
+      if (s === 'closed') return ['reopen']
       return ['generate_invoice']
     }
     case 'factura': {
@@ -296,6 +298,45 @@ export function DocumentActions({
     setShowSendModal(false)
   }
 
+  // Reopen handler — vuelve a borrador/draft
+  const handleReopen = async () => {
+    setLoading('reopen')
+    try {
+      const table = source === 'local' ? (documentType === 'coti' ? 'tt_quotes' : 'tt_sales_orders') : 'tt_documents'
+      await updateDocumentStatus(docId, 'draft', table)
+      addToast({ type: 'success', title: 'Documento reabierto', message: 'Estado cambiado a borrador' })
+      onAction('reopened')
+    } catch (err) {
+      addToast({ type: 'error', title: 'Error', message: (err as Error).message })
+    } finally { setLoading(null) }
+  }
+
+  // Delete handler — con motivo obligatorio
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [deleteReason, setDeleteReason] = useState('')
+
+  const handleDelete = async () => {
+    if (!deleteReason.trim()) { addToast({ type: 'warning', title: 'Ingresa el motivo de eliminacion' }); return }
+    setLoading('delete')
+    try {
+      const supabase = createClient()
+      // Log the deletion with reason before deleting
+      await supabase.from('tt_activity_log').insert({
+        entity_type: 'document', entity_id: docId,
+        action: 'deleted',
+        detail: `Documento ${docNumber} eliminado. Motivo: ${deleteReason}`,
+      })
+      // Mark as cancelled (soft delete) instead of hard delete
+      const table = source === 'local' ? (documentType === 'coti' ? 'tt_quotes' : 'tt_sales_orders') : 'tt_documents'
+      await supabase.from(table).update({ status: 'cancelled', notes: `ELIMINADO: ${deleteReason}` }).eq('id', docId)
+      addToast({ type: 'success', title: 'Documento eliminado', message: deleteReason })
+      setShowDeleteModal(false)
+      onAction('deleted')
+    } catch (err) {
+      addToast({ type: 'error', title: 'Error', message: (err as Error).message })
+    } finally { setLoading(null) }
+  }
+
   // ---------------------------------------------------------------
   // Render buttons
   // ---------------------------------------------------------------
@@ -304,6 +345,7 @@ export function DocumentActions({
     pdf: { label: 'Generar PDF', icon: <Printer size={14} />, handler: handlePdf },
     accept: { label: 'Marcar Aceptada', icon: <CheckCircle size={14} />, handler: handleAccept },
     reject: { label: 'Marcar Rechazada', icon: <XCircle size={14} />, handler: () => setShowRejectModal(true) },
+    reopen: { label: 'Reabrir (Borrador)', icon: <RotateCcw size={14} />, handler: handleReopen },
     generate_order: { label: 'Generar Pedido', icon: <Package size={14} />, handler: handleGenerateOrder },
     generate_delivery: { label: 'Generar Remito', icon: <Truck size={14} />, handler: openDeliveryModal },
     invoice_direct: { label: 'Facturar directo', icon: <CreditCard size={14} />, handler: handleInvoiceDirect },
@@ -339,7 +381,40 @@ export function DocumentActions({
             </Button>
           )
         })}
+
+        {/* Separator + Delete button */}
+        <div className="ml-auto flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setShowDeleteModal(true)} className="text-red-400 border-red-500/30 hover:bg-red-500/10">
+            <Trash2 size={14} /> Eliminar
+          </Button>
+        </div>
       </div>
+
+      {/* Delete confirmation modal */}
+      <Modal isOpen={showDeleteModal} onClose={() => setShowDeleteModal(false)} title="Eliminar documento" size="md">
+        <div className="space-y-4">
+          <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20">
+            <p className="text-sm text-red-400 font-medium">Estas por eliminar el documento {docNumber}</p>
+            <p className="text-xs text-red-300/70 mt-1">El documento quedara marcado como CANCELADO con el motivo que indiques. Esta accion queda registrada en el historial.</p>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-[#9CA3AF] mb-1.5">Motivo de eliminacion *</label>
+            <textarea
+              value={deleteReason}
+              onChange={(e) => setDeleteReason(e.target.value)}
+              placeholder="Ej: duplicado, error de carga, cliente cancelo..."
+              rows={3}
+              className="w-full rounded-lg bg-[#0F1218] border border-[#2A3040] px-3 py-2 text-sm text-[#F0F2F5] placeholder:text-[#4B5563] focus:outline-none focus:border-red-500/50"
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setShowDeleteModal(false)}>Cancelar</Button>
+            <Button variant="primary" onClick={handleDelete} loading={loading === 'delete'} className="bg-red-600 hover:bg-red-700">
+              <Trash2 size={14} /> Confirmar eliminacion
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Send Modal */}
       <SendDocumentModal
