@@ -330,9 +330,27 @@ function CompanyDetail({ company, onClose, onUpdate }: {
     return [...fromDb, ...extra]
   }, [contacts, company.inlineContacts])
 
+  // Load OC data for glosario
+  const [clientOCs, setClientOCs] = useState<Record<string, unknown>[]>([])
+  const loadOCs = useCallback(async () => {
+    const sb = createClient()
+    const { data } = await sb.from('tt_documents')
+      .select('id, type, display_ref, system_code, status, total, created_at, metadata')
+      .in('client_id', allClientIds)
+      .order('created_at', { ascending: false })
+    const withOC = (data || []).filter((d: Record<string, unknown>) => {
+      const meta = d.metadata as Record<string, unknown> | null
+      return meta?.client_reference || (d.type as string) === 'pedido'
+    })
+    setClientOCs(withOC)
+  }, [allClientIds])
+
+  useEffect(() => { loadOCs() }, [loadOCs])
+
   const detailTabs = [
     { id: 'datos', label: 'Datos' },
     { id: 'contactos', label: `Contactos (${allContacts.length})` },
+    { id: 'oc_glosario', label: `OC Recibidas (${clientOCs.length})` },
     { id: 'historial', label: 'Historial' },
     { id: 'documentos', label: `Documentos (${documents.length})` },
   ]
@@ -581,6 +599,53 @@ function CompanyDetail({ company, onClose, onUpdate }: {
                       </div>
                     </Card>
                   ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB: OC Glosario */}
+          {activeDetailTab === 'oc_glosario' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-[#F0F2F5]">Glosario de OC — {company.legal_name}</h3>
+              </div>
+              <p className="text-xs text-[#6B7280]">Historial de ordenes de compra recibidas del cliente, vinculadas a pedidos internos.</p>
+              {clientOCs.length === 0 ? (
+                <div className="text-center py-10 text-[#4B5563]"><FileText size={40} className="mx-auto mb-2 opacity-30" /><p className="text-sm">No hay OC registradas para este cliente</p><p className="text-xs mt-1">Al crear un pedido, carga el numero de OC del cliente en el campo &ldquo;OC del cliente&rdquo;</p></div>
+              ) : (
+                <div className="overflow-x-auto rounded-lg border border-[#1E2330]">
+                  <table className="w-full text-sm">
+                    <thead><tr className="bg-[#0F1218] border-b border-[#1E2330] text-[#6B7280] text-xs uppercase">
+                      <th className="px-4 py-3 text-left">OC Cliente</th>
+                      <th className="px-4 py-3 text-left">Tipo Doc.</th>
+                      <th className="px-4 py-3 text-left">Ref. Interna</th>
+                      <th className="px-4 py-3 text-left">Estado</th>
+                      <th className="px-4 py-3 text-left">Fecha</th>
+                      <th className="px-4 py-3 text-right">Importe</th>
+                    </tr></thead>
+                    <tbody>
+                      {clientOCs.map(d => {
+                        const meta = d.metadata as Record<string, unknown> | null
+                        const ocRef = (meta?.client_reference as string) || '-'
+                        const attachments = (meta?.attachments as Array<{ name: string; url: string }>) || []
+                        const ocFile = attachments.find(a => a.name.toLowerCase().includes('oc') || a.name.toLowerCase().includes('orden'))
+                        return (
+                          <tr key={d.id as string} className="border-b border-[#1E2330] hover:bg-[#1C2230]">
+                            <td className="px-4 py-2.5">
+                              <span className="font-mono text-[#FF6600] font-bold">{ocRef}</span>
+                              {ocFile && <a href={ocFile.url} target="_blank" rel="noreferrer" className="ml-2 text-[10px] text-blue-400 hover:underline">PDF</a>}
+                            </td>
+                            <td className="px-4 py-2.5"><Badge variant="default" size="sm">{(d.type as string) || '-'}</Badge></td>
+                            <td className="px-4 py-2.5"><DocLink docRef={(d.display_ref as string) || (d.system_code as string) || '-'} docId={d.id as string} docType={d.type as string} /></td>
+                            <td className="px-4 py-2.5"><Badge variant={((d.status as string) === 'closed' || (d.status as string) === 'paid') ? 'success' : (d.status as string) === 'open' ? 'info' : 'default'} size="sm">{(d.status as string) || '-'}</Badge></td>
+                            <td className="px-4 py-2.5 text-xs text-[#9CA3AF] whitespace-nowrap">{d.created_at ? formatDate(d.created_at as string) : '-'}</td>
+                            <td className="px-4 py-2.5 text-right font-bold text-[#FF6600]">{formatCurrency((d.total as number) || 0)}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </div>
