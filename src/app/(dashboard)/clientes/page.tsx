@@ -29,6 +29,7 @@ import { useCompanyFilter } from '@/hooks/use-company-filter'
 import { ClientMerge } from '@/components/clients/client-merge'
 import { RelatedCompanies } from '@/components/clients/related-companies'
 import { SyncContactsButton } from '@/components/clients/sync-contacts-button'
+import { ContactCard } from '@/components/clients/contact-card'
 
 // ═══════════════════════════════════════════════════════
 // CONSTANTS
@@ -514,55 +515,13 @@ function CompanyDetail({ company, onClose, onUpdate }: {
               ) : (
                 <div className="space-y-3">
                   {allContacts.map((contact) => (
-                    <Card key={contact.id}>
-                      {editingContact === contact.id ? (
-                        <div className="space-y-3">
-                          <div className="grid grid-cols-2 gap-3">
-                            <Input label="Nombre" value={editContactData.name || ''} onChange={(e) => setEditContactData({ ...editContactData, name: e.target.value })} />
-                            <Input label="Cargo" value={editContactData.position || ''} onChange={(e) => setEditContactData({ ...editContactData, position: e.target.value })} />
-                          </div>
-                          <div className="grid grid-cols-3 gap-3">
-                            <Input label="Email" value={editContactData.email || ''} onChange={(e) => setEditContactData({ ...editContactData, email: e.target.value })} />
-                            <Input label="Telefono" value={editContactData.phone || ''} onChange={(e) => setEditContactData({ ...editContactData, phone: e.target.value })} />
-                            <Input label="WhatsApp" value={editContactData.whatsapp || ''} onChange={(e) => setEditContactData({ ...editContactData, whatsapp: e.target.value })} />
-                          </div>
-                          <div className="flex gap-2 justify-end">
-                            <Button variant="secondary" size="sm" onClick={() => setEditingContact(null)}>Cancelar</Button>
-                            <Button variant="primary" size="sm" onClick={() => saveContactEdit(contact.id)}><Save size={12} /> Guardar</Button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-full bg-[#1E2330] flex items-center justify-center text-sm font-bold text-[#FF6600] shrink-0">
-                            {getInitials(contact.name)}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-semibold text-[#F0F2F5]">{contact.name}</span>
-                              {contact.is_primary && <Badge variant="orange" size="sm">Principal</Badge>}
-                              {contact.source === 'inline' && <Badge variant="default" size="sm">StelOrder</Badge>}
-                            </div>
-                            {contact.position && <p className="text-xs text-[#6B7280]">{contact.position}</p>}
-                            <div className="flex gap-4 mt-1 flex-wrap">
-                              {contact.email && <span className="text-xs text-[#9CA3AF] flex items-center gap-1"><Mail size={10} />{contact.email}</span>}
-                              {contact.phone && <span className="text-xs text-[#9CA3AF] flex items-center gap-1"><Phone size={10} />{contact.phone}</span>}
-                            </div>
-                          </div>
-                          {contact.source === 'db' && (
-                            <div className="flex gap-1 shrink-0">
-                              {!contact.is_primary && (
-                                <Button variant="ghost" size="sm" onClick={() => togglePrimary(contact.id)} title="Marcar como principal"><Star size={14} /></Button>
-                              )}
-                              <Button variant="ghost" size="sm" onClick={() => {
-                                setEditingContact(contact.id)
-                                setEditContactData({ name: contact.name, position: contact.position, email: contact.email, phone: contact.phone, whatsapp: contact.whatsapp })
-                              }}><Edit3 size={14} /></Button>
-                              <Button variant="ghost" size="sm" onClick={() => deleteContact(contact.id)}><Trash2 size={14} className="text-red-400" /></Button>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </Card>
+                    <ContactCard
+                      key={contact.id}
+                      contact={contact as unknown as Record<string, unknown>}
+                      onUpdate={loadContacts}
+                      onDelete={deleteContact}
+                      onTogglePrimary={togglePrimary}
+                    />
                   ))}
                 </div>
               )}

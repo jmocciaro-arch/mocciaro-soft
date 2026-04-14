@@ -165,6 +165,8 @@ Si no encontrás un dato, dejalo como string vacío. No inventes datos.`,
       position: contact.position || null,
       phone: (contact as any).phone || null,
       whatsapp: (contact as any).whatsapp || null,
+      source: 'gmail',
+      last_synced_at: new Date().toISOString(),
       is_primary: false,
     })
     if (!error) added++
