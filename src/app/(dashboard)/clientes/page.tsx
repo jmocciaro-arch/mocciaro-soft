@@ -26,6 +26,9 @@ import {
 } from 'lucide-react'
 import { DocLink } from '@/components/ui/doc-link'
 import { useCompanyFilter } from '@/hooks/use-company-filter'
+import { ClientMerge } from '@/components/clients/client-merge'
+import { RelatedCompanies } from '@/components/clients/related-companies'
+import { SyncContactsButton } from '@/components/clients/sync-contacts-button'
 
 // ═══════════════════════════════════════════════════════
 // CONSTANTS
@@ -35,7 +38,7 @@ const PAGE_SIZE = 200
 const countryFlags: Record<string, string> = { ES: '\u{1F1EA}\u{1F1F8}', AR: '\u{1F1E6}\u{1F1F7}', US: '\u{1F1FA}\u{1F1F8}', CL: '\u{1F1E8}\u{1F1F1}', UY: '\u{1F1FA}\u{1F1FE}', BR: '\u{1F1E7}\u{1F1F7}', MX: '\u{1F1F2}\u{1F1FD}', CO: '\u{1F1E8}\u{1F1F4}', DE: '\u{1F1E9}\u{1F1EA}', FR: '\u{1F1EB}\u{1F1F7}', IT: '\u{1F1EE}\u{1F1F9}', GB: '\u{1F1EC}\u{1F1E7}', EC: '\u{1F1EA}\u{1F1E8}', PE: '\u{1F1F5}\u{1F1EA}', PY: '\u{1F1F5}\u{1F1FE}', BO: '\u{1F1E7}\u{1F1F4}', VE: '\u{1F1FB}\u{1F1EA}', CR: '\u{1F1E8}\u{1F1F7}', PA: '\u{1F1F5}\u{1F1E6}', DO: '\u{1F1E9}\u{1F1F4}', GT: '\u{1F1EC}\u{1F1F9}', HN: '\u{1F1ED}\u{1F1F3}', SV: '\u{1F1F8}\u{1F1FB}', NI: '\u{1F1F3}\u{1F1EE}', PT: '\u{1F1F5}\u{1F1F9}' }
 const countryNames: Record<string, string> = { ES: 'Espana', AR: 'Argentina', US: 'Estados Unidos', CL: 'Chile', UY: 'Uruguay', BR: 'Brasil', MX: 'Mexico', CO: 'Colombia', DE: 'Alemania', EC: 'Ecuador', PE: 'Peru', PY: 'Paraguay', FR: 'Francia', IT: 'Italia', GB: 'Reino Unido', PT: 'Portugal' }
 
-import { Trophy, StarOff } from 'lucide-react'
+import { Trophy, StarOff, GitMerge } from 'lucide-react'
 
 const clientesTabs = [
   { id: 'clientes', label: 'Clientes', icon: <Building2 size={16} /> },
@@ -43,6 +46,7 @@ const clientesTabs = [
   { id: 'ranking', label: 'Ranking', icon: <Trophy size={16} /> },
   { id: 'potenciales', label: 'Potenciales', icon: <UserPlus size={16} /> },
   { id: 'contactos', label: 'Contactos', icon: <Contact size={16} /> },
+  { id: 'duplicados', label: 'Duplicados', icon: <GitMerge size={16} /> },
 ]
 
 // ═══════════════════════════════════════════════════════
@@ -351,6 +355,7 @@ function CompanyDetail({ company, onClose, onUpdate }: {
   const detailTabs = [
     { id: 'datos', label: 'Datos' },
     { id: 'contactos', label: `Contactos (${allContacts.length})` },
+    { id: 'relacionadas', label: 'Relacionadas' },
     { id: 'oc_glosario', label: `OC Recibidas (${clientOCs.length})` },
     { id: 'historial', label: 'Historial' },
     { id: 'documentos', label: `Documentos (${documents.length})` },
@@ -496,7 +501,10 @@ function CompanyDetail({ company, onClose, onUpdate }: {
             <div className="space-y-4">
               <div className="flex justify-between items-center">
                 <h3 className="text-sm font-semibold text-[#F0F2F5]">Contactos de {company.legal_name}</h3>
-                <Button variant="primary" size="sm" onClick={() => setShowAddContact(true)}><Plus size={14} /> Agregar contacto</Button>
+                <div className="flex gap-2">
+                  <SyncContactsButton clientId={company.id} clientName={company.legal_name || company.name} clientEmail={company.email} onContactsUpdated={loadContacts} />
+                  <Button variant="primary" size="sm" onClick={() => setShowAddContact(true)}><Plus size={14} /> Agregar contacto</Button>
+                </div>
               </div>
 
               {loadingContacts ? (
@@ -576,6 +584,11 @@ function CompanyDetail({ company, onClose, onUpdate }: {
                 </div>
               </Modal>
             </div>
+          )}
+
+          {/* TAB: Relacionadas */}
+          {activeDetailTab === 'relacionadas' && (
+            <RelatedCompanies clientId={company.id} clientName={company.legal_name || company.name} />
           )}
 
           {/* TAB: Historial */}
@@ -1698,6 +1711,7 @@ export default function ClientesPage() {
               {activeTab === 'ranking' && <RankingTab />}
               {activeTab === 'potenciales' && <PotencialesTab />}
               {activeTab === 'contactos' && <ContactosTab />}
+              {activeTab === 'duplicados' && <ClientMerge />}
             </>
           )}
         </Tabs>
