@@ -7,12 +7,17 @@ import {
   LayoutDashboard, FileText, Package, Users, Warehouse, Target,
   ShoppingCart, Receipt, Wrench, Calendar, Mail, Settings,
   ChevronLeft, ChevronRight, Menu, X, LogOut, ClipboardList,
-  Truck, CreditCard, Building2, BarChart3
+  Truck, CreditCard, Building2, BarChart3,
+  Cpu, Box, Layers, BookOpen, Pause, History,
+  Banknote, Sparkles, TrendingUp, GitBranch, FormInput, Bot,
+  RefreshCw, Zap,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
 import { usePermissions } from '@/hooks/use-permissions'
 import { CompanySelector } from '@/components/ui/company-selector'
+import { AlertsBell } from '@/components/alerts/alerts-bell'
+import { SyncStatus } from '@/components/pwa/sync-status'
 
 interface SidebarContextType {
   collapsed: boolean
@@ -42,19 +47,30 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-  { label: 'CRM / Leads', href: '/crm?tab=pipeline', icon: Target, requiredPermissions: ['view_crm'] },
+  { label: 'Dashboard ejecutivo', href: '/dashboard/ejecutivo', icon: BarChart3 },
+  { label: 'Hub IA', href: '/ai-hub', icon: Sparkles },
+  // ── CRM (un solo bloque con tabs: Leads IA | Pipeline | Actividades | Informes) ──
+  { label: 'CRM', href: '/crm', icon: Target, requiredPermissions: ['view_crm'] },
+  // ── Ventas (flujo de venta) ──
   { label: 'Cotizador', href: '/cotizador', icon: FileText, badgeKey: 'quotes_draft', requiredPermissions: ['create_quote', 'edit_quote', 'view_sales_reports'] },
   { label: 'Pedidos', href: '/ventas?tab=pedidos', icon: ClipboardList, badgeKey: 'so_open', requiredPermissions: ['create_order', 'approve_order', 'view_sales_reports'] },
+  { label: 'Importar OC', href: '/ventas/importar-oc', icon: FileText, requiredPermissions: ['create_order'] },
   { label: 'Albaranes', href: '/ventas?tab=albaranes', icon: Truck, requiredPermissions: ['create_order', 'view_sales_reports'] },
   { label: 'Facturas', href: '/ventas?tab=facturas', icon: CreditCard, requiredPermissions: ['view_financials', 'create_invoice'] },
+  { label: 'Recurrentes', href: '/ventas/recurrentes', icon: RefreshCw, requiredPermissions: ['create_invoice'] },
+  { label: 'Cobros', href: '/cobros', icon: Banknote, requiredPermissions: ['view_financials'] },
+  { label: 'Finanzas', href: '/finanzas', icon: TrendingUp, requiredPermissions: ['view_financials'] },
   { label: 'Compras', href: '/compras?tab=pedidos', icon: ShoppingCart, badgeKey: 'po_pending', requiredPermissions: ['create_purchase_order', 'view_suppliers'] },
   { label: 'Stock', href: '/stock', icon: Warehouse, requiredPermissions: ['view_stock'] },
   { label: 'Proveedores', href: '/compras?tab=proveedores', icon: Building2, requiredPermissions: ['view_suppliers'] },
   { label: 'Clientes', href: '/clientes', icon: Users, requiredPermissions: ['view_clients'] },
   { label: 'Catalogo', href: '/catalogo', icon: Package, requiredPermissions: ['view_catalog'] },
   { label: 'SAT', href: '/sat', icon: Wrench, badgeKey: 'sat_open', requiredPermissions: ['view_sat'] },
+  { label: 'Gastos', href: '/gastos', icon: Receipt, requiredPermissions: ['view_financials'] },
+  { label: 'Agente IA', href: '/dashboard/ejecutivo', icon: Bot },
   { label: 'Informes', href: '/informes', icon: BarChart3, requiredPermissions: ['view_sales_reports', 'view_financials'] },
   { label: 'Admin', href: '/admin', icon: Settings, requiredPermissions: ['admin_users'] },
+  { label: 'Automatizaciones', href: '/admin/automatizaciones', icon: Zap, requiredPermissions: ['admin_users'] },
 ]
 
 function useBadgeCounts() {
@@ -171,36 +187,74 @@ export function Sidebar() {
           {visibleItems.map((item) => {
             const Icon = item.icon
             const active = isActive(item.href)
+            const isSatItem = item.href === '/sat'
+            const satExpanded = isSatItem && !collapsed && pathname?.startsWith('/sat')
             return (
-              <Link
-                key={item.label}
-                href={item.href}
-                onClick={() => setMobileOpen(false)}
-                className={cn(
-                  'flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group relative',
-                  active
-                    ? 'bg-[#FF6600]/10 text-[#FF6600]'
-                    : 'text-[#6B7280] hover:text-[#D1D5DB] hover:bg-[#141820]'
-                )}
-              >
-                {active && (
-                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-6 bg-[#FF6600] rounded-r-full" />
-                )}
-                <Icon size={20} className="shrink-0" />
-                {!collapsed && (
-                  <span className="text-sm font-medium truncate flex-1">{item.label}</span>
-                )}
-                {!collapsed && (item as { badgeKey?: string }).badgeKey && badges[(item as { badgeKey?: string }).badgeKey!] > 0 && (
-                  <span className="ml-auto px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-[#FF6600] text-white min-w-[20px] text-center">
-                    {badges[(item as { badgeKey?: string }).badgeKey!]}
-                  </span>
-                )}
-                {collapsed && (
-                  <div className="absolute left-full ml-2 px-2 py-1 bg-[#1E2330] text-[#F0F2F5] text-xs rounded-md opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all whitespace-nowrap z-50 shadow-xl border border-[#2A3040]">
-                    {item.label}
+              <div key={item.label}>
+                <Link
+                  href={item.href}
+                  onClick={() => setMobileOpen(false)}
+                  className={cn(
+                    'flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group relative',
+                    active
+                      ? 'bg-[#FF6600]/10 text-[#FF6600]'
+                      : 'text-[#6B7280] hover:text-[#D1D5DB] hover:bg-[#141820]'
+                  )}
+                >
+                  {active && (
+                    <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-6 bg-[#FF6600] rounded-r-full" />
+                  )}
+                  <Icon size={20} className="shrink-0" />
+                  {!collapsed && (
+                    <span className="text-sm font-medium truncate flex-1">{item.label}</span>
+                  )}
+                  {!collapsed && (item as { badgeKey?: string }).badgeKey && badges[(item as { badgeKey?: string }).badgeKey!] > 0 && (
+                    <span className="ml-auto px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-[#FF6600] text-white min-w-[20px] text-center">
+                      {badges[(item as { badgeKey?: string }).badgeKey!]}
+                    </span>
+                  )}
+                  {collapsed && (
+                    <div className="absolute left-full ml-2 px-2 py-1 bg-[#1E2330] text-[#F0F2F5] text-xs rounded-md opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all whitespace-nowrap z-50 shadow-xl border border-[#2A3040]">
+                      {item.label}
+                    </div>
+                  )}
+                </Link>
+
+                {/* Subitems SAT expandidos cuando estamos en /sat/* */}
+                {satExpanded && (
+                  <div className="ml-6 mt-0.5 pl-3 border-l border-[#2A3040] space-y-0.5">
+                    {[
+                      { label: 'Activos', href: '/sat/activos', icon: Cpu },
+                      { label: 'Hojas', href: '/sat/hojas', icon: ClipboardList },
+                      { label: 'Repuestos', href: '/sat/repuestos', icon: Box },
+                      { label: 'Modelos', href: '/sat/modelos', icon: Layers },
+                      { label: 'Manuales', href: '/sat/manuales', icon: BookOpen },
+                      { label: 'Lotes', href: '/sat/lotes', icon: Package },
+                      { label: 'Pausadas', href: '/sat/pausadas', icon: Pause },
+                      { label: 'Histórico', href: '/sat/historico', icon: History },
+                    ].map((sub) => {
+                      const SubIcon = sub.icon
+                      const subActive = pathname === sub.href || pathname?.startsWith(sub.href + '/')
+                      return (
+                        <Link
+                          key={sub.href}
+                          href={sub.href}
+                          onClick={() => setMobileOpen(false)}
+                          className={cn(
+                            'flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors',
+                            subActive
+                              ? 'bg-[#FF6600]/10 text-[#FF6600] font-semibold'
+                              : 'text-[#6B7280] hover:text-[#D1D5DB] hover:bg-[#141820]'
+                          )}
+                        >
+                          <SubIcon size={14} className="shrink-0" />
+                          <span className="truncate">{sub.label}</span>
+                        </Link>
+                      )
+                    })}
                   </div>
                 )}
-              </Link>
+              </div>
             )
           })}
         </nav>
@@ -276,6 +330,27 @@ export function TopBar({ userName }: { userName?: string }) {
       </div>
 
       <div className="flex items-center gap-3">
+        {/* Sync status (offline queue) */}
+        <SyncStatus />
+
+        {/* Cmd+K hint */}
+        <button
+          type="button"
+          onClick={() => {
+            const ev = new KeyboardEvent('keydown', { key: 'k', metaKey: true, ctrlKey: true, bubbles: true })
+            window.dispatchEvent(ev)
+          }}
+          className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs opacity-60 hover:opacity-100"
+          style={{ background: '#1E2330', border: '1px solid #2A3040' }}
+          title="Abrir buscador"
+        >
+          <span>Buscar</span>
+          <kbd className="text-[10px] border px-1 rounded" style={{ borderColor: '#2A3040' }}>⌘K</kbd>
+        </button>
+
+        {/* Alertas */}
+        <AlertsBell />
+
         {/* Company selector */}
         <CompanySelector />
 

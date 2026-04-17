@@ -68,6 +68,11 @@ type Language = 'es' | 'en' | 'pt'
 
 const TYPE_LABELS: Record<string, Record<Language, string>> = {
   coti: { es: 'Cotizacion', en: 'Quotation', pt: 'Cotacao' },
+  cotizacion: { es: 'Cotizacion', en: 'Quotation', pt: 'Cotacao' },
+  presupuesto: { es: 'Presupuesto', en: 'Budget / Estimate', pt: 'Orcamento' },
+  proforma: { es: 'Factura Proforma', en: 'Proforma Invoice', pt: 'Fatura Proforma' },
+  packing_list: { es: 'Packing List', en: 'Packing List', pt: 'Lista de Embalaje' },
+  oferta: { es: 'Oferta Comercial', en: 'Commercial Offer', pt: 'Oferta Comercial' },
   pedido: { es: 'Pedido de Venta', en: 'Sales Order', pt: 'Pedido de Venda' },
   delivery_note: { es: 'Albaran / Remito', en: 'Delivery Note', pt: 'Nota de Entrega' },
   factura: { es: 'Factura', en: 'Invoice', pt: 'Fatura' },

@@ -20,6 +20,17 @@ export const DEFAULT_INSPECTION_PARTS: InspectionPart[] = [
   { name: 'Accesorios / Reductores', status: 'NA', notes: '' },
 ]
 
+/** Media item (foto o video) con metadata */
+export interface WorkflowPhoto {
+  url: string
+  caption?: string
+  uploaded_at?: string
+  uploaded_by?: string | null
+  kind?: 'image' | 'video'   // default 'image' para backward compat
+  mime_type?: string
+  duration_s?: number        // duración en segundos si es video
+}
+
 /** Step 1: DIAGNOSTICO */
 export interface DiagnosticoData {
   asset_serial: string
@@ -31,6 +42,19 @@ export interface DiagnosticoData {
   reported_issue: string
   inspection_grid: InspectionPart[]
   initial_notes: string
+  photos_in?: WorkflowPhoto[]     // fotos de cómo llegó la herramienta
+  // Datos de ingreso (opcionales)
+  ingreso_fecha?: string
+  ingreso_tecnico?: string
+  tipo_servicio?: 'PREVENTIVO' | 'CORRECTIVO'
+  aprietes?: number
+  condicion_visual?: string
+  motivo_ingreso?: string
+  // Campos específicos del diagnóstico tipo buscatools-fein
+  vida_aprietes_total?: number         // cantidad TOTAL desde nueva
+  aprietes_ultimo_service?: number     // aprietes desde el último service
+  tornillos_detalle?: string           // cuáles están rotos (texto libre)
+  cabezal_vida_util?: string           // "70%", "6 meses", "nuevo" etc
 }
 
 /** Item de cotización para repuestos */
@@ -98,6 +122,7 @@ export interface CierreData {
   signature_tech: string
   signature_client: string
   saved_to_history: boolean
+  photos_out?: WorkflowPhoto[]    // fotos de cómo se fue la herramienta
 }
 
 /** Motivos de pausa predefinidos */

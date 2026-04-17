@@ -13,6 +13,7 @@ export async function GET() {
     prompt: 'consent',
     scope: [
       'https://www.googleapis.com/auth/gmail.readonly',
+      'https://www.googleapis.com/auth/gmail.send',
     ],
   })
 

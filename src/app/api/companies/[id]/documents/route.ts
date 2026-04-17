@@ -1,0 +1,48 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
+import { getAdminClient } from '@/lib/supabase/admin'
+import { documentCreateSchema } from '@/lib/schemas/companies'
+import { requireAdmin, requireAuth, userHasCompanyAccess } from '@/lib/auth/require-admin'
+
+// GET lista de documentos activos
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await requireAuth()
+  if (!auth.ok) return auth.response
+  const { id } = await params
+  const canAccess = await userHasCompanyAccess(auth.ttUserId, auth.role, id)
+  if (!canAccess) return NextResponse.json({ error: 'Sin acceso' }, { status: 403 })
+
+  const admin = getAdminClient()
+  const { data, error } = await admin
+    .from('tt_company_documents')
+    .select('*')
+    .eq('company_id', id)
+    .eq('is_active', true)
+    .order('created_at', { ascending: false })
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ data })
+}
+
+// POST: registra el metadata. El upload físico al bucket lo hace el cliente
+// con signed URL o con Supabase Storage directo desde el wizard.
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await requireAdmin()
+  if (!guard.ok) return guard.response
+  const { id } = await params
+  let body: unknown
+  try { body = await req.json() } catch {
+    return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
+  }
+  const parsed = documentCreateSchema.safeParse(body)
+  if (!parsed.success) {
+    return NextResponse.json({ error: 'Validación falló', issues: z.treeifyError(parsed.error) }, { status: 400 })
+  }
+  const admin = getAdminClient()
+  const { data, error } = await admin
+    .from('tt_company_documents')
+    .insert({ company_id: id, ...parsed.data })
+    .select()
+    .single()
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true, data }, { status: 201 })
+}

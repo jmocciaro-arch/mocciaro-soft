@@ -80,6 +80,82 @@ export interface Product {
   updated_at: string
   stelorder_id: string | null
   company_source: string | null
+  product_type: 'product' | 'service' | 'expense'
+  price_min: number | null
+}
+
+// ── Price Lists (Multitarifas) ──
+export interface PriceList {
+  id: string
+  name: string
+  description: string | null
+  currency: string
+  is_default: boolean
+  markup_pct: number
+  active: boolean
+  company_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PriceListItem {
+  id: string
+  price_list_id: string
+  product_id: string
+  price: number
+  created_at: string
+}
+
+// ── Document Templates ──
+export interface DocumentTemplate {
+  id: string
+  name: string
+  doc_type: string
+  company_id: string | null
+  is_default: boolean
+  language: string
+  header_html: string | null
+  footer_html: string | null
+  logo_url: string | null
+  primary_color: string
+  secondary_color: string
+  font_family: string
+  show_logo: boolean
+  show_company_address: boolean
+  show_client_tax_id: boolean
+  show_sku: boolean
+  show_discount: boolean
+  show_unit_price: boolean
+  show_photos: boolean
+  show_notes: boolean
+  show_bank_details: boolean
+  show_terms: boolean
+  show_incoterm: boolean
+  show_payment_terms: boolean
+  show_valid_until: boolean
+  show_delivery_date: boolean
+  show_page_numbers: boolean
+  terms_text: string | null
+  footer_text: string | null
+  custom_css: string | null
+  active: boolean
+  created_at: string
+  updated_at: string
+}
+
+// ── Client Special Prices ──
+export interface ClientPrice {
+  id: string
+  client_id: string
+  product_id: string
+  special_price: number | null
+  discount_pct: number
+  currency: string
+  valid_from: string | null
+  valid_until: string | null
+  notes: string | null
+  created_at: string
+  updated_at: string
 }
 
 export interface Client {
@@ -113,6 +189,8 @@ export interface Client {
   total_revenue: number
   total_orders: number
   last_order_date: string | null
+  price_list_id: string | null
+  default_discount: number
 }
 
 export interface ClientContact {
@@ -280,6 +358,45 @@ export interface Supplier {
   active: boolean
   source: string | null
   created_at: string
+  // AI scoring fields (migration v33)
+  ai_score: number | null
+  ai_tags: string[] | null
+  ai_analysis: string | null
+  ai_profile: {
+    delivery_score?: number
+    quality_score?: number
+    price_score?: number
+    reliability_score?: number
+    on_time_rate?: number | null
+    total_spent_ytd?: number
+    avg_po_value?: number
+    last_analysis_summary?: string
+    suggested_action?: string
+  } | null
+  ai_analysis_at: string | null
+  ai_provider: string | null
+  portal_token: string | null
+  portal_token_expires_at: string | null
+  portal_last_seen: string | null
+  is_duplicate_of: string | null
+}
+
+export interface SupplierInteraction {
+  id: string
+  company_id: string
+  supplier_id: string
+  type: 'email_sent' | 'email_received' | 'call' | 'meeting' | 'complaint' | 'quality_issue' | 'price_negotiation' | 'delivery_issue' | 'payment_sent' | 'note' | 'other'
+  direction: 'outbound' | 'inbound' | 'internal' | null
+  subject: string | null
+  body: string | null
+  outcome: string | null
+  rating: number | null
+  document_ref: string | null
+  metadata: Record<string, unknown>
+  created_by: string | null
+  created_at: string
+  // Joined
+  user?: User
 }
 
 export interface SupplierContact {
@@ -457,6 +574,43 @@ export interface PurchasePayment {
   // Joined
   supplier?: Supplier
   purchase_invoice?: PurchaseInvoice
+}
+
+// =====================================================
+// Purchase Credit Notes (Abonos de proveedor)
+// =====================================================
+export interface PurchaseCreditNote {
+  id: string
+  number: string
+  company_id: string | null
+  supplier_id: string | null
+  purchase_invoice_id: string | null
+  supplier_cn_number: string | null
+  supplier_cn_date: string | null
+  reason: string | null
+  status: 'pending' | 'applied' | 'rejected'
+  currency: string
+  subtotal: number
+  tax_rate: number
+  tax_amount: number
+  total: number
+  notes: string | null
+  created_at: string
+  updated_at: string
+  // Joined
+  supplier?: Supplier
+  purchase_invoice?: PurchaseInvoice
+}
+
+export interface PurchaseCreditNoteItem {
+  id: string
+  credit_note_id: string
+  product_id: string | null
+  sku: string | null
+  description: string | null
+  quantity: number
+  unit_price: number
+  subtotal: number
 }
 
 export interface SystemParam {

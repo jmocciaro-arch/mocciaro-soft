@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, Suspense } from 'react'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -14,10 +15,12 @@ import { SearchBar } from '@/components/ui/search-bar'
 import { useToast } from '@/components/ui/toast'
 import { formatDate, formatDateTime, formatRelative, getInitials } from '@/lib/utils'
 import { ExportButton } from '@/components/ui/export-button'
+import { CompanyLogosPanel } from '@/components/admin/companies/company-logos-panel'
 import {
   Settings, Users, Building2, Sliders, Warehouse, Activity,
   Save, Plus, Loader2, ChevronLeft, ChevronRight, Edit, Shield,
-  UserPlus, Power, Copy, Eye, EyeOff, Check, ShieldCheck, X
+  UserPlus, Power, Copy, Eye, EyeOff, Check, ShieldCheck, X,
+  FileText, Trash2, Palette
 } from 'lucide-react'
 
 type Row = Record<string, unknown>
@@ -88,6 +91,134 @@ const STAFF_SPECIALTIES = [
   { value: 'all', label: 'Ve todo (Admin)' },
 ]
 
+// ─── Document Templates ───
+interface TemplateRow {
+  id: string
+  name: string
+  doc_type: string
+  company_id: string | null
+  is_default: boolean
+  language: string
+  header_html: string | null
+  footer_html: string | null
+  logo_url: string | null
+  primary_color: string
+  secondary_color: string
+  font_family: string
+  show_logo: boolean
+  show_company_address: boolean
+  show_client_tax_id: boolean
+  show_sku: boolean
+  show_discount: boolean
+  show_unit_price: boolean
+  show_photos: boolean
+  show_notes: boolean
+  show_bank_details: boolean
+  show_terms: boolean
+  show_incoterm: boolean
+  show_payment_terms: boolean
+  show_valid_until: boolean
+  show_delivery_date: boolean
+  show_page_numbers: boolean
+  terms_text: string | null
+  footer_text: string | null
+  custom_css: string | null
+  active: boolean
+  created_at: string
+  updated_at: string
+}
+
+const DOC_TYPES = [
+  { value: 'cotizacion', label: 'Cotizacion' },
+  { value: 'presupuesto', label: 'Presupuesto' },
+  { value: 'proforma', label: 'Proforma' },
+  { value: 'packing_list', label: 'Packing List' },
+  { value: 'oferta', label: 'Oferta' },
+  { value: 'pedido', label: 'Pedido' },
+  { value: 'factura', label: 'Factura' },
+  { value: 'albaran', label: 'Albaran' },
+  { value: 'pap', label: 'PAP' },
+]
+
+const DOC_TYPE_LABELS: Record<string, string> = Object.fromEntries(DOC_TYPES.map(d => [d.value, d.label]))
+
+const TEMPLATE_FONTS = [
+  { value: 'Arial', label: 'Arial' },
+  { value: 'Helvetica', label: 'Helvetica' },
+  { value: 'Georgia', label: 'Georgia' },
+  { value: 'Times New Roman', label: 'Times New Roman' },
+]
+
+const TEMPLATE_LANGUAGES = [
+  { value: 'es', label: 'Espanol' },
+  { value: 'en', label: 'Ingles' },
+  { value: 'pt', label: 'Portugues' },
+]
+
+const SHOW_FIELD_LABELS: Record<string, string> = {
+  show_logo: 'Logo',
+  show_company_address: 'Direccion empresa',
+  show_client_tax_id: 'CIF/CUIT cliente',
+  show_sku: 'SKU / Ref.',
+  show_discount: 'Descuento',
+  show_unit_price: 'Precio unitario',
+  show_photos: 'Fotos producto',
+  show_notes: 'Notas',
+  show_bank_details: 'Datos bancarios',
+  show_terms: 'Terminos',
+  show_incoterm: 'Incoterm',
+  show_payment_terms: 'Condiciones de pago',
+  show_valid_until: 'Validez',
+  show_delivery_date: 'Fecha entrega',
+  show_page_numbers: 'Numeros de pagina',
+}
+
+const SHOW_FIELDS = Object.keys(SHOW_FIELD_LABELS) as (keyof typeof SHOW_FIELD_LABELS)[]
+
+// ─── Custom Statuses ───
+interface CustomStatus {
+  id: string
+  doc_type: string
+  status_key: string
+  label: string
+  color: string
+  icon: string | null
+  sort_order: number
+  is_system: boolean
+  active: boolean
+  company_id: string | null
+}
+
+const STATUS_DOC_TYPES = [
+  { value: 'cotizacion', label: 'Cotizacion' },
+  { value: 'pedido', label: 'Pedido' },
+  { value: 'factura', label: 'Factura' },
+  { value: 'albaran', label: 'Albaran' },
+  { value: 'compra', label: 'Compra' },
+  { value: 'sat', label: 'SAT' },
+  { value: 'lead', label: 'Lead' },
+]
+
+const STATUS_DOC_TYPE_LABELS: Record<string, string> = Object.fromEntries(STATUS_DOC_TYPES.map(d => [d.value, d.label]))
+
+const STATUS_PRESET_COLORS = [
+  '#6B7280', '#EF4444', '#F59E0B', '#10B981', '#3B82F6',
+  '#8B5CF6', '#EC4899', '#14B8A6', '#FF6600', '#F97316',
+]
+
+function emptyTemplate(): Omit<TemplateRow, 'id' | 'created_at' | 'updated_at'> {
+  return {
+    name: '', doc_type: 'cotizacion', company_id: null, is_default: false,
+    language: 'es', header_html: '', footer_html: '', logo_url: '',
+    primary_color: '#FF6600', secondary_color: '#1E2330', font_family: 'Arial',
+    show_logo: true, show_company_address: true, show_client_tax_id: true,
+    show_sku: true, show_discount: true, show_unit_price: true, show_photos: false,
+    show_notes: true, show_bank_details: true, show_terms: true, show_incoterm: false,
+    show_payment_terms: true, show_valid_until: true, show_delivery_date: false,
+    show_page_numbers: true, terms_text: '', footer_text: '', custom_css: '', active: true,
+  }
+}
+
 function emptyUserForm(): UserForm {
   return {
     username: '', full_name: '', email: '', role: 'vendedor',
@@ -124,6 +255,8 @@ const tabs = [
   { id: 'params', label: 'Parametros', icon: <Sliders size={16} /> },
   { id: 'warehouses', label: 'Almacenes', icon: <Warehouse size={16} /> },
   { id: 'audit', label: 'Auditoria', icon: <Activity size={16} /> },
+  { id: 'plantillas', label: 'Plantillas', icon: <FileText size={16} /> },
+  { id: 'estados', label: 'Estados', icon: <Palette size={16} /> },
 ]
 
 export default function AdminPage() {
@@ -178,6 +311,25 @@ export default function AdminPage() {
   const [auditEntityFilter, setAuditEntityFilter] = useState('')
   const [auditPage, setAuditPage] = useState(0)
   const AUDIT_PAGE_SIZE = 20
+
+  // Plantillas (Document Templates)
+  const [templates, setTemplates] = useState<TemplateRow[]>([])
+  const [loadingTemplates, setLoadingTemplates] = useState(false)
+  const [showTemplateModal, setShowTemplateModal] = useState(false)
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null)
+  const [templateForm, setTemplateForm] = useState(emptyTemplate())
+  const [savingTemplate, setSavingTemplate] = useState(false)
+  const [templateSection, setTemplateSection] = useState<'general' | 'apariencia' | 'visibilidad' | 'contenido' | 'css'>('general')
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+
+  // Custom Statuses
+  const [customStatuses, setCustomStatuses] = useState<CustomStatus[]>([])
+  const [loadingStatuses, setLoadingStatuses] = useState(false)
+  const [showStatusModal, setShowStatusModal] = useState(false)
+  const [editingStatusId, setEditingStatusId] = useState<string | null>(null)
+  const [statusForm, setStatusForm] = useState({ doc_type: 'cotizacion', status_key: '', label: '', color: '#6B7280' })
+  const [savingStatus, setSavingStatus] = useState(false)
+  const [showDeleteStatusConfirm, setShowDeleteStatusConfirm] = useState(false)
 
   // ─── RBAC loaders ───
   const loadRbacData = useCallback(async () => {
@@ -462,6 +614,312 @@ export default function AdminPage() {
     setLoadingAudit(false)
   }, [auditPage, auditEntityFilter])
 
+  // ─── Template loaders & actions ───
+  const loadTemplates = useCallback(async () => {
+    setLoadingTemplates(true)
+    const sb = createClient()
+    const { data } = await sb.from('tt_document_templates').select('*').order('doc_type').order('name')
+    setTemplates((data || []) as TemplateRow[])
+    setLoadingTemplates(false)
+  }, [])
+
+  const openNewTemplate = () => {
+    setEditingTemplateId(null)
+    setTemplateForm(emptyTemplate())
+    setTemplateSection('general')
+    setShowDeleteConfirm(false)
+    setShowTemplateModal(true)
+  }
+
+  const openEditTemplate = (t: TemplateRow) => {
+    setEditingTemplateId(t.id)
+    setTemplateForm({
+      name: t.name || '',
+      doc_type: t.doc_type || 'cotizacion',
+      company_id: t.company_id || null,
+      is_default: t.is_default || false,
+      language: t.language || 'es',
+      header_html: t.header_html || '',
+      footer_html: t.footer_html || '',
+      logo_url: t.logo_url || '',
+      primary_color: t.primary_color || '#FF6600',
+      secondary_color: t.secondary_color || '#1E2330',
+      font_family: t.font_family || 'Arial',
+      show_logo: t.show_logo !== false,
+      show_company_address: t.show_company_address !== false,
+      show_client_tax_id: t.show_client_tax_id !== false,
+      show_sku: t.show_sku !== false,
+      show_discount: t.show_discount !== false,
+      show_unit_price: t.show_unit_price !== false,
+      show_photos: t.show_photos || false,
+      show_notes: t.show_notes !== false,
+      show_bank_details: t.show_bank_details !== false,
+      show_terms: t.show_terms !== false,
+      show_incoterm: t.show_incoterm || false,
+      show_payment_terms: t.show_payment_terms !== false,
+      show_valid_until: t.show_valid_until !== false,
+      show_delivery_date: t.show_delivery_date || false,
+      show_page_numbers: t.show_page_numbers !== false,
+      terms_text: t.terms_text || '',
+      footer_text: t.footer_text || '',
+      custom_css: t.custom_css || '',
+      active: t.active !== false,
+    })
+    setTemplateSection('general')
+    setShowDeleteConfirm(false)
+    setShowTemplateModal(true)
+  }
+
+  const saveTemplate = async () => {
+    if (!templateForm.name.trim()) {
+      addToast({ type: 'warning', title: 'El nombre es obligatorio' })
+      return
+    }
+    setSavingTemplate(true)
+    try {
+      const sb = createClient()
+      const payload = {
+        name: templateForm.name,
+        doc_type: templateForm.doc_type,
+        company_id: templateForm.company_id || null,
+        is_default: templateForm.is_default,
+        language: templateForm.language,
+        header_html: templateForm.header_html || null,
+        footer_html: templateForm.footer_html || null,
+        logo_url: templateForm.logo_url || null,
+        primary_color: templateForm.primary_color,
+        secondary_color: templateForm.secondary_color,
+        font_family: templateForm.font_family,
+        show_logo: templateForm.show_logo,
+        show_company_address: templateForm.show_company_address,
+        show_client_tax_id: templateForm.show_client_tax_id,
+        show_sku: templateForm.show_sku,
+        show_discount: templateForm.show_discount,
+        show_unit_price: templateForm.show_unit_price,
+        show_photos: templateForm.show_photos,
+        show_notes: templateForm.show_notes,
+        show_bank_details: templateForm.show_bank_details,
+        show_terms: templateForm.show_terms,
+        show_incoterm: templateForm.show_incoterm,
+        show_payment_terms: templateForm.show_payment_terms,
+        show_valid_until: templateForm.show_valid_until,
+        show_delivery_date: templateForm.show_delivery_date,
+        show_page_numbers: templateForm.show_page_numbers,
+        terms_text: templateForm.terms_text || null,
+        footer_text: templateForm.footer_text || null,
+        custom_css: templateForm.custom_css || null,
+        active: templateForm.active,
+      }
+
+      if (editingTemplateId) {
+        const { error } = await sb.from('tt_document_templates').update(payload).eq('id', editingTemplateId)
+        if (error) {
+          addToast({ type: 'error', title: 'Error al actualizar', message: error.message })
+        } else {
+          addToast({ type: 'success', title: 'Plantilla actualizada' })
+          setShowTemplateModal(false)
+          loadTemplates()
+        }
+      } else {
+        const { error } = await sb.from('tt_document_templates').insert(payload)
+        if (error) {
+          addToast({ type: 'error', title: 'Error al crear', message: error.message })
+        } else {
+          addToast({ type: 'success', title: 'Plantilla creada' })
+          setShowTemplateModal(false)
+          loadTemplates()
+        }
+      }
+    } catch (err) {
+      addToast({ type: 'error', title: 'Error de red', message: (err as Error).message })
+    } finally {
+      setSavingTemplate(false)
+    }
+  }
+
+  const deleteTemplate = async () => {
+    if (!editingTemplateId) return
+    setSavingTemplate(true)
+    try {
+      const sb = createClient()
+      const { error } = await sb.from('tt_document_templates').delete().eq('id', editingTemplateId)
+      if (error) {
+        addToast({ type: 'error', title: 'Error al eliminar', message: error.message })
+      } else {
+        addToast({ type: 'success', title: 'Plantilla eliminada' })
+        setShowTemplateModal(false)
+        setShowDeleteConfirm(false)
+        loadTemplates()
+      }
+    } catch (err) {
+      addToast({ type: 'error', title: 'Error de red', message: (err as Error).message })
+    } finally {
+      setSavingTemplate(false)
+    }
+  }
+
+  const toggleTemplateActive = async (t: TemplateRow) => {
+    const sb = createClient()
+    const { error } = await sb.from('tt_document_templates').update({ active: !t.active }).eq('id', t.id)
+    if (error) {
+      addToast({ type: 'error', title: 'Error', message: error.message })
+    } else {
+      addToast({ type: 'success', title: t.active ? 'Plantilla desactivada' : 'Plantilla activada' })
+      loadTemplates()
+    }
+  }
+
+  // Group templates by doc_type
+  const templatesByDocType = templates.reduce<Record<string, TemplateRow[]>>((acc, t) => {
+    if (!acc[t.doc_type]) acc[t.doc_type] = []
+    acc[t.doc_type].push(t)
+    return acc
+  }, {})
+
+  // ─── Custom Statuses loaders & actions ───
+  const loadStatuses = useCallback(async () => {
+    setLoadingStatuses(true)
+    const sb = createClient()
+    const { data } = await sb.from('tt_custom_statuses').select('*').order('doc_type').order('sort_order')
+    setCustomStatuses((data || []) as CustomStatus[])
+    setLoadingStatuses(false)
+  }, [])
+
+  const openNewStatus = () => {
+    setEditingStatusId(null)
+    setStatusForm({ doc_type: 'cotizacion', status_key: '', label: '', color: '#6B7280' })
+    setShowDeleteStatusConfirm(false)
+    setShowStatusModal(true)
+  }
+
+  const openEditStatus = (s: CustomStatus) => {
+    setEditingStatusId(s.id)
+    setStatusForm({
+      doc_type: s.doc_type,
+      status_key: s.status_key,
+      label: s.label,
+      color: s.color || '#6B7280',
+    })
+    setShowDeleteStatusConfirm(false)
+    setShowStatusModal(true)
+  }
+
+  const saveStatus = async () => {
+    if (!statusForm.label.trim()) {
+      addToast({ type: 'warning', title: 'El label es obligatorio' })
+      return
+    }
+    if (!editingStatusId && !statusForm.status_key.trim()) {
+      addToast({ type: 'warning', title: 'El status_key es obligatorio' })
+      return
+    }
+    setSavingStatus(true)
+    try {
+      const sb = createClient()
+      if (editingStatusId) {
+        // Only update label and color (status_key is immutable for system)
+        const { error } = await sb.from('tt_custom_statuses').update({
+          label: statusForm.label,
+          color: statusForm.color,
+        }).eq('id', editingStatusId)
+        if (error) {
+          addToast({ type: 'error', title: 'Error al actualizar', message: error.message })
+        } else {
+          addToast({ type: 'success', title: 'Estado actualizado' })
+          setShowStatusModal(false)
+          loadStatuses()
+        }
+      } else {
+        // Get max sort_order for this doc_type
+        const { data: existing } = await sb.from('tt_custom_statuses')
+          .select('sort_order')
+          .eq('doc_type', statusForm.doc_type)
+          .order('sort_order', { ascending: false })
+          .limit(1)
+        const nextOrder = ((existing?.[0]?.sort_order as number) || 0) + 1
+
+        const { error } = await sb.from('tt_custom_statuses').insert({
+          doc_type: statusForm.doc_type,
+          status_key: statusForm.status_key.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, ''),
+          label: statusForm.label,
+          color: statusForm.color,
+          icon: null,
+          sort_order: nextOrder,
+          is_system: false,
+          active: true,
+          company_id: null,
+        })
+        if (error) {
+          addToast({ type: 'error', title: 'Error al crear', message: error.message })
+        } else {
+          addToast({ type: 'success', title: 'Estado creado' })
+          setShowStatusModal(false)
+          loadStatuses()
+        }
+      }
+    } catch (err) {
+      addToast({ type: 'error', title: 'Error de red', message: (err as Error).message })
+    } finally {
+      setSavingStatus(false)
+    }
+  }
+
+  const deleteStatus = async () => {
+    if (!editingStatusId) return
+    setSavingStatus(true)
+    try {
+      const sb = createClient()
+      const { error } = await sb.from('tt_custom_statuses').delete().eq('id', editingStatusId)
+      if (error) {
+        addToast({ type: 'error', title: 'Error al eliminar', message: error.message })
+      } else {
+        addToast({ type: 'success', title: 'Estado eliminado' })
+        setShowStatusModal(false)
+        setShowDeleteStatusConfirm(false)
+        loadStatuses()
+      }
+    } catch (err) {
+      addToast({ type: 'error', title: 'Error de red', message: (err as Error).message })
+    } finally {
+      setSavingStatus(false)
+    }
+  }
+
+  const toggleStatusActive = async (s: CustomStatus) => {
+    const sb = createClient()
+    const { error } = await sb.from('tt_custom_statuses').update({ active: !s.active }).eq('id', s.id)
+    if (error) {
+      addToast({ type: 'error', title: 'Error', message: error.message })
+    } else {
+      addToast({ type: 'success', title: s.active ? 'Estado desactivado' : 'Estado activado' })
+      loadStatuses()
+    }
+  }
+
+  const moveStatus = async (statusId: string, direction: 'up' | 'down') => {
+    const status = customStatuses.find(s => s.id === statusId)
+    if (!status) return
+    const sameType = customStatuses.filter(s => s.doc_type === status.doc_type).sort((a, b) => a.sort_order - b.sort_order)
+    const idx = sameType.findIndex(s => s.id === statusId)
+    const swapIdx = direction === 'up' ? idx - 1 : idx + 1
+    if (swapIdx < 0 || swapIdx >= sameType.length) return
+    const sb = createClient()
+    const orderA = sameType[idx].sort_order
+    const orderB = sameType[swapIdx].sort_order
+    await Promise.all([
+      sb.from('tt_custom_statuses').update({ sort_order: orderB }).eq('id', sameType[idx].id),
+      sb.from('tt_custom_statuses').update({ sort_order: orderA }).eq('id', sameType[swapIdx].id),
+    ])
+    loadStatuses()
+  }
+
+  // Group statuses by doc_type
+  const statusesByDocType = customStatuses.reduce<Record<string, CustomStatus[]>>((acc, s) => {
+    if (!acc[s.doc_type]) acc[s.doc_type] = []
+    acc[s.doc_type].push(s)
+    return acc
+  }, {})
+
   const handleTabChange = (tab: string) => {
     if (tab === 'users') { loadUsers(); loadCompanies(); loadRbacData(); loadUserRbacAssignments() }
     if (tab === 'roles') loadRbacData()
@@ -469,6 +927,8 @@ export default function AdminPage() {
     if (tab === 'params') loadParams()
     if (tab === 'warehouses') loadWarehouses()
     if (tab === 'audit') loadAudit()
+    if (tab === 'plantillas') loadTemplates()
+    if (tab === 'estados') loadStatuses()
   }
 
   useEffect(() => { loadUsers(); loadCompanies(); loadRbacData(); loadUserRbacAssignments() }, [loadUsers, loadCompanies, loadRbacData, loadUserRbacAssignments])
@@ -716,37 +1176,76 @@ export default function AdminPage() {
 
             {/* ═══ COMPANIES ═══ */}
             {activeTab === 'companies' && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Empresas del grupo</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {loadingCompanies ? (
-                    <div className="flex justify-center py-10"><Loader2 className="animate-spin text-[#FF6600]" size={28} /></div>
-                  ) : companies.length === 0 ? (
-                    <p className="text-sm text-[#6B7280] text-center py-10">No hay empresas cargadas</p>
-                  ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {companies.map((c) => (
-                        <div key={c.id as string} className="p-4 rounded-xl bg-[#0F1218] border border-[#1E2330] hover:border-[#2A3040] transition-all">
-                          <div className="flex items-center justify-between mb-3">
-                            <h3 className="text-sm font-semibold text-[#F0F2F5]">{(c.name as string) || '-'}</h3>
-                            <Badge variant="success">Activa</Badge>
+              <div className="space-y-4">
+                {/* ── Logos ── */}
+                <Card>
+                  <CardContent className="pt-5">
+                    {loadingCompanies ? (
+                      <div className="flex justify-center py-6"><Loader2 className="animate-spin text-[#FF6600]" size={28} /></div>
+                    ) : (
+                      <CompanyLogosPanel
+                        companies={companies.map((c) => ({
+                          id: c.id as string,
+                          name: (c.name as string) || '',
+                          logo_url: (c.logo_url as string) ?? null,
+                          country: (c.country as string) ?? null,
+                          code_prefix: (c.code_prefix as string) ?? null,
+                        }))}
+                        onUpdated={loadCompanies}
+                      />
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* ── Datos / Config ── */}
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between">
+                    <CardTitle>Datos y configuración</CardTitle>
+                    <Link href="/admin/companies/new">
+                      <Button size="sm">
+                        <Plus size={14} /> Nueva empresa
+                      </Button>
+                    </Link>
+                  </CardHeader>
+                  <CardContent>
+                    {loadingCompanies ? (
+                      <div className="flex justify-center py-10"><Loader2 className="animate-spin text-[#FF6600]" size={28} /></div>
+                    ) : companies.length === 0 ? (
+                      <p className="text-sm text-[#6B7280] text-center py-10">No hay empresas cargadas</p>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {companies.map((c) => (
+                          <div key={c.id as string} className="p-4 rounded-xl bg-[#0F1218] border border-[#1E2330] hover:border-[#2A3040] transition-all">
+                            <div className="flex items-center gap-3 mb-3">
+                              {/* Logo miniatura */}
+                              {!!c.logo_url && (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={c.logo_url as string}
+                                  alt={(c.name as string) || ''}
+                                  className="h-8 w-16 object-contain rounded bg-white/5 p-0.5"
+                                />
+                              )}
+                              <div className="flex-1 min-w-0">
+                                <h3 className="text-sm font-semibold text-[#F0F2F5] truncate">{(c.name as string) || '-'}</h3>
+                              </div>
+                              <Badge variant="success">Activa</Badge>
+                            </div>
+                            <div className="grid grid-cols-3 gap-2 text-sm">
+                              <div><p className="text-[10px] text-[#6B7280]">CIF/CUIT</p><p className="text-[#D1D5DB] text-xs">{(c.tax_id as string) || '-'}</p></div>
+                              <div><p className="text-[10px] text-[#6B7280]">Pais</p><p className="text-[#D1D5DB] text-xs">{(c.country as string) || '-'}</p></div>
+                              <div><p className="text-[10px] text-[#6B7280]">IVA</p><p className="text-[#D1D5DB] text-xs">{c.default_tax_rate ? `${c.default_tax_rate}%` : '-'}</p></div>
+                            </div>
+                            <Button variant="ghost" size="sm" className="mt-3 w-full" onClick={() => openEditCompany(c)}>
+                              <Edit size={14} /> Configurar
+                            </Button>
                           </div>
-                          <div className="grid grid-cols-3 gap-2 text-sm">
-                            <div><p className="text-[10px] text-[#6B7280]">CIF/CUIT</p><p className="text-[#D1D5DB]">{(c.tax_id as string) || '-'}</p></div>
-                            <div><p className="text-[10px] text-[#6B7280]">Pais</p><p className="text-[#D1D5DB]">{(c.country as string) || '-'}</p></div>
-                            <div><p className="text-[10px] text-[#6B7280]">IVA</p><p className="text-[#D1D5DB]">{c.default_tax_rate ? `${c.default_tax_rate}%` : '-'}</p></div>
-                          </div>
-                          <Button variant="ghost" size="sm" className="mt-3 w-full" onClick={() => openEditCompany(c)}>
-                            <Edit size={14} /> Configurar
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
             )}
 
             {/* ═══ PARAMS ═══ */}
@@ -888,6 +1387,184 @@ export default function AdminPage() {
                       Siguiente <ChevronRight size={14} />
                     </Button>
                   </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* ═══ PLANTILLAS ═══ */}
+            {activeTab === 'plantillas' && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Plantillas de documentos</CardTitle>
+                  <Button size="sm" onClick={openNewTemplate}><Plus size={14} /> Nueva plantilla</Button>
+                </CardHeader>
+                <CardContent>
+                  {loadingTemplates ? (
+                    <div className="flex justify-center py-10"><Loader2 className="animate-spin text-[#FF6600]" size={28} /></div>
+                  ) : templates.length === 0 ? (
+                    <div className="text-center py-10 text-[#6B7280]">
+                      <FileText size={40} className="mx-auto mb-2 opacity-30" />
+                      <p className="text-sm">No hay plantillas configuradas</p>
+                      <p className="text-xs text-[#4B5563] mt-1">Crea una plantilla para personalizar tus documentos</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-6">
+                      {Object.entries(templatesByDocType).map(([docType, docTemplates]) => (
+                        <div key={docType}>
+                          <p className="text-xs font-semibold text-[#FF6600] uppercase tracking-wider mb-3">
+                            {DOC_TYPE_LABELS[docType] || docType}
+                          </p>
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                            {docTemplates.map(t => (
+                              <div
+                                key={t.id}
+                                onClick={() => openEditTemplate(t)}
+                                className="p-4 rounded-xl bg-[#0F1218] border border-[#1E2330] hover:border-[#FF6600]/40 cursor-pointer transition-all group"
+                              >
+                                <div className="flex items-center justify-between mb-2">
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <div
+                                      className="w-3 h-3 rounded-full shrink-0 border border-white/10"
+                                      style={{ backgroundColor: t.primary_color || '#FF6600' }}
+                                    />
+                                    <h3 className="text-sm font-semibold text-[#F0F2F5] truncate">{t.name}</h3>
+                                  </div>
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    {t.is_default && <Badge variant="orange" size="sm">Default</Badge>}
+                                    <Badge variant={t.active ? 'success' : 'default'} size="sm">
+                                      {t.active ? 'Activa' : 'Inactiva'}
+                                    </Badge>
+                                  </div>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[11px] text-[#6B7280]">{t.language?.toUpperCase()}</span>
+                                    <span className="text-[11px] text-[#4B5563]">{t.font_family}</span>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); toggleTemplateActive(t) }}
+                                      className={`w-8 h-4 rounded-full transition-all relative ${t.active ? 'bg-emerald-500/30' : 'bg-[#2A3040]'}`}
+                                      title={t.active ? 'Desactivar' : 'Activar'}
+                                    >
+                                      <div className={`w-3 h-3 rounded-full bg-white absolute top-0.5 transition-all ${t.active ? 'right-0.5' : 'left-0.5'}`} />
+                                    </button>
+                                    <Edit size={14} className="text-[#4B5563] group-hover:text-[#FF6600] transition-colors" />
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* ═══ ESTADOS ═══ */}
+            {activeTab === 'estados' && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Estados personalizados</CardTitle>
+                  <Button size="sm" onClick={openNewStatus}><Plus size={14} /> Nuevo estado</Button>
+                </CardHeader>
+                <CardContent>
+                  {loadingStatuses ? (
+                    <div className="flex justify-center py-10"><Loader2 className="animate-spin text-[#FF6600]" size={28} /></div>
+                  ) : customStatuses.length === 0 ? (
+                    <div className="text-center py-10 text-[#6B7280]">
+                      <Palette size={40} className="mx-auto mb-2 opacity-30" />
+                      <p className="text-sm">No hay estados configurados</p>
+                      <p className="text-xs text-[#4B5563] mt-1">Los estados definen el flujo de cada tipo de documento</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-6">
+                      {Object.entries(statusesByDocType).map(([docType, docStatuses]) => {
+                        const sorted = [...docStatuses].sort((a, b) => a.sort_order - b.sort_order)
+                        return (
+                          <div key={docType}>
+                            <div className="flex items-center justify-between mb-3">
+                              <p className="text-xs font-semibold text-[#FF6600] uppercase tracking-wider">
+                                {STATUS_DOC_TYPE_LABELS[docType] || docType}
+                              </p>
+                              <Badge variant="default" size="sm">{sorted.length} estados</Badge>
+                            </div>
+                            <div className="space-y-1.5">
+                              {sorted.map((s, idx) => (
+                                <div
+                                  key={s.id}
+                                  className={`flex items-center gap-3 px-4 py-3 rounded-xl bg-[#0F1218] border transition-all group ${
+                                    s.active ? 'border-[#1E2330] hover:border-[#2A3040]' : 'border-[#1E2330]/50 opacity-50'
+                                  }`}
+                                >
+                                  {/* Reorder buttons */}
+                                  <div className="flex flex-col gap-0.5 shrink-0">
+                                    <button
+                                      onClick={() => moveStatus(s.id, 'up')}
+                                      disabled={idx === 0}
+                                      className="text-[#4B5563] hover:text-[#FF6600] disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+                                      title="Subir"
+                                    >
+                                      <ChevronLeft size={12} className="rotate-90" />
+                                    </button>
+                                    <button
+                                      onClick={() => moveStatus(s.id, 'down')}
+                                      disabled={idx === sorted.length - 1}
+                                      className="text-[#4B5563] hover:text-[#FF6600] disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+                                      title="Bajar"
+                                    >
+                                      <ChevronRight size={12} className="rotate-90" />
+                                    </button>
+                                  </div>
+
+                                  {/* Color dot */}
+                                  <div
+                                    className="w-3.5 h-3.5 rounded-full shrink-0 border border-white/10"
+                                    style={{ backgroundColor: s.color || '#6B7280' }}
+                                  />
+
+                                  {/* Label */}
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-sm font-medium text-[#F0F2F5] truncate">{s.label}</span>
+                                      <span className="text-[10px] text-[#4B5563] font-mono">{s.status_key}</span>
+                                    </div>
+                                  </div>
+
+                                  {/* Badges */}
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    {s.is_system && (
+                                      <Badge variant="info" size="sm">Sistema</Badge>
+                                    )}
+
+                                    {/* Active toggle */}
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); toggleStatusActive(s) }}
+                                      className={`w-8 h-4 rounded-full transition-all relative ${s.active ? 'bg-emerald-500/30' : 'bg-[#2A3040]'}`}
+                                      title={s.active ? 'Desactivar' : 'Activar'}
+                                    >
+                                      <div className={`w-3 h-3 rounded-full bg-white absolute top-0.5 transition-all ${s.active ? 'right-0.5' : 'left-0.5'}`} />
+                                    </button>
+
+                                    {/* Edit */}
+                                    <button
+                                      onClick={() => openEditStatus(s)}
+                                      className="text-[#4B5563] hover:text-[#FF6600] transition-colors"
+                                      title="Editar"
+                                    >
+                                      <Edit size={14} />
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}
@@ -1230,6 +1907,422 @@ export default function AdminPage() {
           <div className="flex justify-end gap-3">
             <Button variant="secondary" onClick={() => setShowAddWarehouse(false)}>Cancelar</Button>
             <Button onClick={addWarehouse}><Plus size={14} /> Crear</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ─── CREATE / EDIT TEMPLATE MODAL ─── */}
+      <Modal
+        isOpen={showTemplateModal}
+        onClose={() => setShowTemplateModal(false)}
+        title={editingTemplateId ? 'Editar plantilla' : 'Nueva plantilla'}
+        size="xl"
+      >
+        <div className="space-y-5">
+          {/* Section nav */}
+          <div className="flex gap-1 p-1 bg-[#0A0D12] rounded-lg border border-[#1E2330] overflow-x-auto scrollbar-hide">
+            {([
+              { id: 'general' as const, label: 'General' },
+              { id: 'apariencia' as const, label: 'Apariencia' },
+              { id: 'visibilidad' as const, label: 'Visibilidad' },
+              { id: 'contenido' as const, label: 'Contenido' },
+              { id: 'css' as const, label: 'CSS' },
+            ]).map(sec => (
+              <button
+                key={sec.id}
+                onClick={() => setTemplateSection(sec.id)}
+                className={`px-4 py-2 text-xs font-medium rounded-md transition-all whitespace-nowrap ${
+                  templateSection === sec.id
+                    ? 'bg-[#1E2330] text-[#FF6600] shadow-sm'
+                    : 'text-[#6B7280] hover:text-[#9CA3AF]'
+                }`}
+              >
+                {sec.label}
+              </button>
+            ))}
+          </div>
+
+          {/* ── General ── */}
+          {templateSection === 'general' && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Input
+                  label="Nombre *"
+                  value={templateForm.name}
+                  onChange={(e) => setTemplateForm({ ...templateForm, name: e.target.value })}
+                  placeholder="Plantilla estandar ES"
+                />
+                <Select
+                  label="Tipo de documento"
+                  options={DOC_TYPES}
+                  value={templateForm.doc_type}
+                  onChange={(e) => setTemplateForm({ ...templateForm, doc_type: e.target.value })}
+                />
+                <Select
+                  label="Idioma"
+                  options={TEMPLATE_LANGUAGES}
+                  value={templateForm.language}
+                  onChange={(e) => setTemplateForm({ ...templateForm, language: e.target.value })}
+                />
+                <Select
+                  label="Empresa (opcional)"
+                  options={[
+                    { value: '', label: 'Todas las empresas' },
+                    ...companies.map(c => ({ value: c.id as string, label: (c.name as string) || '-' })),
+                  ]}
+                  value={templateForm.company_id || ''}
+                  onChange={(e) => setTemplateForm({ ...templateForm, company_id: e.target.value || null })}
+                />
+              </div>
+              <div className="flex items-center gap-6">
+                <button
+                  onClick={() => setTemplateForm({ ...templateForm, is_default: !templateForm.is_default })}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg border transition-all ${
+                    templateForm.is_default
+                      ? 'bg-[#FF6600]/10 border-[#FF6600]/30 text-[#FF6600]'
+                      : 'bg-[#0F1218] border-[#1E2330] text-[#6B7280] hover:border-[#2A3040]'
+                  }`}
+                >
+                  <div className={`w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-all ${
+                    templateForm.is_default ? 'bg-[#FF6600] border-[#FF6600]' : 'border-[#2A3040]'
+                  }`}>
+                    {templateForm.is_default && <Check size={10} className="text-white" />}
+                  </div>
+                  <span className="text-sm font-medium">Plantilla por defecto</span>
+                </button>
+                <button
+                  onClick={() => setTemplateForm({ ...templateForm, active: !templateForm.active })}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg border transition-all ${
+                    templateForm.active
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                      : 'bg-red-500/10 border-red-500/30 text-red-400'
+                  }`}
+                >
+                  <Power size={14} />
+                  <span className="text-sm font-medium">{templateForm.active ? 'Activa' : 'Inactiva'}</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── Apariencia ── */}
+          {templateSection === 'apariencia' && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-[#9CA3AF] mb-1.5">Color primario</label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="color"
+                      value={templateForm.primary_color}
+                      onChange={(e) => setTemplateForm({ ...templateForm, primary_color: e.target.value })}
+                      className="w-10 h-10 rounded-lg border border-[#2A3040] bg-transparent cursor-pointer"
+                    />
+                    <Input
+                      value={templateForm.primary_color}
+                      onChange={(e) => setTemplateForm({ ...templateForm, primary_color: e.target.value })}
+                      placeholder="#FF6600"
+                      className="flex-1"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-[#9CA3AF] mb-1.5">Color secundario</label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="color"
+                      value={templateForm.secondary_color}
+                      onChange={(e) => setTemplateForm({ ...templateForm, secondary_color: e.target.value })}
+                      className="w-10 h-10 rounded-lg border border-[#2A3040] bg-transparent cursor-pointer"
+                    />
+                    <Input
+                      value={templateForm.secondary_color}
+                      onChange={(e) => setTemplateForm({ ...templateForm, secondary_color: e.target.value })}
+                      placeholder="#1E2330"
+                      className="flex-1"
+                    />
+                  </div>
+                </div>
+                <Select
+                  label="Tipografia"
+                  options={TEMPLATE_FONTS}
+                  value={templateForm.font_family}
+                  onChange={(e) => setTemplateForm({ ...templateForm, font_family: e.target.value })}
+                />
+                <Input
+                  label="URL del logo"
+                  value={templateForm.logo_url || ''}
+                  onChange={(e) => setTemplateForm({ ...templateForm, logo_url: e.target.value })}
+                  placeholder="https://..."
+                />
+              </div>
+              {/* Preview swatch */}
+              <div className="p-4 rounded-xl bg-[#0F1218] border border-[#1E2330]">
+                <p className="text-xs text-[#6B7280] uppercase tracking-wider mb-3">Vista previa</p>
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-lg border border-white/10" style={{ backgroundColor: templateForm.primary_color }} />
+                    <span className="text-xs text-[#9CA3AF]">Primario</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-lg border border-white/10" style={{ backgroundColor: templateForm.secondary_color }} />
+                    <span className="text-xs text-[#9CA3AF]">Secundario</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-[#F0F2F5]" style={{ fontFamily: templateForm.font_family }}>
+                      Aa Bb Cc 123
+                    </span>
+                    <span className="text-xs text-[#4B5563]">({templateForm.font_family})</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── Visibilidad ── */}
+          {templateSection === 'visibilidad' && (
+            <div className="space-y-4">
+              <p className="text-xs text-[#6B7280]">Selecciona que campos se muestran en el documento generado</p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {SHOW_FIELDS.map(field => {
+                  const isOn = templateForm[field as keyof typeof templateForm] as boolean
+                  return (
+                    <button
+                      key={field}
+                      onClick={() => setTemplateForm({ ...templateForm, [field]: !isOn })}
+                      className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-xs font-medium transition-all text-left ${
+                        isOn
+                          ? 'bg-[#FF6600]/10 border-[#FF6600]/30 text-[#FF6600]'
+                          : 'bg-[#0F1218] border-[#1E2330] text-[#6B7280] hover:border-[#2A3040]'
+                      }`}
+                    >
+                      <div className={`w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-all ${
+                        isOn ? 'bg-[#FF6600] border-[#FF6600]' : 'border-[#2A3040]'
+                      }`}>
+                        {isOn && <Check size={10} className="text-white" />}
+                      </div>
+                      {SHOW_FIELD_LABELS[field]}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* ── Contenido ── */}
+          {templateSection === 'contenido' && (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-[#9CA3AF] mb-1.5">Terminos y condiciones</label>
+                <textarea
+                  value={templateForm.terms_text || ''}
+                  onChange={(e) => setTemplateForm({ ...templateForm, terms_text: e.target.value })}
+                  className="w-full h-28 rounded-lg bg-[#1E2330] border border-[#2A3040] px-3 py-2 text-sm text-[#F0F2F5] focus:outline-none focus:ring-2 focus:ring-orange-500/50 resize-none"
+                  placeholder="Los precios no incluyen IVA..."
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[#9CA3AF] mb-1.5">Texto del pie de pagina</label>
+                <textarea
+                  value={templateForm.footer_text || ''}
+                  onChange={(e) => setTemplateForm({ ...templateForm, footer_text: e.target.value })}
+                  className="w-full h-20 rounded-lg bg-[#1E2330] border border-[#2A3040] px-3 py-2 text-sm text-[#F0F2F5] focus:outline-none focus:ring-2 focus:ring-orange-500/50 resize-none"
+                  placeholder="TORQUETOOLS SL - CIF B12345678"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[#9CA3AF] mb-1.5">HTML cabecera <span className="text-[10px] text-[#4B5563]">(avanzado)</span></label>
+                <textarea
+                  value={templateForm.header_html || ''}
+                  onChange={(e) => setTemplateForm({ ...templateForm, header_html: e.target.value })}
+                  className="w-full h-24 rounded-lg bg-[#1E2330] border border-[#2A3040] px-3 py-2 text-xs text-[#F0F2F5] font-mono focus:outline-none focus:ring-2 focus:ring-orange-500/50 resize-none"
+                  placeholder="<div>...</div>"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[#9CA3AF] mb-1.5">HTML pie <span className="text-[10px] text-[#4B5563]">(avanzado)</span></label>
+                <textarea
+                  value={templateForm.footer_html || ''}
+                  onChange={(e) => setTemplateForm({ ...templateForm, footer_html: e.target.value })}
+                  className="w-full h-24 rounded-lg bg-[#1E2330] border border-[#2A3040] px-3 py-2 text-xs text-[#F0F2F5] font-mono focus:outline-none focus:ring-2 focus:ring-orange-500/50 resize-none"
+                  placeholder="<div>...</div>"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* ── CSS personalizado ── */}
+          {templateSection === 'css' && (
+            <div className="space-y-4">
+              <p className="text-xs text-[#6B7280]">CSS personalizado que se inyecta en el documento. Usa selectores como <code className="text-[#FF6600]">.doc-header</code>, <code className="text-[#FF6600]">.doc-table</code>, etc.</p>
+              <textarea
+                value={templateForm.custom_css || ''}
+                onChange={(e) => setTemplateForm({ ...templateForm, custom_css: e.target.value })}
+                className="w-full h-64 rounded-lg bg-[#0A0D12] border border-[#2A3040] px-4 py-3 text-xs text-[#F0F2F5] font-mono focus:outline-none focus:ring-2 focus:ring-orange-500/50 resize-none leading-relaxed"
+                placeholder={`.doc-header {\n  background: #FF6600;\n}\n\n.doc-table th {\n  font-weight: bold;\n}`}
+              />
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="flex items-center justify-between pt-4 border-t border-[#1E2330]">
+            <div>
+              {editingTemplateId && !showDeleteConfirm && (
+                <Button variant="ghost" size="sm" onClick={() => setShowDeleteConfirm(true)}>
+                  <Trash2 size={14} className="text-red-400" /> <span className="text-red-400">Eliminar</span>
+                </Button>
+              )}
+              {editingTemplateId && showDeleteConfirm && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-red-400">Confirmar eliminacion?</span>
+                  <Button variant="danger" size="sm" onClick={deleteTemplate} loading={savingTemplate}>
+                    Si, eliminar
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setShowDeleteConfirm(false)}>
+                    No
+                  </Button>
+                </div>
+              )}
+            </div>
+            <div className="flex gap-3">
+              <Button variant="secondary" onClick={() => setShowTemplateModal(false)}>Cancelar</Button>
+              <Button onClick={saveTemplate} loading={savingTemplate}>
+                <Save size={14} /> {editingTemplateId ? 'Guardar cambios' : 'Crear plantilla'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ─── CREATE / EDIT STATUS MODAL ─── */}
+      <Modal
+        isOpen={showStatusModal}
+        onClose={() => setShowStatusModal(false)}
+        title={editingStatusId ? 'Editar estado' : 'Nuevo estado'}
+        size="md"
+      >
+        <div className="space-y-5">
+          {/* Doc type (solo al crear) */}
+          {!editingStatusId && (
+            <Select
+              label="Tipo de documento"
+              options={STATUS_DOC_TYPES}
+              value={statusForm.doc_type}
+              onChange={(e) => setStatusForm({ ...statusForm, doc_type: e.target.value })}
+            />
+          )}
+          {editingStatusId && (
+            <div>
+              <label className="block text-sm font-medium text-[#9CA3AF] mb-1.5">Tipo de documento</label>
+              <p className="text-sm text-[#F0F2F5]">{STATUS_DOC_TYPE_LABELS[statusForm.doc_type] || statusForm.doc_type}</p>
+            </div>
+          )}
+
+          {/* Status key (solo al crear) */}
+          {!editingStatusId && (
+            <Input
+              label="Clave (status_key) *"
+              value={statusForm.status_key}
+              onChange={(e) => setStatusForm({ ...statusForm, status_key: e.target.value })}
+              placeholder="ej: en_revision, aprobado_parcial"
+            />
+          )}
+          {editingStatusId && (
+            <div>
+              <label className="block text-sm font-medium text-[#9CA3AF] mb-1.5">Clave (status_key)</label>
+              <p className="text-sm text-[#F0F2F5] font-mono">{statusForm.status_key}</p>
+            </div>
+          )}
+
+          {/* Label */}
+          <Input
+            label="Etiqueta (label) *"
+            value={statusForm.label}
+            onChange={(e) => setStatusForm({ ...statusForm, label: e.target.value })}
+            placeholder="ej: En revision"
+          />
+
+          {/* Color picker */}
+          <div>
+            <label className="block text-sm font-medium text-[#9CA3AF] mb-2">Color</label>
+            <div className="flex items-center gap-3 mb-3">
+              <input
+                type="color"
+                value={statusForm.color}
+                onChange={(e) => setStatusForm({ ...statusForm, color: e.target.value })}
+                className="w-10 h-10 rounded-lg border border-[#2A3040] bg-transparent cursor-pointer"
+              />
+              <Input
+                value={statusForm.color}
+                onChange={(e) => setStatusForm({ ...statusForm, color: e.target.value })}
+                placeholder="#6B7280"
+                className="flex-1"
+              />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {STATUS_PRESET_COLORS.map(c => (
+                <button
+                  key={c}
+                  onClick={() => setStatusForm({ ...statusForm, color: c })}
+                  className={`w-7 h-7 rounded-lg border-2 transition-all ${
+                    statusForm.color === c ? 'border-white scale-110' : 'border-white/10 hover:border-white/30'
+                  }`}
+                  style={{ backgroundColor: c }}
+                  title={c}
+                />
+              ))}
+            </div>
+          </div>
+
+          {/* Preview */}
+          <div className="p-4 rounded-xl bg-[#0F1218] border border-[#1E2330]">
+            <p className="text-xs text-[#6B7280] uppercase tracking-wider mb-2">Vista previa</p>
+            <div className="flex items-center gap-3">
+              <div
+                className="w-3.5 h-3.5 rounded-full border border-white/10"
+                style={{ backgroundColor: statusForm.color }}
+              />
+              <span className="text-sm font-medium text-[#F0F2F5]">{statusForm.label || 'Sin etiqueta'}</span>
+              <span className="text-[10px] text-[#4B5563] font-mono">
+                {statusForm.status_key || 'sin_clave'}
+              </span>
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="flex items-center justify-between pt-4 border-t border-[#1E2330]">
+            <div>
+              {editingStatusId && !showDeleteStatusConfirm && (
+                (() => {
+                  const editingStatus = customStatuses.find(s => s.id === editingStatusId)
+                  if (editingStatus?.is_system) return (
+                    <span className="text-[10px] text-[#4B5563]">Los estados de sistema no se pueden eliminar</span>
+                  )
+                  return (
+                    <Button variant="ghost" size="sm" onClick={() => setShowDeleteStatusConfirm(true)}>
+                      <Trash2 size={14} className="text-red-400" /> <span className="text-red-400">Eliminar</span>
+                    </Button>
+                  )
+                })()
+              )}
+              {editingStatusId && showDeleteStatusConfirm && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-red-400">Confirmar eliminacion?</span>
+                  <Button variant="danger" size="sm" onClick={deleteStatus} loading={savingStatus}>
+                    Si, eliminar
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setShowDeleteStatusConfirm(false)}>
+                    No
+                  </Button>
+                </div>
+              )}
+            </div>
+            <div className="flex gap-3">
+              <Button variant="secondary" onClick={() => setShowStatusModal(false)}>Cancelar</Button>
+              <Button onClick={saveStatus} loading={savingStatus}>
+                <Save size={14} /> {editingStatusId ? 'Guardar cambios' : 'Crear estado'}
+              </Button>
+            </div>
           </div>
         </div>
       </Modal>

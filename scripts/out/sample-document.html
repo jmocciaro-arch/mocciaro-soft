@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Cotización 2026 04 16 COTI-TT.2026.000123</title>
+<style>@page { size: A4; margin: 18mm 14mm 20mm 14mm; }
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  color: #1a1a1a;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 10.5pt;
+  line-height: 1.35;
+  background: #fff;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.page {
+  width: 100%;
+  max-width: 210mm;
+  margin: 0 auto;
+  padding: 0;
+}
+
+/* HEADER */
+.hdr {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16px;
+  align-items: flex-start;
+  padding-bottom: 10px;
+  border-bottom: 2px solid #111;
+  margin-bottom: 14px;
+}
+.hdr-left { display: flex; align-items: center; gap: 12px; }
+.hdr-logo { max-height: 58px; max-width: 180px; object-fit: contain; }
+.hdr-company-name { font-size: 14pt; font-weight: 700; margin: 0 0 2px 0; }
+.hdr-company-meta { font-size: 8.5pt; color: #444; line-height: 1.3; }
+.hdr-right { text-align: right; }
+.hdr-doc-type { font-size: 16pt; font-weight: 700; letter-spacing: .3px; margin: 0; }
+.hdr-doc-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10pt; margin-top: 4px; color: #222; }
+.hdr-doc-date { font-size: 9pt; color: #444; margin-top: 2px; }
+.hdr-doc-status { display: inline-block; margin-top: 4px; font-size: 8pt; padding: 2px 6px; border-radius: 3px; background: #e9ecef; color: #333; text-transform: uppercase; letter-spacing: .5px; }
+.hdr-doc-status.issued, .hdr-doc-status.accepted, .hdr-doc-status.paid, .hdr-doc-status.invoiced, .hdr-doc-status.delivered { background: #0a6d2b; color: #fff; }
+.hdr-doc-status.cancelled, .hdr-doc-status.voided, .hdr-doc-status.rejected { background: #8a1c1c; color: #fff; }
+.hdr-doc-status.draft { background: #f4b400; color: #fff; }
+
+/* PARTIES */
+.parties {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.party {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+.party-label { font-size: 7.5pt; text-transform: uppercase; color: #777; letter-spacing: .6px; margin-bottom: 3px; }
+.party-name { font-weight: 600; font-size: 10pt; margin-bottom: 2px; }
+.party-line { font-size: 9pt; color: #333; }
+
+/* META ROW */
+.meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  padding: 6px 0;
+  border-top: 1px solid #eee;
+  border-bottom: 1px solid #eee;
+  margin-bottom: 12px;
+  font-size: 9pt;
+}
+.meta-cell { display: flex; flex-direction: column; min-width: 110px; }
+.meta-key { color: #777; font-size: 7.5pt; text-transform: uppercase; letter-spacing: .5px; }
+.meta-val { color: #111; font-weight: 500; }
+
+/* HEADER NOTE */
+.header-note {
+  font-size: 9.5pt;
+  color: #333;
+  padding: 8px 10px;
+  background: #f8f8f6;
+  border-left: 3px solid #999;
+  margin-bottom: 12px;
+  white-space: pre-wrap;
+}
+
+/* TABLA DE LÍNEAS */
+table.lines { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
+table.lines thead th {
+  background: #111; color: #fff;
+  font-size: 8.5pt; text-transform: uppercase; letter-spacing: .4px;
+  padding: 6px 6px; text-align: left; font-weight: 600;
+}
+table.lines thead th.num, table.lines thead th.qty, table.lines thead th.money { text-align: right; }
+table.lines tbody td {
+  padding: 6px 6px;
+  border-bottom: 1px solid #e4e4e4;
+  vertical-align: top;
+  font-size: 9.5pt;
+}
+table.lines tbody td.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.lines tbody td.money { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.lines tbody tr:nth-child(even) td { background: #fafafa; }
+table.lines .line-n { width: 24px; }
+table.lines .line-name { font-weight: 600; }
+table.lines .line-desc { color: #555; font-size: 9pt; margin-top: 2px; white-space: pre-wrap; }
+table.lines .line-sku { color: #777; font-size: 8pt; margin-top: 1px; }
+table.lines .line-attrs { font-size: 8pt; color: #555; margin-top: 3px; }
+table.lines .line-attrs span { margin-right: 8px; }
+table.lines .line-img { display: block; max-width: 70px; max-height: 50px; margin-top: 4px; border: 1px solid #ddd; }
+
+/* TOTALES */
+.totals {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 14px;
+}
+.totals table { border-collapse: collapse; min-width: 260px; }
+.totals td { padding: 4px 8px; font-size: 10pt; }
+.totals td.lbl { text-align: left; color: #444; }
+.totals td.val { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.totals tr.total-row td { border-top: 2px solid #111; font-weight: 700; font-size: 11pt; padding-top: 6px; }
+
+/* NOTAS / TÉRMINOS */
+.notes-block { margin-bottom: 10px; }
+.notes-block h4 { font-size: 9pt; text-transform: uppercase; letter-spacing: .4px; color: #666; margin: 0 0 3px 0; }
+.notes-block p, .notes-block div.body {
+  font-size: 9pt;
+  color: #333;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+/* FIRMA / QR */
+.sign-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16px;
+  align-items: flex-end;
+  margin-top: 14px;
+}
+.sign-box { border-top: 1px solid #333; padding-top: 4px; font-size: 8pt; color: #666; width: 220px; min-height: 48px; }
+.sign-box img { max-height: 46px; max-width: 200px; display: block; margin-bottom: 4px; }
+.qr-box { text-align: center; font-size: 8pt; color: #666; }
+.qr-box img { max-width: 80px; max-height: 80px; display: block; }
+
+/* FOOTER */
+.ftr {
+  margin-top: 22px;
+  padding-top: 8px;
+  border-top: 1px solid #ccc;
+  font-size: 8pt;
+  color: #666;
+  text-align: center;
+  white-space: pre-wrap;
+}
+
+/* PAGINACIÓN */
+table.lines { page-break-inside: auto; }
+table.lines tr { page-break-inside: avoid; page-break-after: auto; }
+table.lines thead { display: table-header-group; }
+table.lines tfoot { display: table-footer-group; }</style>
+</head>
+<body>
+<main class="page">
+<header class="hdr">
+  <div class="hdr-left">
+    
+    <div>
+      <h1 class="hdr-company-name">TorqueTools SL</h1>
+      <div class="hdr-company-meta">CIF: B12345678<br/>C/ Ejemplo 12, 28001 Madrid, ES<br/>facturacion@torquetools.es</div>
+    </div>
+  </div>
+  <div class="hdr-right">
+    <h2 class="hdr-doc-type">Cotización</h2>
+    <div class="hdr-doc-code">2026 04 16 COTI-TT.2026.000123</div>
+    <div class="hdr-doc-date">Fecha: 15 abr 2026</div>
+    <span class="hdr-doc-status issued">issued</span>
+  </div>
+</header>
+<section class="parties">
+  <div class="party">
+    <div class="party-label">Cliente</div>
+    <div class="party-name">ACME Industrial S.A.</div>
+    <div class="party-line">NIF/CUIT: A98765432</div><div class="party-line">Polígono Norte s/n, 08040 Barcelona, ES</div><div class="party-line">compras@acme.example</div>
+  </div>
+  <div class="party">
+    <div class="party-label">Datos del documento</div>
+    <div class="party-line"><span style="color:#777">Válido hasta:</span> 15 may 2026</div><div class="party-line"><span style="color:#777">Moneda:</span> EUR</div><div class="party-line"><span style="color:#777">Ref. externa:</span> REF-8822</div>
+  </div>
+</section>
+<div class="header-note">Gracias por confiar en TorqueTools. Todos los precios en EUR sin IVA salvo indicación.</div>
+<table class="lines">
+  <thead><tr><th class="num line-n">#</th><th class="">Concepto</th><th class="qty">Cant.</th><th class="money">P. unit.</th><th class="money">Desc.</th><th class="money">Imp.</th><th class="money">Total</th></tr></thead>
+  <tbody><tr><td class="num line-n">1</td><td><div class="line-name">Llave dinamométrica 1/2&quot; 20-200 Nm</div><div class="line-sku">SKU: TQ-BAR-12</div><div class="line-desc">Cabezal reversible. Escala dual Nm / ft·lb. Certificado trazable incluido.</div><div class="line-attrs"><span><strong>Torque:</strong> 20-200 Nm</span> <span><strong>Drive:</strong> 1/2&quot;</span> <span><strong>Marca:</strong> Torqueleader</span></div></td><td class="num">2 u</td><td class="money">289,50 €</td><td class="money">10% · 57,90 €</td><td class="money">21% · 109,42 €</td><td class="money">630,52 €</td></tr><tr><td class="num line-n">2</td><td><div class="line-name">Kit de calibración portátil</div><div class="line-sku">SKU: TQ-CAL-K50</div><div class="line-desc">Incluye maletín, transductor y software de reporte PDF.</div><div class="line-attrs"><span><strong>Rango:</strong> Hasta 1000 Nm</span> <span><strong>Conectividad:</strong> USB-C</span></div><div class="line-desc"><em>Entrega coordinada con logística interna.</em></div></td><td class="num">1 u</td><td class="money">1850,00 €</td><td class="money">0,00 €</td><td class="money">21% · 388,50 €</td><td class="money">2238,50 €</td></tr></tbody>
+</table>
+<section class="totals"><table><tr><td class="lbl">Subtotal</td><td class="val">2371,10 €</td></tr><tr><td class="lbl">Descuentos</td><td class="val">− 57,90 €</td></tr><tr><td class="lbl">Impuestos</td><td class="val">497,92 €</td></tr><tr class="total-row"><td class="lbl">Total</td><td class="val">2869,02 €</td></tr></table></section>
+<div class="notes-block">
+  <h4>Notas</h4>
+  <div class="body">Plazo de entrega: 15 días hábiles desde confirmación. Stock sujeto a disponibilidad.</div>
+</div>
+<div class="notes-block">
+  <h4>Términos y condiciones</h4>
+  <div class="body">Oferta válida durante 30 días. Forma de pago: transferencia 50% anticipo, 50% contra entrega.
+Garantía de fábrica 12 meses. Jurisdicción: Madrid.</div>
+</div>
+<section class="sign-row">
+<div class="sign-box">
+  
+  Firma autorizada
+</div><div class="qr-box">
+  <img src="https://api.qrserver.com/v1/create-qr-code/?size=160x160&amp;data=2026%2004%2016%20COTI-TT.2026.000123%7CB12345678%7C2869.02%7CEUR" alt="QR"/>
+  <div style="margin-top:3px;">Verificación</div>
+</div></section>
+<footer class="ftr">TorqueTools SL · CIF B12345678 · www.torquetools.es</footer>
+</main>
+</body>
+</html>

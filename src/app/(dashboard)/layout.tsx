@@ -3,6 +3,8 @@
 import { SidebarProvider, Sidebar, TopBar, MobileNav, useSidebar } from '@/components/ui/sidebar'
 import { ToastProvider } from '@/components/ui/toast'
 import { CompanyProvider } from '@/lib/company-context'
+import { AIAssistant } from '@/components/ai/ai-assistant'
+import { CommandPalette } from '@/components/command-palette'
 import { cn } from '@/lib/utils'
 
 function DashboardInner({ children }: { children: React.ReactNode }) {
@@ -23,6 +25,8 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
         </main>
       </div>
       <MobileNav />
+      <AIAssistant />
+      <CommandPalette />
     </div>
   )
 }

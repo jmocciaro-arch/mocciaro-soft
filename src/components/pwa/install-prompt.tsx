@@ -1,14 +1,17 @@
 'use client';
 
 // ============================================================================
-// Mocciaro Soft — Install PWA Banner
-// Banner para instalar la app como PWA
+// Mocciaro Soft ERP — Install PWA Banner
+// Muestra el banner de instalación a partir de la 2da visita
+// Solo se muestra si el install prompt está disponible y no fue descartado
 // ============================================================================
 
 import { useEffect, useState } from 'react';
-import { showInstallPrompt, onPWAEvent } from '@/lib/pwa';
+import { Download, X, Smartphone } from 'lucide-react';
+import { showInstallPrompt, onPWAEvent, setupInstallPrompt, isPWAInstalled } from '@/lib/pwa';
 
-const DISMISS_KEY = 'torquetools-install-dismissed';
+const DISMISS_KEY = 'mocciaro-install-dismissed';
+const VISIT_COUNT_KEY = 'mocciaro-visit-count';
 
 export function InstallPrompt() {
   const [canInstall, setCanInstall] = useState(false);
@@ -16,24 +19,35 @@ export function InstallPrompt() {
   const [installing, setInstalling] = useState(false);
 
   useEffect(() => {
-    // Verificar si ya fue descartado
-    const wasDismissed = localStorage.getItem(DISMISS_KEY);
-    if (wasDismissed) return;
+    // No mostrar si ya está instalada
+    if (isPWAInstalled()) return;
+
+    // No mostrar si fue descartada permanentemente
+    if (localStorage.getItem(DISMISS_KEY)) return;
+
+    // Contar visitas — solo mostrar a partir de la 2da
+    const visitCount = parseInt(localStorage.getItem(VISIT_COUNT_KEY) ?? '0', 10) + 1;
+    localStorage.setItem(VISIT_COUNT_KEY, String(visitCount));
+    if (visitCount < 2) return;
+
     setDismissed(false);
 
+    // Inicializar el listener del install prompt
+    setupInstallPrompt();
+
     // Escuchar cuando el install prompt esté disponible
-    const cleanup = onPWAEvent('install-prompt-available', () => {
+    const cleanup1 = onPWAEvent('install-prompt-available', () => {
       setCanInstall(true);
     });
 
     // Escuchar si la app fue instalada
-    const cleanupInstalled = onPWAEvent('app-installed', () => {
+    const cleanup2 = onPWAEvent('app-installed', () => {
       setCanInstall(false);
     });
 
     return () => {
-      cleanup();
-      cleanupInstalled();
+      cleanup1();
+      cleanup2();
     };
   }, []);
 
@@ -55,132 +69,58 @@ export function InstallPrompt() {
 
   return (
     <div
-      style={{
-        position: 'fixed',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        zIndex: 9998,
-        padding: '0 1rem 1rem',
-        pointerEvents: 'none',
-      }}
+      className="fixed bottom-0 left-0 right-0 z-[9998] p-4 pointer-events-none"
+      style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
     >
       <div
+        className="max-w-md mx-auto pointer-events-auto rounded-2xl border border-[#f97316]/30 p-4 flex items-center gap-3 shadow-2xl"
         style={{
-          maxWidth: '480px',
-          margin: '0 auto',
-          background: '#1A1D24',
-          border: '1px solid rgba(255, 102, 0, 0.3)',
-          borderRadius: '16px',
-          padding: '1rem 1.25rem',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '1rem',
-          boxShadow: '0 -4px 24px rgba(0, 0, 0, 0.5)',
-          pointerEvents: 'auto',
-          animation: 'slideUp 0.4s ease-out',
+          background: '#151821',
+          boxShadow: '0 -4px 32px rgba(0,0,0,0.6)',
+          animation: 'pwa-slide-up 0.35s ease-out',
         }}
       >
         {/* Icono */}
-        <div
-          style={{
-            width: '44px',
-            height: '44px',
-            background: '#FF6600',
-            borderRadius: '12px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexShrink: 0,
-            fontSize: '1.1rem',
-            fontWeight: 900,
-            color: 'white',
-          }}
-        >
-          TT
+        <div className="w-11 h-11 rounded-xl bg-[#f97316] flex items-center justify-center shrink-0 shadow-lg shadow-orange-500/30">
+          <Smartphone size={20} className="text-white" />
         </div>
 
         {/* Texto */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <p
-            style={{
-              color: '#E5E7EB',
-              fontSize: '0.9rem',
-              fontWeight: 600,
-              margin: 0,
-              lineHeight: 1.3,
-            }}
-          >
-            Instala TorqueTools
+        <div className="flex-1 min-w-0">
+          <p className="text-[#F0F2F5] text-sm font-semibold leading-tight">
+            Instalá Mocciaro Soft en tu dispositivo
           </p>
-          <p
-            style={{
-              color: '#6B7280',
-              fontSize: '0.8rem',
-              margin: '0.15rem 0 0',
-              lineHeight: 1.3,
-            }}
-          >
-            Acceso rapido desde tu pantalla de inicio
+          <p className="text-[#6B7280] text-xs mt-0.5 leading-tight">
+            Acceso rápido sin abrir el navegador
           </p>
         </div>
 
         {/* Botones */}
-        <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
+        <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={handleDismiss}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: '#6B7280',
-              fontSize: '0.8rem',
-              cursor: 'pointer',
-              padding: '0.4rem 0.6rem',
-              borderRadius: '8px',
-              transition: 'color 0.2s',
-            }}
-            onMouseOver={(e) => (e.currentTarget.style.color = '#9CA3AF')}
-            onMouseOut={(e) => (e.currentTarget.style.color = '#6B7280')}
+            className="p-1.5 rounded-lg text-[#6B7280] hover:text-[#9CA3AF] hover:bg-[#1E2330] transition-colors"
+            title="Cerrar"
           >
-            Ahora no
+            <X size={16} />
           </button>
           <button
             onClick={handleInstall}
             disabled={installing}
-            style={{
-              background: '#FF6600',
-              border: 'none',
-              color: 'white',
-              fontSize: '0.85rem',
-              fontWeight: 600,
-              cursor: installing ? 'wait' : 'pointer',
-              padding: '0.5rem 1rem',
-              borderRadius: '8px',
-              transition: 'background 0.2s',
-              opacity: installing ? 0.7 : 1,
-            }}
-            onMouseOver={(e) => {
-              if (!installing) e.currentTarget.style.background = '#E65C00';
-            }}
-            onMouseOut={(e) => (e.currentTarget.style.background = '#FF6600')}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#f97316] hover:bg-[#e5680f] text-white text-xs font-semibold transition-colors disabled:opacity-60 disabled:cursor-wait"
           >
+            <Download size={12} />
             {installing ? 'Instalando...' : 'Instalar'}
           </button>
         </div>
-
-        <style>{`
-          @keyframes slideUp {
-            from {
-              transform: translateY(100%);
-              opacity: 0;
-            }
-            to {
-              transform: translateY(0);
-              opacity: 1;
-            }
-          }
-        `}</style>
       </div>
+
+      <style>{`
+        @keyframes pwa-slide-up {
+          from { transform: translateY(120%); opacity: 0; }
+          to   { transform: translateY(0);    opacity: 1; }
+        }
+      `}</style>
     </div>
   );
 }

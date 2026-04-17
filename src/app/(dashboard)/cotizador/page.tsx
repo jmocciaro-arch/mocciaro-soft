@@ -11,9 +11,12 @@ import { Modal } from '@/components/ui/modal'
 import { useToast } from '@/components/ui/toast'
 import { createClient } from '@/lib/supabase/client'
 import { useCompanyFilter } from '@/hooks/use-company-filter'
+import { useCompanyContext } from '@/lib/company-context'
 import { formatCurrency, INCOTERMS } from '@/lib/utils'
 import type { Company, Client } from '@/types'
 import { DocumentDetailLayout, type WorkflowStep, type Alert, type InternalNote } from '@/components/workflow/document-detail-layout'
+import { DocumentProcessBar } from '@/components/workflow/document-process-bar'
+import { buildSteps } from '@/lib/workflow-definitions'
 import { DocumentItemsTree, type DocumentItem, type DocumentItemComponent } from '@/components/workflow/document-items-tree'
 import { DocumentActions } from '@/components/workflow/document-actions'
 import { DocumentForm } from '@/components/workflow/document-form'
@@ -42,8 +45,10 @@ interface ProductSearchResult {
   name: string
   brand: string
   price_eur: number
-  cost_eur: string
+  cost_eur: number
   image_url: string | null
+  product_type?: 'product' | 'service' | 'expense'
+  price_min?: number | null
 }
 
 interface SavedQuote {
@@ -81,6 +86,13 @@ type ViewMode = 'create' | 'list' | 'detail'
 export default function CotizadorPage() {
   const { addToast } = useToast()
   const { filterByCompany, companyKey } = useCompanyFilter()
+  const { visibleCompanies, activeCompanyId } = useCompanyContext()
+
+  // Pre-carga desde URL params (viene del Lead o de otra pantalla)
+  const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
+  const preloadClientId = urlParams?.get('clientId') || ''
+  const preloadClientName = urlParams?.get('clientName') || ''
+  const preloadProducts = urlParams?.get('products') || ''
 
   // View state
   const [viewMode, setViewMode] = useState<ViewMode>('create')
@@ -100,12 +112,20 @@ export default function CotizadorPage() {
 
   // Quote
   const [quoteNumber, setQuoteNumber] = useState('')
+  const [docSubtype, setDocSubtype] = useState<'cotizacion' | 'presupuesto' | 'proforma' | 'packing_list' | 'oferta'>('cotizacion')
   const [items, setItems] = useState<QuoteLineItem[]>([])
   const [notes, setNotes] = useState('')
   const [internalNotes, setInternalNotes] = useState('')
   const [incoterm, setIncoterm] = useState('')
   const [taxRate, setTaxRate] = useState(21)
+  const [irpfEnabled, setIrpfEnabled] = useState(false)
+  const [irpfRate, setIrpfRate] = useState(0)
+  const [reEnabled, setReEnabled] = useState(false)
+  const [reRate, setReRate] = useState(0)
   const [validUntil, setValidUntil] = useState('')
+  const [paymentTerms, setPaymentTerms] = useState('')       // "30 dias FF"
+  const [paymentDays, setPaymentDays] = useState<number>(0)   // 30
+  const [paymentTermsType, setPaymentTermsType] = useState<'contado'|'dias_ff'|'dias_fv'|'dias_fr'|'anticipado'|'custom'>('contado')
   const [saving, setSaving] = useState(false)
 
   // Product search modal
@@ -120,19 +140,40 @@ export default function CotizadorPage() {
   const [loadingQuotes, setLoadingQuotes] = useState(false)
   const [listSearch, setListSearch] = useState('')
 
-  // Load companies on mount
+  // Load companies on mount + cuando cambia la selección multi-empresa del topbar
   useEffect(() => {
     loadCompanies()
+
+  }, [visibleCompanies.length, activeCompanyId])
+
+  useEffect(() => {
     generateQuoteNumber()
     loadSavedQuotes()
     const d = new Date()
     d.setDate(d.getDate() + 30)
     setValidUntil(d.toISOString().split('T')[0])
+
+    // Pre-cargar cliente si viene de un Lead (URL params)
+    if (preloadClientId) {
+      const supabase = createClient()
+      supabase.from('tt_clients').select('*').eq('id', preloadClientId).maybeSingle()
+        .then(({ data }) => {
+          if (data) {
+            setSelectedClient(data as Client)
+            addToast({ type: 'success', title: `Cliente pre-cargado: ${data.name}` })
+          }
+        })
+    } else if (preloadClientName) {
+      setClientSearch(preloadClientName)
+    }
   }, [])
 
+  // Solo pre-selecciona moneda/IVA cuando CAMBIÁS de empresa (no bloquea edición manual)
+  const prevCompanyRef = useRef<string>('')
   useEffect(() => {
     const comp = companies.find((c) => c.id === selectedCompanyId)
-    if (comp) {
+    if (comp && selectedCompanyId !== prevCompanyRef.current) {
+      prevCompanyRef.current = selectedCompanyId
       setCurrency((comp.currency || 'EUR') as 'EUR' | 'ARS' | 'USD')
       setTaxRate(comp.default_tax_rate || 21)
     }
@@ -152,12 +193,32 @@ export default function CotizadorPage() {
     return () => { if (productDebounceRef.current) clearTimeout(productDebounceRef.current) }
   }, [productSearch])
 
+  /**
+   * REGLA DE ORO: las empresas del selector salen del contexto multi-empresa.
+   * Si el topbar tiene Torquetools seleccionada → solo Torquetools aparece acá.
+   * Si tiene múltiples → aparecen esas múltiples.
+   * Ver src/lib/company-context.tsx → visibleCompanies
+   */
   async function loadCompanies() {
+    // Obtener detalles completos de las visibleCompanies (que solo traen los campos del context)
+    const ids = visibleCompanies.map(c => c.id)
+    if (ids.length === 0) {
+      setCompanies([])
+      return
+    }
     const supabase = createClient()
-    const { data } = await supabase.from('tt_companies').select('*').eq('active', true).order('name')
+    const { data } = await supabase
+      .from('tt_companies')
+      .select('*')
+      .in('id', ids)
+      .order('name')
     if (data) {
       setCompanies(data as Company[])
-      if (data.length > 0) setSelectedCompanyId(data[0].id)
+      // Pre-seleccionar: la activa del context, o la primera visible
+      const preferred = activeCompanyId && data.find((c: any) => c.id === activeCompanyId)
+        ? activeCompanyId
+        : data[0]?.id
+      if (preferred) setSelectedCompanyId(preferred)
     }
   }
 
@@ -189,11 +250,68 @@ export default function CotizadorPage() {
     setShowClientDropdown(true)
   }
 
+  // Auto-apply IRPF/RE when client is selected
+  useEffect(() => {
+    if (!selectedClient) {
+      setIrpfEnabled(false); setIrpfRate(0); setReEnabled(false); setReRate(0)
+      return
+    }
+    const c = selectedClient as Client & { subject_irpf?: boolean; irpf_rate?: number; subject_re?: boolean; re_rate?: number }
+    if (c.subject_irpf) { setIrpfEnabled(true); setIrpfRate(c.irpf_rate || 15) }
+    else { setIrpfEnabled(false); setIrpfRate(0) }
+    if (c.subject_re) { setReEnabled(true); setReRate(c.re_rate || 5.2) }
+    else { setReEnabled(false); setReRate(0) }
+  }, [selectedClient?.id])
+
+  // Client special prices (loaded when client is selected)
+  const [clientPrices, setClientPrices] = useState<Record<string, { special_price: number | null; discount_pct: number }>>({})
+  const [clientPriceList, setClientPriceList] = useState<Record<string, number>>({})
+
+  // Load client prices when client changes
+  useEffect(() => {
+    if (!selectedClient?.id) { setClientPrices({}); setClientPriceList({}); return }
+    const loadPrices = async () => {
+      const sb = createClient()
+      // 1) Special prices for this client
+      const { data: specials } = await sb.from('tt_client_prices')
+        .select('product_id, special_price, discount_pct')
+        .eq('client_id', selectedClient.id)
+      const priceMap: Record<string, { special_price: number | null; discount_pct: number }> = {}
+      for (const sp of (specials || [])) {
+        priceMap[sp.product_id] = { special_price: sp.special_price, discount_pct: sp.discount_pct || 0 }
+      }
+      setClientPrices(priceMap)
+      // 2) Client's price list
+      const { data: clientData } = await sb.from('tt_clients').select('price_list_id').eq('id', selectedClient.id).single()
+      if (clientData?.price_list_id) {
+        const { data: plItems } = await sb.from('tt_price_list_items')
+          .select('product_id, price')
+          .eq('price_list_id', clientData.price_list_id)
+        const plMap: Record<string, number> = {}
+        for (const pli of (plItems || [])) { plMap[pli.product_id] = pli.price }
+        setClientPriceList(plMap)
+      } else {
+        setClientPriceList({})
+      }
+    }
+    loadPrices()
+  }, [selectedClient?.id])
+
+  // Resolve best price for a product: special price > price list > catalog
+  function resolvePrice(productId: string, catalogPrice: number): { price: number; source: string; discount: number } {
+    const special = clientPrices[productId]
+    if (special?.special_price != null) return { price: special.special_price, source: 'especial', discount: special.discount_pct }
+    if (special?.discount_pct) return { price: catalogPrice * (1 - special.discount_pct / 100), source: 'dto_cliente', discount: special.discount_pct }
+    const plPrice = clientPriceList[productId]
+    if (plPrice != null) return { price: plPrice, source: 'tarifa', discount: 0 }
+    return { price: catalogPrice, source: 'catalogo', discount: 0 }
+  }
+
   async function searchProducts(query: string) {
     setSearchingProducts(true)
     const supabase = createClient()
     const tokens = query.trim().toLowerCase().split(/\s+/)
-    let q = supabase.from('tt_products').select('id, sku, name, brand, price_eur, cost_eur, image_url').eq('active', true).limit(20)
+    let q = supabase.from('tt_products').select('id, sku, name, brand, price_eur, cost_eur, image_url, product_type, price_min').eq('active', true).limit(20)
     for (const token of tokens) { q = q.or(`name.ilike.%${token}%,sku.ilike.%${token}%,brand.ilike.%${token}%`) }
     const { data } = await q
     setProductResults((data || []) as ProductSearchResult[])
@@ -201,10 +319,20 @@ export default function CotizadorPage() {
   }
 
   function addProductAsItem(product: ProductSearchResult) {
-    setItems((prev) => [...prev, { id: Math.random().toString(36).slice(2), product_id: product.id, sku: product.sku, description: product.name, quantity: 1, unitPrice: product.price_eur, discount: 0, notes: '' }])
+    const resolved = resolvePrice(product.id, product.price_eur)
+    setItems((prev) => [...prev, {
+      id: Math.random().toString(36).slice(2),
+      product_id: product.id,
+      sku: product.sku,
+      description: product.name + (product.product_type === 'service' ? ' [SERVICIO]' : ''),
+      quantity: 1,
+      unitPrice: resolved.price,
+      discount: resolved.discount,
+      notes: resolved.source !== 'catalogo' ? `Precio ${resolved.source}` : '',
+    }])
     setShowProductSearch(false)
     setProductSearch('')
-    addToast({ type: 'success', title: 'Producto agregado', message: product.sku })
+    addToast({ type: 'success', title: 'Producto agregado', message: `${product.sku} — ${resolved.source !== 'catalogo' ? 'Precio ' + resolved.source : 'Precio catalogo'}` })
   }
 
   function addEmptyItem() {
@@ -217,7 +345,9 @@ export default function CotizadorPage() {
 
   const subtotal = items.reduce((sum, i) => sum + i.quantity * i.unitPrice * (1 - i.discount / 100), 0)
   const taxAmount = subtotal * (taxRate / 100)
-  const total = subtotal + taxAmount
+  const irpfAmount = irpfEnabled ? subtotal * (irpfRate / 100) : 0
+  const reAmount = reEnabled ? subtotal * (reRate / 100) : 0
+  const total = subtotal + taxAmount - irpfAmount + reAmount
 
   async function saveQuote() {
     if (!selectedCompanyId) { addToast({ type: 'error', title: 'Selecciona una empresa emisora' }); return }
@@ -227,7 +357,7 @@ export default function CotizadorPage() {
     try {
       const { data: quoteData, error: quoteError } = await supabase
         .from('tt_quotes')
-        .insert({ number: quoteNumber, company_id: selectedCompanyId, client_id: selectedClient?.id || null, user_id: (await supabase.from('tt_users').select('id').eq('role', 'admin').limit(1).single()).data?.id || null, status: 'borrador', notes, internal_notes: internalNotes, incoterm: incoterm || null, currency, subtotal, tax_rate: taxRate, tax_amount: taxAmount, total, valid_until: validUntil ? new Date(validUntil).toISOString() : null })
+        .insert({ number: quoteNumber, company_id: selectedCompanyId, client_id: selectedClient?.id || null, user_id: (await supabase.from('tt_users').select('id').eq('role', 'admin').limit(1).single()).data?.id || null, status: 'borrador', doc_subtype: docSubtype, notes, internal_notes: internalNotes, incoterm: incoterm || null, payment_terms: paymentTerms || null, payment_days: paymentDays || null, payment_terms_type: paymentTermsType || null, currency, subtotal, tax_rate: taxRate, tax_amount: taxAmount, irpf_rate: irpfEnabled ? irpfRate : 0, irpf_amount: irpfAmount, re_rate: reEnabled ? reRate : 0, re_amount: reAmount, total, valid_until: validUntil ? new Date(validUntil).toISOString() : null })
         .select('id').single()
       if (quoteError) throw quoteError
       const quoteItems = items.map((item, idx) => ({ quote_id: quoteData.id, product_id: item.product_id, sort_order: idx + 1, sku: item.sku, description: item.description, quantity: item.quantity, unit_price: item.unitPrice, discount_pct: item.discount, subtotal: item.quantity * item.unitPrice * (1 - item.discount / 100), notes: item.notes || null }))
@@ -235,10 +365,17 @@ export default function CotizadorPage() {
       if (itemsError) throw itemsError
       await supabase.from('tt_activity_log').insert({ entity_type: 'quote', entity_id: quoteData.id, action: 'Cotizacion creada', detail: `${quoteNumber} - ${selectedClient?.name || 'Sin cliente'} - ${formatCurrency(total, currency)}` })
       addToast({ type: 'success', title: 'Cotizacion guardada', message: quoteNumber })
-      setItems([]); setNotes(''); setInternalNotes(''); setSelectedClient(null); generateQuoteNumber(); loadSavedQuotes()
+      setItems([]); setNotes(''); setInternalNotes(''); setSelectedClient(null); setIrpfEnabled(false); setIrpfRate(0); setReEnabled(false); setReRate(0); generateQuoteNumber(); loadSavedQuotes()
     } catch (err) {
       console.error('Error guardando cotizacion:', err)
-      addToast({ type: 'error', title: 'Error al guardar', message: 'Revisa los datos e intenta de nuevo' })
+      // Exponemos el error real al toast — si es un PostgrestError, trae message/code/details/hint
+      const msg =
+        err instanceof Error
+          ? err.message
+          : (err && typeof err === 'object' && 'message' in err)
+            ? String((err as { message: unknown }).message)
+            : JSON.stringify(err)
+      addToast({ type: 'error', title: 'Error al guardar', message: msg })
     } finally { setSaving(false) }
   }
 
@@ -494,15 +631,41 @@ export default function CotizadorPage() {
       {/* CREATE VIEW */}
       {viewMode === 'create' && (
         <>
-          {/* Quote number */}
-          <div className="flex items-center gap-3 print:hidden">
-            <code className="text-sm font-mono text-[#FF6600] bg-[#0B0E13] px-3 py-1.5 rounded-md border border-[#2A3040]">
-              {quoteNumber}
-            </code>
-            <Button variant="secondary" onClick={saveQuote} loading={saving}>
-              <Save size={16} /> Guardar
-            </Button>
-          </div>
+          {/* ══════════════════════════════════════════════════════════════
+              REGLA FUNDAMENTAL: Barra sticky con código + stepper + alertas
+              ══════════════════════════════════════════════════════════════ */}
+          <DocumentProcessBar
+            code={quoteNumber || 'COT-pendiente'}
+            badge={{
+              label: selectedClient && items.length > 0 ? 'Listo para guardar' : 'Borrador',
+              variant: selectedClient && items.length > 0 ? 'success' : 'warning',
+            }}
+            entity={
+              <span>
+                {(() => {
+                  const c = companies.find((c) => c.id === selectedCompanyId)
+                  return c ? <><strong>{(c as any).trade_name || c.name}</strong>{c.country ? ` (${c.country})` : ''} · Moneda {currency}</> : 'Seleccioná empresa emisora'
+                })()}
+                {selectedClient && <> · Cliente: <strong>{selectedClient.name}</strong></>}
+              </span>
+            }
+            alerts={[
+              ...(!selectedCompanyId ? [{ type: 'warning' as const, message: 'Seleccioná la empresa emisora' }] : []),
+              ...(!selectedClient ? [{ type: 'warning' as const, message: 'Buscá y seleccioná el cliente' }] : []),
+              ...(items.length === 0 ? [{ type: 'info' as const, message: 'Agregá al menos un item a la cotización' }] : []),
+              ...(!paymentTerms ? [{ type: 'info' as const, message: 'Condición de pago sin definir' }] : []),
+              ...(!incoterm ? [{ type: 'info' as const, message: 'Incoterm sin definir (EXW/FOB/CIF/etc)' }] : []),
+            ]}
+            steps={buildSteps('quote',
+              !selectedCompanyId || !selectedClient ? 'draft'
+              : items.length === 0 ? 'draft'
+              : !paymentTerms || !incoterm ? 'conditions'
+              : 'approval'
+            )}
+            actions={[
+              { label: 'Guardar', onClick: saveQuote, icon: 'save', variant: 'primary', disabled: saving || !selectedClient || items.length === 0 },
+            ]}
+          />
 
           {/* Empresa & Cliente */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -514,7 +677,37 @@ export default function CotizadorPage() {
               </CardHeader>
               <CardContent>
                 <Select options={companyOptions} value={selectedCompanyId} onChange={(e) => setSelectedCompanyId(e.target.value)} placeholder="Seleccionar empresa..." />
-                {selectedCompanyId && <p className="text-xs text-[#4B5563] mt-2">Moneda: <span className="text-[#FF6600] font-medium">{currency}</span></p>}
+                {selectedCompanyId && (
+                  <div className="flex items-center gap-3 mt-2 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-[#4B5563]">Tipo:</span>
+                      <select
+                        value={docSubtype}
+                        onChange={(e) => setDocSubtype(e.target.value as typeof docSubtype)}
+                        className="bg-[#0F1218] border border-[#1E2330] rounded px-2 py-1 text-xs font-semibold text-[#F0F2F5]"
+                      >
+                        <option value="cotizacion">📋 Cotizacion</option>
+                        <option value="presupuesto">📄 Presupuesto</option>
+                        <option value="proforma">📑 Proforma</option>
+                        <option value="packing_list">📦 Packing List</option>
+                        <option value="oferta">💼 Oferta Comercial</option>
+                      </select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-[#4B5563]">Moneda:</span>
+                      <select
+                        value={currency}
+                        onChange={(e) => setCurrency(e.target.value as 'EUR' | 'ARS' | 'USD')}
+                        className="bg-[#0F1218] border border-[#1E2330] rounded px-2 py-1 text-xs font-semibold"
+                        style={{ color: '#FF6600' }}
+                      >
+                        <option value="EUR">EUR €</option>
+                        <option value="USD">USD $</option>
+                        <option value="ARS">ARS $</option>
+                      </select>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -596,9 +789,18 @@ export default function CotizadorPage() {
                     <tbody>
                       {items.map((item, idx) => {
                         const lineTotal = item.quantity * item.unitPrice * (1 - item.discount / 100)
+                        // Check price minimum: find product in search results
+                        const prod = productResults.find(p => p.id === item.product_id)
+                        const minPrice = prod?.price_min ?? prod?.cost_eur ?? 0
+                        const effectiveUnitPrice = item.unitPrice * (1 - item.discount / 100)
+                        const isBelowMin = minPrice > 0 && effectiveUnitPrice < minPrice
+                        const isService = prod?.product_type === 'service'
                         return (
-                          <tr key={item.id} className="border-b border-[#1E2330]/50">
-                            <td className="py-2 px-2 text-xs text-[#4B5563]">{idx + 1}</td>
+                          <tr key={item.id} className={`border-b border-[#1E2330]/50 ${isBelowMin ? 'bg-red-500/5' : ''}`}>
+                            <td className="py-2 px-2 text-xs text-[#4B5563]">
+                              {idx + 1}
+                              {isService && <span className="ml-1 text-[8px] text-blue-400" title="Servicio">S</span>}
+                            </td>
                             <td className="py-2 px-2"><input value={item.sku} onChange={(e) => updateItem(item.id, 'sku', e.target.value)} className="w-full bg-transparent text-xs font-mono text-[#9CA3AF] outline-none" placeholder="SKU" /></td>
                             <td className="py-2 px-2"><input value={item.description} onChange={(e) => updateItem(item.id, 'description', e.target.value)} className="w-full bg-transparent text-sm text-[#F0F2F5] outline-none" placeholder="Descripcion del producto" /></td>
                             <td className="py-2 px-2">
@@ -608,9 +810,12 @@ export default function CotizadorPage() {
                                 <button onClick={() => updateQuantity(item.id, 1)} className="p-0.5 rounded hover:bg-[#1E2330] text-[#6B7280] print:hidden"><Plus size={12} /></button>
                               </div>
                             </td>
-                            <td className="py-2 px-2"><input type="number" min="0" step="0.01" value={item.unitPrice} onChange={(e) => updateItem(item.id, 'unitPrice', Number(e.target.value))} className="w-full bg-[#0F1218] border border-[#1E2330] rounded px-2 py-1 text-right text-sm text-[#F0F2F5] outline-none focus:border-[#FF6600]" /></td>
+                            <td className="py-2 px-2 relative">
+                              <input type="number" min="0" step="0.01" value={item.unitPrice} onChange={(e) => updateItem(item.id, 'unitPrice', Number(e.target.value))} className={`w-full bg-[#0F1218] border rounded px-2 py-1 text-right text-sm outline-none focus:border-[#FF6600] ${isBelowMin ? 'border-red-500 text-red-400' : 'border-[#1E2330] text-[#F0F2F5]'}`} />
+                              {isBelowMin && <span className="absolute -bottom-3 right-1 text-[9px] text-red-400 whitespace-nowrap print:hidden" title={`Precio minimo: ${minPrice.toFixed(2)}`}>Min: {minPrice.toFixed(2)}</span>}
+                            </td>
                             <td className="py-2 px-2"><input type="number" min="0" max="100" value={item.discount} onChange={(e) => updateItem(item.id, 'discount', Number(e.target.value))} className="w-full bg-[#0F1218] border border-[#1E2330] rounded px-2 py-1 text-center text-sm text-[#F0F2F5] outline-none focus:border-[#FF6600]" /></td>
-                            <td className="py-2 px-2 text-right text-sm font-medium text-[#F0F2F5]">{formatCurrency(lineTotal, currency)}</td>
+                            <td className={`py-2 px-2 text-right text-sm font-medium ${isBelowMin ? 'text-red-400' : 'text-[#F0F2F5]'}`}>{formatCurrency(lineTotal, currency)}</td>
                             <td className="py-2 px-2"><input value={item.notes} onChange={(e) => updateItem(item.id, 'notes', e.target.value)} className="w-full bg-transparent text-xs text-[#6B7280] outline-none" placeholder="Notas" /></td>
                             <td className="py-2 px-1 print:hidden"><button onClick={() => removeItem(item.id)} className="p-1 rounded hover:bg-red-500/10 text-[#4B5563] hover:text-red-400 transition-colors"><Trash2 size={14} /></button></td>
                           </tr>
@@ -639,6 +844,53 @@ export default function CotizadorPage() {
                   <Select label="Incoterm" options={INCOTERMS.map((i) => ({ value: i, label: i }))} value={incoterm} onChange={(e) => setIncoterm(e.target.value)} placeholder="Seleccionar..." />
                   <Input label="Valido hasta" type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />
                 </div>
+                <div className="grid grid-cols-3 gap-4">
+                  <Select
+                    label="Condicion de pago"
+                    value={paymentTermsType}
+                    onChange={(e) => {
+                      const t = e.target.value as typeof paymentTermsType
+                      setPaymentTermsType(t)
+                      // Autocompletar texto descriptivo
+                      if (t === 'contado') { setPaymentTerms('Contado'); setPaymentDays(0) }
+                      else if (t === 'anticipado') { setPaymentTerms('Pago anticipado'); setPaymentDays(0) }
+                      else if (t === 'dias_ff') { setPaymentTerms(`${paymentDays || 30} dias fecha factura`); if (!paymentDays) setPaymentDays(30) }
+                      else if (t === 'dias_fv') { setPaymentTerms(`${paymentDays || 30} dias fecha vencimiento`); if (!paymentDays) setPaymentDays(30) }
+                      else if (t === 'dias_fr') { setPaymentTerms(`${paymentDays || 30} dias fecha recepcion`); if (!paymentDays) setPaymentDays(30) }
+                      else { setPaymentTerms('') }
+                    }}
+                    options={[
+                      { value: 'contado', label: 'Contado' },
+                      { value: 'anticipado', label: 'Pago anticipado' },
+                      { value: 'dias_ff', label: 'X dias Fecha Factura' },
+                      { value: 'dias_fv', label: 'X dias Fecha Vencimiento' },
+                      { value: 'dias_fr', label: 'X dias Fecha Recepcion' },
+                      { value: 'custom', label: 'Personalizado' },
+                    ]}
+                  />
+                  {(paymentTermsType === 'dias_ff' || paymentTermsType === 'dias_fv' || paymentTermsType === 'dias_fr') && (
+                    <Input
+                      label="Dias"
+                      type="number"
+                      min={0}
+                      value={paymentDays}
+                      onChange={(e) => {
+                        const n = Number(e.target.value) || 0
+                        setPaymentDays(n)
+                        const suffix = paymentTermsType === 'dias_ff' ? 'fecha factura'
+                          : paymentTermsType === 'dias_fv' ? 'fecha vencimiento'
+                          : 'fecha recepcion'
+                        setPaymentTerms(`${n} dias ${suffix}`)
+                      }}
+                    />
+                  )}
+                  <Input
+                    label="Detalle condicion (editable)"
+                    value={paymentTerms}
+                    onChange={(e) => { setPaymentTerms(e.target.value); setPaymentTermsType('custom') }}
+                    placeholder="Ej: 50% anticipo + 50% 30d FF"
+                  />
+                </div>
               </CardContent>
             </Card>
 
@@ -653,6 +905,65 @@ export default function CotizadorPage() {
                   </div>
                   <span className="text-[#D1D5DB]">{formatCurrency(taxAmount, currency)}</span>
                 </div>
+
+                {/* IRPF */}
+                <div className="flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setIrpfEnabled(!irpfEnabled)}
+                      className={`w-8 h-4 rounded-full transition-all relative shrink-0 ${irpfEnabled ? 'bg-red-500/40' : 'bg-[#2A3040]'}`}
+                      title={irpfEnabled ? 'Desactivar IRPF' : 'Aplicar IRPF'}
+                    >
+                      <div className={`w-3 h-3 rounded-full bg-white absolute top-0.5 transition-all ${irpfEnabled ? 'right-0.5' : 'left-0.5'}`} />
+                    </button>
+                    <span className={`${irpfEnabled ? 'text-red-400' : 'text-[#4B5563]'}`}>IRPF</span>
+                    {irpfEnabled && (
+                      <select
+                        value={irpfRate}
+                        onChange={(e) => setIrpfRate(Number(e.target.value))}
+                        className="bg-[#0F1218] border border-[#1E2330] rounded px-1.5 py-0.5 text-xs text-[#F0F2F5] print:border-none"
+                      >
+                        <option value={0}>0%</option>
+                        <option value={7}>7%</option>
+                        <option value={15}>15%</option>
+                        <option value={19}>19%</option>
+                      </select>
+                    )}
+                  </div>
+                  <span className={`${irpfEnabled ? 'text-red-400' : 'text-[#4B5563]'}`}>
+                    {irpfEnabled ? `- ${formatCurrency(irpfAmount, currency)}` : '-'}
+                  </span>
+                </div>
+
+                {/* Recargo de Equivalencia */}
+                <div className="flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setReEnabled(!reEnabled)}
+                      className={`w-8 h-4 rounded-full transition-all relative shrink-0 ${reEnabled ? 'bg-blue-500/40' : 'bg-[#2A3040]'}`}
+                      title={reEnabled ? 'Desactivar R.E.' : 'Aplicar Recargo Equivalencia'}
+                    >
+                      <div className={`w-3 h-3 rounded-full bg-white absolute top-0.5 transition-all ${reEnabled ? 'right-0.5' : 'left-0.5'}`} />
+                    </button>
+                    <span className={`${reEnabled ? 'text-blue-400' : 'text-[#4B5563]'}`}>R.E.</span>
+                    {reEnabled && (
+                      <select
+                        value={reRate}
+                        onChange={(e) => setReRate(Number(e.target.value))}
+                        className="bg-[#0F1218] border border-[#1E2330] rounded px-1.5 py-0.5 text-xs text-[#F0F2F5] print:border-none"
+                      >
+                        <option value={0}>0%</option>
+                        <option value={0.5}>0.5%</option>
+                        <option value={1.4}>1.4%</option>
+                        <option value={5.2}>5.2%</option>
+                      </select>
+                    )}
+                  </div>
+                  <span className={`${reEnabled ? 'text-blue-400' : 'text-[#4B5563]'}`}>
+                    {reEnabled ? `+ ${formatCurrency(reAmount, currency)}` : '-'}
+                  </span>
+                </div>
+
                 <div className="border-t border-[#1E2330] pt-3 flex justify-between">
                   <span className="text-lg font-semibold text-[#F0F2F5]">Total</span>
                   <span className="text-2xl font-bold text-[#FF6600]">{formatCurrency(total, currency)}</span>
@@ -661,6 +972,16 @@ export default function CotizadorPage() {
                   <Button variant="secondary" size="sm" className="flex-1" onClick={() => window.print()}><Printer size={14} /> PDF / Imprimir</Button>
                   <Button variant="secondary" size="sm" className="flex-1" onClick={shareWhatsApp}><MessageSquare size={14} /> WhatsApp</Button>
                 </div>
+                {/* Warning: items below minimum price */}
+                {items.some(item => {
+                  const prod = productResults.find(p => p.id === item.product_id)
+                  const min = prod?.price_min ?? prod?.cost_eur ?? 0
+                  return min > 0 && item.unitPrice * (1 - item.discount / 100) < min
+                }) && (
+                  <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/30 rounded px-3 py-2 mt-2 print:hidden">
+                    ⚠️ Hay items con precio por debajo del minimo/costo. Revisa las lineas marcadas en rojo.
+                  </div>
+                )}
                 <Button variant="primary" className="w-full mt-2 print:hidden" onClick={saveQuote} loading={saving}><Save size={16} /> Guardar cotizacion</Button>
               </CardContent>
             </Card>

@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { cn } from '@/lib/utils'
 import { Search, ChevronDown, X, Loader2 } from 'lucide-react'
+import { fuzzyFilter } from '@/lib/sat/fuzzy-match'
 
 interface Option {
   value: string
@@ -49,7 +50,7 @@ export function SearchableSelect({
   const displayOptions = isAsync ? asyncOptions : (staticOptions || [])
 
   const filtered = !isAsync && search.trim()
-    ? displayOptions.filter(o => o.label.toLowerCase().includes(search.toLowerCase()))
+    ? fuzzyFilter(displayOptions, search, (o) => o.label)
     : displayOptions
 
   // Resolve selected label

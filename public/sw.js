@@ -11,9 +11,13 @@ const OFFLINE_PAGE = '/offline.html';
 // Assets estáticos para pre-cachear en install
 const PRECACHE_URLS = [
   '/',
+  '/dashboard',
+  '/dashboard/ejecutivo',
+  '/cotizador',
+  '/sat',
+  '/scanner',
   '/offline.html',
   '/manifest.json',
-  '/icons/icon.svg',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
 ];

@@ -31,6 +31,8 @@ interface StockRow {
   id: string; quantity: number; reserved: number; min_quantity: number
   product_id: string; product_sku: string; product_name: string; product_brand: string
   warehouse_id: string; warehouse_name: string; warehouse_code: string
+  // Virtual stock fields
+  pending_reception: number; pending_delivery: number; stock_virtual: number
 }
 
 interface MovementRow {
@@ -82,7 +84,7 @@ function InventarioTab() {
   const [warehouseFilter, setWarehouseFilter] = useState('')
   const [brandFilter, setBrandFilter] = useState('')
   const debounceRef = useRef<NodeJS.Timeout | null>(null)
-  const [kpis, setKpis] = useState({ total: 0, inStock: 0, lowStock: 0, outOfStock: 0 })
+  const [kpis, setKpis] = useState({ total: 0, inStock: 0, lowStock: 0, outOfStock: 0, virtualTotal: 0 })
 
   // Ajuste de stock modal state
   const [showAjusteModal, setShowAjusteModal] = useState(false)
@@ -118,13 +120,35 @@ function InventarioTab() {
     const sb = createClient()
     setLoading(true)
     try {
+      // Query tt_stock with virtual stock data from tt_stock_virtual
       let query = sb.from('tt_stock').select(`id, product_id, warehouse_id, quantity, reserved, min_quantity, product:tt_products(sku, name, brand), warehouse:tt_warehouses(name, code)`).order('quantity', { ascending: true })
       if (warehouseFilter) query = query.eq('warehouse_id', warehouseFilter)
       const { data } = await query
-      if (!data || data.length === 0) { setStockItems([]); setBrands([]); setKpis({ total: 0, inStock: 0, lowStock: 0, outOfStock: 0 }); setLoading(false); return }
+
+      // Also fetch virtual stock data
+      let virtualQuery = sb.from('tt_stock_virtual').select('product_id, warehouse_id, stock_real, reserved, disponible, pending_reception, pending_delivery, stock_virtual, min_quantity')
+      if (warehouseFilter) virtualQuery = virtualQuery.eq('warehouse_id', warehouseFilter)
+      const { data: virtualData } = await virtualQuery
+
+      // Build a lookup map for virtual stock
+      const virtualMap = new Map<string, { pending_reception: number; pending_delivery: number; stock_virtual: number }>()
+      if (virtualData) {
+        for (const v of virtualData) {
+          const key = `${v.product_id}_${v.warehouse_id}`
+          virtualMap.set(key, {
+            pending_reception: (v.pending_reception as number) || 0,
+            pending_delivery: (v.pending_delivery as number) || 0,
+            stock_virtual: (v.stock_virtual as number) || 0,
+          })
+        }
+      }
+
+      if (!data || data.length === 0) { setStockItems([]); setBrands([]); setKpis({ total: 0, inStock: 0, lowStock: 0, outOfStock: 0, virtualTotal: 0 }); setLoading(false); return }
       let items: StockRow[] = data.map((row: Row) => {
         const product = row.product as Record<string, string> | null
         const warehouse = row.warehouse as Record<string, string> | null
+        const vKey = `${row.product_id}_${row.warehouse_id}`
+        const virtual = virtualMap.get(vKey)
         return {
           id: row.id as string,
           product_id: row.product_id as string,
@@ -137,12 +161,16 @@ function InventarioTab() {
           product_brand: product?.brand || '',
           warehouse_name: warehouse?.name || '',
           warehouse_code: warehouse?.code || '',
+          pending_reception: virtual?.pending_reception || 0,
+          pending_delivery: virtual?.pending_delivery || 0,
+          stock_virtual: virtual?.stock_virtual || (row.quantity as number) - (row.reserved as number),
         }
       })
       const uniqueBrands = [...new Set(items.map((i) => i.product_brand).filter(Boolean))]; uniqueBrands.sort(); setBrands(uniqueBrands)
       if (brandFilter) items = items.filter((i) => i.product_brand === brandFilter)
       if (search.trim()) { const q = search.toLowerCase(); items = items.filter((i) => i.product_sku.toLowerCase().includes(q) || i.product_name.toLowerCase().includes(q) || i.product_brand.toLowerCase().includes(q)) }
-      setKpis({ total: items.length, inStock: items.filter((i) => i.quantity > i.min_quantity).length, lowStock: items.filter((i) => i.quantity > 0 && i.quantity <= i.min_quantity).length, outOfStock: items.filter((i) => i.quantity === 0).length })
+      const virtualTotal = items.reduce((sum, i) => sum + i.stock_virtual, 0)
+      setKpis({ total: items.length, inStock: items.filter((i) => i.quantity > i.min_quantity).length, lowStock: items.filter((i) => i.quantity > 0 && i.quantity <= i.min_quantity).length, outOfStock: items.filter((i) => i.quantity === 0).length, virtualTotal })
       setStockItems(items)
     } finally { setLoading(false) }
   }, [search, warehouseFilter, brandFilter])
@@ -241,11 +269,12 @@ function InventarioTab() {
   return (
     <div className="space-y-4">
       {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <KPICard label="Total items" value={kpis.total} icon={<Package size={20} />} />
         <KPICard label="En stock" value={kpis.inStock} icon={<CheckCircle size={20} />} color="#00C853" />
         <KPICard label="Stock bajo" value={kpis.lowStock} icon={<AlertTriangle size={20} />} color="#FFB300" />
         <KPICard label="Sin stock" value={kpis.outOfStock} icon={<XCircle size={20} />} color="#FF3D00" />
+        <KPICard label="Stock Virtual Total" value={kpis.virtualTotal} icon={<TrendingUp size={20} />} color="#3B82F6" />
       </div>
 
       {/* Toolbar */}
@@ -270,6 +299,9 @@ function InventarioTab() {
                 { key: 'quantity', label: 'Cantidad' },
                 { key: 'reserved', label: 'Reservado' },
                 { key: 'min_quantity', label: 'Stock Minimo' },
+                { key: 'pending_reception', label: 'Pte. Recibir' },
+                { key: 'pending_delivery', label: 'Pte. Entregar' },
+                { key: 'stock_virtual', label: 'Stock Virtual' },
               ]}
             />
             <ImportButton
@@ -353,12 +385,16 @@ function InventarioTab() {
                 <TableHead className="text-right">Cantidad</TableHead>
                 <TableHead className="text-right">Reservado</TableHead>
                 <TableHead className="text-right">Disponible</TableHead>
+                <TableHead className="text-right">Pte. recibir</TableHead>
+                <TableHead className="text-right">Pte. entregar</TableHead>
+                <TableHead className="text-right">Stock Virtual</TableHead>
                 <TableHead>Estado</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {stockItems.map((s) => {
                 const available = s.quantity - s.reserved
+                const virtualWarning = s.stock_virtual < s.min_quantity
                 return (
                   <TableRow key={s.id}>
                     <TableCell className="font-mono text-sm">{s.product_sku}</TableCell>
@@ -368,6 +404,14 @@ function InventarioTab() {
                     <TableCell className={`text-right font-bold text-lg ${s.quantity === 0 ? 'text-red-400' : s.quantity <= s.min_quantity ? 'text-yellow-400' : 'text-green-400'}`}>{s.quantity}</TableCell>
                     <TableCell className="text-right text-[#6B7280]">{s.reserved}</TableCell>
                     <TableCell className={`text-right font-medium ${available === 0 ? 'text-red-400' : available <= s.min_quantity ? 'text-yellow-400' : 'text-green-400'}`}>{available}</TableCell>
+                    <TableCell className="text-right text-emerald-400 font-medium">{s.pending_reception > 0 ? `+${s.pending_reception}` : '-'}</TableCell>
+                    <TableCell className="text-right text-red-400 font-medium">{s.pending_delivery > 0 ? `-${s.pending_delivery}` : '-'}</TableCell>
+                    <TableCell className={`text-right font-bold ${s.stock_virtual > 0 ? 'text-blue-400' : 'text-red-400'}`}>
+                      <span className="flex items-center justify-end gap-1">
+                        {virtualWarning && <AlertTriangle size={14} className="text-amber-400 shrink-0" />}
+                        {s.stock_virtual}
+                      </span>
+                    </TableCell>
                     <TableCell>{stockBadge(s.quantity, s.min_quantity)}</TableCell>
                   </TableRow>
                 )

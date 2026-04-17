@@ -37,6 +37,14 @@ interface CompanyContextType {
   activeCompany: CompanyDisplay | null
   /** All companies the user has access to */
   companies: CompanyDisplay[]
+  /**
+   * REGLA DE ORO: empresas visibles según la selección del topbar.
+   *   - Si isMultiMode → solo las que están en activeCompanyIds
+   *   - Si no → solo la activeCompanyId
+   * TODOS los selectores/filtros/listados del ERP deben usar esta lista,
+   * NO la lista completa `companies`.
+   */
+  visibleCompanies: CompanyDisplay[]
   /** Switch active company */
   setActiveCompany: (id: string) => void
   /** Toggle a company in multi-select mode */
@@ -56,6 +64,7 @@ const CompanyContext = createContext<CompanyContextType>({
   activeCompanyIds: [],
   activeCompany: null,
   companies: [],
+  visibleCompanies: [],
   setActiveCompany: () => {},
   toggleCompany: () => {},
   isMultiMode: false,
@@ -293,6 +302,19 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   // Derive active company object
   const activeCompany = companies.find(c => c.id === activeCompanyId) || null
 
+  // ═════════════════════════════════════════════════════════════════════
+  // REGLA DE ORO: Empresas visibles según la selección del topbar.
+  //   - isMultiMode = true → filtra por activeCompanyIds
+  //   - single mode → solo la activeCompany
+  // Todo selector del ERP DEBE usar esta lista, NUNCA `companies` completa.
+  // ═════════════════════════════════════════════════════════════════════
+  const effectiveIds = isMultiMode
+    ? activeCompanyIds
+    : activeCompanyId
+      ? [activeCompanyId]
+      : []
+  const visibleCompanies = companies.filter(c => effectiveIds.includes(c.id))
+
   return (
     <CompanyContext.Provider
       value={{
@@ -300,6 +322,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         activeCompanyIds: isMultiMode ? activeCompanyIds : (activeCompanyId ? [activeCompanyId] : []),
         activeCompany,
         companies,
+        visibleCompanies,
         setActiveCompany,
         toggleCompany,
         isMultiMode,

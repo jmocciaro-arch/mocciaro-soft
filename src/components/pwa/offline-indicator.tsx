@@ -1,32 +1,51 @@
 'use client';
 
 // ============================================================================
-// TorqueTools ERP — Offline Status Indicator
-// Barra superior que muestra el estado de conexión y acciones pendientes
+// Mocciaro Soft ERP — Offline Status Indicator
+// Barra superior que muestra el estado de conexión
 // ============================================================================
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
+import { WifiOff, Wifi, RefreshCw } from 'lucide-react';
 import { useOnlineStatus } from '@/hooks/use-online-status';
 
 export function OfflineIndicator() {
-  const { isOnline, pendingCount } = useOnlineStatus();
+  const { isOnline: navigatorOnline, pendingCount } = useOnlineStatus();
+  const [reallyOffline, setReallyOffline] = useState(false);
   const [showReconnected, setShowReconnected] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [wasOffline, setWasOffline] = useState(false);
   const [visible, setVisible] = useState(false);
+  const [wasOffline, setWasOffline] = useState(false);
 
-  // Manejar transiciones online/offline
+  // Verificación real: navigator.onLine puede dar false positives con service workers.
+  // Hacemos un fetch real para confirmar.
+  useEffect(() => {
+    async function checkReal() {
+      if (navigatorOnline) {
+        setReallyOffline(false);
+        return;
+      }
+      try {
+        const r = await fetch('/api/health/sales-chain', { method: 'HEAD', cache: 'no-store' });
+        setReallyOffline(!r.ok);
+      } catch {
+        setReallyOffline(true);
+      }
+    }
+    checkReal();
+    const interval = setInterval(checkReal, 15000);
+    return () => clearInterval(interval);
+  }, [navigatorOnline]);
+
+  const isOnline = !reallyOffline;
+
   useEffect(() => {
     if (!isOnline) {
       setWasOffline(true);
       setVisible(true);
       setShowReconnected(false);
     } else if (wasOffline && isOnline) {
-      // Acabamos de volver online
       setShowReconnected(true);
-      setIsSyncing(pendingCount > 0);
 
-      // Ocultar después de 4 segundos si no hay acciones pendientes
       const timer = setTimeout(() => {
         if (pendingCount === 0) {
           setVisible(false);
@@ -39,10 +58,9 @@ export function OfflineIndicator() {
     }
   }, [isOnline, wasOffline, pendingCount]);
 
-  // Cuando se terminan las acciones pendientes, ocultar la barra
+  // Ocultar cuando ya no hay pendientes después de sincronizar
   useEffect(() => {
     if (showReconnected && pendingCount === 0) {
-      setIsSyncing(false);
       const timer = setTimeout(() => {
         setVisible(false);
         setWasOffline(false);
@@ -51,84 +69,59 @@ export function OfflineIndicator() {
     }
   }, [showReconnected, pendingCount]);
 
-  // No mostrar nada si estamos online y nunca estuvimos offline
   if (isOnline && !showReconnected && !visible) return null;
 
   const isOfflineMode = !isOnline;
+  const isSyncing = showReconnected && pendingCount > 0;
 
   return (
     <div
       role="status"
       aria-live="polite"
+      className="fixed top-0 left-0 right-0 z-[9999] transition-transform duration-300"
       style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        zIndex: 9999,
         transform: visible || isOfflineMode ? 'translateY(0)' : 'translateY(-100%)',
-        transition: 'transform 0.3s ease, background 0.3s ease',
       }}
     >
       <div
+        className="flex items-center justify-center gap-2 px-4 py-2 text-xs font-medium text-white"
         style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '0.5rem',
-          padding: '0.5rem 1rem',
-          fontSize: '0.825rem',
-          fontWeight: 500,
-          fontFamily: 'Inter, -apple-system, sans-serif',
           background: isOfflineMode
-            ? 'linear-gradient(135deg, #DC2626, #B91C1C)'
+            ? 'linear-gradient(90deg, #DC2626, #B91C1C)'
             : isSyncing
-              ? 'linear-gradient(135deg, #F59E0B, #D97706)'
-              : 'linear-gradient(135deg, #16A34A, #15803D)',
-          color: 'white',
-          textAlign: 'center',
-          boxShadow: '0 2px 8px rgba(0, 0, 0, 0.3)',
+              ? 'linear-gradient(90deg, #D97706, #B45309)'
+              : 'linear-gradient(90deg, #16A34A, #15803D)',
         }}
       >
-        {/* Indicador animado */}
-        <span
-          style={{
-            width: '8px',
-            height: '8px',
-            borderRadius: '50%',
-            background: 'white',
-            animation: isOfflineMode || isSyncing ? 'blink 1.5s ease-in-out infinite' : 'none',
-            opacity: isOfflineMode || isSyncing ? 1 : 0.8,
-          }}
-        />
+        {isOfflineMode ? (
+          <WifiOff size={12} className="shrink-0" />
+        ) : isSyncing ? (
+          <RefreshCw size={12} className="shrink-0 animate-spin" />
+        ) : (
+          <Wifi size={12} className="shrink-0" />
+        )}
 
-        {/* Mensaje */}
         <span>
           {isOfflineMode && (
             <>
-              Sin conexion — trabajando con datos guardados
+              Sin conexión — modo offline
               {pendingCount > 0 && (
-                <span style={{ opacity: 0.85, marginLeft: '0.35rem' }}>
-                  ({pendingCount} {pendingCount === 1 ? 'accion pendiente' : 'acciones pendientes'})
+                <span className="opacity-80 ml-1">
+                  · {pendingCount} {pendingCount === 1 ? 'acción pendiente' : 'acciones pendientes'}
                 </span>
               )}
             </>
           )}
-          {showReconnected && isSyncing && (
+          {isSyncing && (
             <>
-              Conexion restaurada — sincronizando {pendingCount}{' '}
-              {pendingCount === 1 ? 'accion' : 'acciones'}...
+              Reconectado — sincronizando {pendingCount}{' '}
+              {pendingCount === 1 ? 'acción' : 'acciones'}...
             </>
           )}
-          {showReconnected && !isSyncing && 'Conexion restaurada — todo sincronizado'}
+          {showReconnected && !isSyncing && (
+            'Reconectado — todo sincronizado'
+          )}
         </span>
-
-        <style>{`
-          @keyframes blink {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.3; }
-          }
-        `}</style>
       </div>
     </div>
   );

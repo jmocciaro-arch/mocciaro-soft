@@ -1,0 +1,352 @@
+/* ══════════════════════════════════════════════════════
+   Buscatools FEIN AccuTec — Design system scoped a /sat
+   Aplicar envolviendo el modulo SAT en <div class="sat-theme">
+   ══════════════════════════════════════════════════════ */
+
+.sat-theme {
+  /* ── VARIABLES DE COLOR ───────────────────────────── */
+  --sat-or: #F97316;
+  --sat-or-d: rgba(249, 115, 22, 0.13);
+  --sat-or-g: rgba(249, 115, 22, 0.07);
+  --sat-dk: #0A0C0F;
+  --sat-dk2: #111318;
+  --sat-dk3: #181C23;
+  --sat-dk4: #1E2330;
+  --sat-dk5: #252B38;
+  --sat-br: rgba(255, 255, 255, 0.06);
+  --sat-br2: rgba(255, 255, 255, 0.11);
+  --sat-tx: #E8EAF0;
+  --sat-tx2: #8890A4;
+  --sat-tx3: #4A5268;
+  --sat-bl: #3B82F6;
+  --sat-bl-d: rgba(59, 130, 246, 0.12);
+  --sat-gn: #10B981;
+  --sat-gn-d: rgba(16, 185, 129, 0.12);
+  --sat-rd: #EF4444;
+  --sat-rd-d: rgba(239, 68, 68, 0.12);
+  --sat-am: #F59E0B;
+  --sat-am-d: rgba(245, 158, 11, 0.10);
+  --sat-pu: #8B5CF6;
+  --sat-pu-d: rgba(139, 92, 246, 0.12);
+  --sat-tl: #14B8A6;
+  --sat-tl-d: rgba(20, 184, 166, 0.12);
+
+  --sat-fn: 'DM Sans', system-ui, -apple-system, sans-serif;
+  --sat-mo: 'DM Mono', ui-monospace, monospace;
+
+  font-family: var(--sat-fn);
+  color: var(--sat-tx);
+}
+
+/* DM Sans se carga globalmente desde el layout root del ERP */
+
+/* ── WORKFLOW TABS — COLORED STEP LINE ──────────────── */
+.sat-theme .wf-nav {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-bottom: 16px;
+  padding: 6px;
+  background: var(--sat-dk2);
+  border: 1px solid var(--sat-br);
+  border-radius: 12px;
+}
+.sat-theme .wf-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sat-tx3);
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.12s;
+  position: relative;
+}
+.sat-theme .wf-tab.wf-act {
+  color: var(--sat-or);
+  background: var(--sat-or-d);
+  border-color: var(--sat-or);
+}
+.sat-theme .wf-tab.wf-done {
+  color: var(--sat-gn);
+  background: var(--sat-gn-d);
+}
+.sat-theme .wf-tab.wf-lock {
+  color: var(--sat-tx3);
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.sat-theme .wf-tab .wf-n {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+  background: currentColor;
+  color: var(--sat-dk);
+  flex-shrink: 0;
+}
+.sat-theme .wf-tab.wf-done .wf-n {
+  background: var(--sat-gn);
+  color: var(--sat-dk);
+}
+
+/* Colores especificos por paso (por numero) */
+.sat-theme .wf-tab[data-step="0"].wf-act { color: var(--sat-or); background: var(--sat-or-d); border-color: var(--sat-or); }
+.sat-theme .wf-tab[data-step="1"].wf-act { color: var(--sat-am); background: var(--sat-am-d); border-color: var(--sat-am); }
+.sat-theme .wf-tab[data-step="2"].wf-act { color: var(--sat-tl); background: var(--sat-tl-d); border-color: var(--sat-tl); }
+.sat-theme .wf-tab[data-step="3"].wf-act { color: var(--sat-gn); background: var(--sat-gn-d); border-color: var(--sat-gn); }
+.sat-theme .wf-tab[data-step="4"].wf-act { color: var(--sat-pu); background: var(--sat-pu-d); border-color: var(--sat-pu); }
+
+/* ── SECTION HEADERS con color por paso ─────────────── */
+.sat-theme .sn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+.sat-theme .sn-o { background: var(--sat-or-d); color: var(--sat-or); border-left: 3px solid var(--sat-or); }
+.sat-theme .sn-a { background: var(--sat-am-d); color: var(--sat-am); border-left: 3px solid var(--sat-am); }
+.sat-theme .sn-t { background: var(--sat-tl-d); color: var(--sat-tl); border-left: 3px solid var(--sat-tl); }
+.sat-theme .sn-g { background: var(--sat-gn-d); color: var(--sat-gn); border-left: 3px solid var(--sat-gn); }
+.sat-theme .sn-p { background: var(--sat-pu-d); color: var(--sat-pu); border-left: 3px solid var(--sat-pu); }
+
+/* ── INSPECTION TOGGLES (OK/NOK/NA) ─────────────────── */
+.sat-theme .pc {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--sat-dk3);
+  border: 1px solid var(--sat-br);
+  border-radius: 9px;
+  transition: all 0.12s;
+}
+.sat-theme .pc.ok-st { border-color: var(--sat-gn); background: var(--sat-gn-d); }
+.sat-theme .pc.nok-st { border-color: var(--sat-rd); background: var(--sat-rd-d); }
+.sat-theme .pc-nm {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--sat-tx);
+}
+.sat-theme .pc-tg {
+  display: flex;
+  gap: 4px;
+}
+.sat-theme .tgl {
+  padding: 5px 11px;
+  background: transparent;
+  border: 1px solid var(--sat-br2);
+  border-radius: 6px;
+  color: var(--sat-tx3);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: var(--sat-fn);
+  transition: all 0.12s;
+}
+.sat-theme .tgl:hover { background: var(--sat-dk4); color: var(--sat-tx2); }
+.sat-theme .tgl.s-ok { background: var(--sat-gn); border-color: var(--sat-gn); color: var(--sat-dk); }
+.sat-theme .tgl.s-nok { background: var(--sat-rd); border-color: var(--sat-rd); color: #fff; }
+.sat-theme .tgl.s-na { background: var(--sat-tx3); border-color: var(--sat-tx3); color: var(--sat-dk); }
+
+/* ── KPI CARDS con stripe de color superior ─────────── */
+.sat-theme .sat-kpi {
+  position: relative;
+  background: var(--sat-dk2);
+  border: 1px solid var(--sat-br);
+  border-radius: 14px;
+  padding: 16px;
+  overflow: hidden;
+}
+.sat-theme .sat-kpi::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+}
+.sat-theme .sat-kpi.c-or::after { background: var(--sat-or); }
+.sat-theme .sat-kpi.c-bl::after { background: var(--sat-bl); }
+.sat-theme .sat-kpi.c-gn::after { background: var(--sat-gn); }
+.sat-theme .sat-kpi.c-am::after { background: var(--sat-am); }
+.sat-theme .sat-kpi.c-pu::after { background: var(--sat-pu); }
+.sat-theme .sat-kpi .kpi-ic {
+  font-size: 21px;
+  color: var(--sat-tx2);
+  margin-bottom: 8px;
+  display: block;
+}
+.sat-theme .sat-kpi .kpi-v {
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -1px;
+  font-variant-numeric: tabular-nums;
+  color: var(--sat-tx);
+}
+.sat-theme .sat-kpi .kpi-l {
+  font-size: 13px;
+  color: var(--sat-tx2);
+  margin-top: 3px;
+}
+
+/* ── BADGES ─────────────────────────────────────────── */
+.sat-theme .bd {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.sat-theme .bd.b-ok { background: var(--sat-gn-d); color: var(--sat-gn); }
+.sat-theme .bd.b-nok { background: var(--sat-rd-d); color: var(--sat-rd); }
+.sat-theme .bd.b-na { background: var(--sat-dk4); color: var(--sat-tx3); }
+.sat-theme .bd.b-new { background: var(--sat-or-d); color: var(--sat-or); }
+.sat-theme .bd.b-prev { background: var(--sat-bl-d); color: var(--sat-bl); }
+.sat-theme .bd.b-corr { background: var(--sat-or-d); color: var(--sat-or); }
+.sat-theme .bd.b-amber { background: var(--sat-am-d); color: var(--sat-am); }
+
+/* ── BUTTONS ───────────────────────────────────────── */
+.sat-theme .sat-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 8px;
+  font-family: var(--sat-fn);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.12s;
+}
+.sat-theme .sat-btn-pr { background: var(--sat-or); color: var(--sat-dk); }
+.sat-theme .sat-btn-pr:hover { background: #FB923C; }
+.sat-theme .sat-btn-se {
+  background: var(--sat-dk3);
+  border-color: var(--sat-br2);
+  color: var(--sat-tx);
+}
+.sat-theme .sat-btn-se:hover { background: var(--sat-dk4); }
+.sat-theme .sat-btn-gn { background: var(--sat-gn); color: var(--sat-dk); }
+.sat-theme .sat-btn-rd { background: var(--sat-rd); color: #fff; }
+.sat-theme .sat-btn-am { background: var(--sat-am); color: var(--sat-dk); }
+
+/* ── FORM FIELDS ─────────────────────────────────────── */
+.sat-theme .fg {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.sat-theme .fg > label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sat-tx2);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.sat-theme .fg > input,
+.sat-theme .fg > select,
+.sat-theme .fg > textarea,
+.sat-theme input.sat-input,
+.sat-theme select.sat-input,
+.sat-theme textarea.sat-input {
+  background: var(--sat-dk3);
+  border: 1px solid var(--sat-br);
+  border-radius: 7px;
+  padding: 8px 11px;
+  font-family: var(--sat-fn);
+  font-size: 14px;
+  color: var(--sat-tx);
+  outline: none;
+  transition: border-color 0.12s;
+}
+.sat-theme .fg > input:focus,
+.sat-theme .fg > select:focus,
+.sat-theme .fg > textarea:focus {
+  border-color: var(--sat-or);
+}
+
+/* ── TABLES ───────────────────────────────────────── */
+.sat-theme .sat-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--sat-dk2);
+  border: 1px solid var(--sat-br);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.sat-theme .sat-table thead th {
+  background: var(--sat-dk3);
+  text-align: left;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--sat-tx3);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  border-bottom: 1px solid var(--sat-br);
+}
+.sat-theme .sat-table tbody td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--sat-br);
+  font-size: 14px;
+  color: var(--sat-tx);
+}
+.sat-theme .sat-table tbody tr:hover { background: var(--sat-dk3); }
+.sat-theme .sat-table .td-ref {
+  font-family: var(--sat-mo);
+  font-size: 13px;
+  color: var(--sat-or);
+  font-weight: 600;
+}
+.sat-theme .sat-table .td-mod {
+  font-family: var(--sat-mo);
+  font-size: 13px;
+  color: var(--sat-bl);
+}
+
+/* ── PAUSE BANNER ───────────────────────────────────── */
+.sat-theme .pause-banner {
+  background: var(--sat-am-d);
+  border: 1px solid var(--sat-am);
+  border-radius: 10px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.sat-theme .pause-banner .icon {
+  font-size: 22px;
+  color: var(--sat-am);
+}
+.sat-theme .pause-banner .title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--sat-am);
+}
+.sat-theme .pause-banner .reason {
+  font-size: 13px;
+  color: var(--sat-tx2);
+  margin-top: 2px;
+}

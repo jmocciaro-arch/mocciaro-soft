@@ -18,8 +18,12 @@ import { ImportButton } from '@/components/ui/import-button'
 import {
   Package, Grid3X3, List, Loader2, ShoppingCart, Tag, Award, DollarSign,
   ChevronDown, ChevronRight, X, RotateCcw, Plus, Search, ArrowUpDown,
-  SlidersHorizontal, ChevronLeft
+  SlidersHorizontal, ChevronLeft, Upload, Trash2, Edit3, Eye, FileSpreadsheet,
+  Check, Percent, ArrowLeft, ToggleLeft, ToggleRight
 } from 'lucide-react'
+import { useToast } from '@/components/ui/toast'
+import { useCompanyContext } from '@/lib/company-context'
+import { Input } from '@/components/ui/input'
 
 type Row = Record<string, unknown>
 const PAGE_SIZE = 100
@@ -1235,55 +1239,1177 @@ function MarcasTab() {
 }
 
 // ===============================================================
-// TARIFAS TAB (kept as-is)
+// TARIFAS TAB — Full CRUD for price lists
 // ===============================================================
-function TarifasTab() {
-  const supabase = createClient()
-  const [products, setProducts] = useState<Row[]>([])
-  const [loading, setLoading] = useState(true)
-  const [brandFilter, setBrandFilter] = useState('')
 
-  const load = useCallback(async () => {
+interface PriceList {
+  id: string
+  name: string
+  description: string | null
+  currency: 'EUR' | 'USD' | 'ARS'
+  is_default: boolean
+  markup_pct: number
+  active: boolean
+  company_id: string | null
+  created_at: string
+  updated_at: string
+  item_count?: number
+}
+
+interface PriceListItem {
+  id: string
+  price_list_id: string
+  product_id: string
+  price: number
+  created_at: string
+  product?: {
+    id: string
+    sku: string
+    name: string
+    brand: string
+    price_eur: number
+    cost_eur: number
+    image_url: string | null
+  }
+}
+
+interface PriceListFormData {
+  name: string
+  description: string
+  currency: 'EUR' | 'USD' | 'ARS'
+  markup_pct: number
+  is_default: boolean
+  active: boolean
+}
+
+const EMPTY_FORM: PriceListFormData = {
+  name: '',
+  description: '',
+  currency: 'EUR',
+  markup_pct: 0,
+  is_default: false,
+  active: true,
+}
+
+function TarifasTab() {
+  const { addToast } = useToast()
+  const { activeCompanyId } = useCompanyContext()
+
+  // ---------- View state ----------
+  const [view, setView] = useState<'list' | 'detail'>('list')
+  const [selectedList, setSelectedList] = useState<PriceList | null>(null)
+
+  // ---------- Price Lists state ----------
+  const [priceLists, setPriceLists] = useState<PriceList[]>([])
+  const [loading, setLoading] = useState(true)
+
+  // ---------- Modal state ----------
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editingList, setEditingList] = useState<PriceList | null>(null)
+  const [form, setForm] = useState<PriceListFormData>(EMPTY_FORM)
+  const [saving, setSaving] = useState(false)
+
+  // ---------- Detail state ----------
+  const [listItems, setListItems] = useState<PriceListItem[]>([])
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [itemSearch, setItemSearch] = useState('')
+  const [addProductSearch, setAddProductSearch] = useState('')
+  const [addProductResults, setAddProductResults] = useState<Product[]>([])
+  const [addProductLoading, setAddProductLoading] = useState(false)
+  const [showAddProduct, setShowAddProduct] = useState(false)
+  const [bulkMarkup, setBulkMarkup] = useState('')
+  const [bulkApplying, setBulkApplying] = useState(false)
+  const [editingItemId, setEditingItemId] = useState<string | null>(null)
+  const [editingPrice, setEditingPrice] = useState('')
+
+  // ---------- CSV Import state ----------
+  const [showImportModal, setShowImportModal] = useState(false)
+  const [importFile, setImportFile] = useState<File | null>(null)
+  const [importing, setImporting] = useState(false)
+  const [importPreview, setImportPreview] = useState<Array<{ sku: string; price: number }>>([])
+
+  // ---------- Delete confirm ----------
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
+
+  // ==========================================
+  // Load price lists
+  // ==========================================
+  const loadPriceLists = useCallback(async () => {
     setLoading(true)
     const sb = createClient()
-    let q = sb.from('tt_products').select('id, sku, name, brand, price_eur, cost_eur').eq('active', true).order('brand').order('name')
-    if (brandFilter) q = q.ilike('brand', brandFilter)
-    const { data } = await q.limit(200)
-    setProducts(data || [])
+
+    const { data: lists, error } = await sb
+      .from('tt_price_lists')
+      .select('*')
+      .order('is_default', { ascending: false })
+      .order('name')
+
+    if (error) {
+      addToast({ type: 'error', title: 'Error cargando tarifas', message: error.message })
+      setLoading(false)
+      return
+    }
+
+    // Get item counts for each list
+    if (lists && lists.length > 0) {
+      const sb2 = createClient()
+      const { data: countData } = await sb2
+        .from('tt_price_list_items')
+        .select('price_list_id')
+
+      const countMap = new Map<string, number>()
+      if (countData) {
+        for (const row of countData) {
+          const plId = row.price_list_id as string
+          countMap.set(plId, (countMap.get(plId) || 0) + 1)
+        }
+      }
+
+      const listsWithCount = (lists as PriceList[]).map(l => ({
+        ...l,
+        item_count: countMap.get(l.id) || 0,
+      }))
+      setPriceLists(listsWithCount)
+    } else {
+      setPriceLists([])
+    }
+
     setLoading(false)
-  }, [brandFilter])
+  }, [addToast])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { loadPriceLists() }, [loadPriceLists])
 
+  // ==========================================
+  // Create / Update price list
+  // ==========================================
+  const openCreateModal = useCallback(() => {
+    setEditingList(null)
+    setForm(EMPTY_FORM)
+    setModalOpen(true)
+  }, [])
+
+  const openEditModal = useCallback((pl: PriceList) => {
+    setEditingList(pl)
+    setForm({
+      name: pl.name,
+      description: pl.description || '',
+      currency: pl.currency,
+      markup_pct: pl.markup_pct,
+      is_default: pl.is_default,
+      active: pl.active,
+    })
+    setModalOpen(true)
+  }, [])
+
+  const handleSave = useCallback(async () => {
+    if (!form.name.trim()) {
+      addToast({ type: 'warning', title: 'Nombre requerido' })
+      return
+    }
+
+    setSaving(true)
+    const sb = createClient()
+
+    // If setting as default, unset others first
+    if (form.is_default) {
+      await sb
+        .from('tt_price_lists')
+        .update({ is_default: false })
+        .neq('id', editingList?.id || '')
+    }
+
+    const payload = {
+      name: form.name.trim(),
+      description: form.description.trim() || null,
+      currency: form.currency,
+      markup_pct: form.markup_pct,
+      is_default: form.is_default,
+      active: form.active,
+      company_id: activeCompanyId,
+      updated_at: new Date().toISOString(),
+    }
+
+    let error
+    if (editingList) {
+      const res = await sb
+        .from('tt_price_lists')
+        .update(payload)
+        .eq('id', editingList.id)
+      error = res.error
+    } else {
+      const res = await sb
+        .from('tt_price_lists')
+        .insert({ ...payload, created_at: new Date().toISOString() })
+      error = res.error
+    }
+
+    setSaving(false)
+
+    if (error) {
+      addToast({ type: 'error', title: 'Error guardando tarifa', message: error.message })
+      return
+    }
+
+    addToast({ type: 'success', title: editingList ? 'Tarifa actualizada' : 'Tarifa creada' })
+    setModalOpen(false)
+    loadPriceLists()
+  }, [form, editingList, activeCompanyId, addToast, loadPriceLists])
+
+  // ==========================================
+  // Delete price list
+  // ==========================================
+  const handleDelete = useCallback(async (plId: string) => {
+    const sb = createClient()
+    // Delete items first
+    await sb.from('tt_price_list_items').delete().eq('price_list_id', plId)
+    const { error } = await sb.from('tt_price_lists').delete().eq('id', plId)
+    if (error) {
+      addToast({ type: 'error', title: 'Error eliminando tarifa', message: error.message })
+    } else {
+      addToast({ type: 'success', title: 'Tarifa eliminada' })
+      setDeleteConfirm(null)
+      loadPriceLists()
+    }
+  }, [addToast, loadPriceLists])
+
+  // ==========================================
+  // Toggle active
+  // ==========================================
+  const toggleActive = useCallback(async (pl: PriceList) => {
+    const sb = createClient()
+    const { error } = await sb
+      .from('tt_price_lists')
+      .update({ active: !pl.active, updated_at: new Date().toISOString() })
+      .eq('id', pl.id)
+
+    if (error) {
+      addToast({ type: 'error', title: 'Error', message: error.message })
+    } else {
+      loadPriceLists()
+    }
+  }, [addToast, loadPriceLists])
+
+  // ==========================================
+  // Load detail items
+  // ==========================================
+  const loadDetailItems = useCallback(async (pl: PriceList) => {
+    setDetailLoading(true)
+    const sb = createClient()
+
+    const { data, error } = await sb
+      .from('tt_price_list_items')
+      .select('id, price_list_id, product_id, price, created_at')
+      .eq('price_list_id', pl.id)
+      .order('created_at', { ascending: false })
+
+    if (error) {
+      addToast({ type: 'error', title: 'Error cargando items', message: error.message })
+      setDetailLoading(false)
+      return
+    }
+
+    // Fetch product details for each item
+    if (data && data.length > 0) {
+      const sb2 = createClient()
+      const productIds = data.map(d => d.product_id as string)
+      const { data: products } = await sb2
+        .from('tt_products')
+        .select('id, sku, name, brand, price_eur, cost_eur, image_url')
+        .in('id', productIds)
+
+      const productMap = new Map<string, Product>()
+      if (products) {
+        for (const p of products) {
+          productMap.set(p.id, p as unknown as Product)
+        }
+      }
+
+      const itemsWithProducts = (data as PriceListItem[]).map(item => ({
+        ...item,
+        product: productMap.get(item.product_id) as PriceListItem['product'],
+      }))
+      setListItems(itemsWithProducts)
+    } else {
+      setListItems([])
+    }
+
+    setDetailLoading(false)
+  }, [addToast])
+
+  const openDetail = useCallback((pl: PriceList) => {
+    setSelectedList(pl)
+    setView('detail')
+    setItemSearch('')
+    setShowAddProduct(false)
+    loadDetailItems(pl)
+  }, [loadDetailItems])
+
+  // ==========================================
+  // Search products to add
+  // ==========================================
+  const searchProducts = useCallback(async (query: string) => {
+    if (!query.trim() || query.trim().length < 2) {
+      setAddProductResults([])
+      return
+    }
+    setAddProductLoading(true)
+    const sb = createClient()
+
+    const tokens = query.trim().toLowerCase().split(/\s+/)
+    let q = sb
+      .from('tt_products')
+      .select('id, sku, name, brand, price_eur, cost_eur, image_url')
+      .eq('active', true)
+
+    for (const token of tokens) {
+      q = q.or(`name.ilike.%${token}%,sku.ilike.%${token}%,brand.ilike.%${token}%`)
+    }
+
+    const { data } = await q.limit(20)
+    setAddProductResults((data || []) as unknown as Product[])
+    setAddProductLoading(false)
+  }, [])
+
+  // Debounced search
+  const addProductDebounceRef = useRef<NodeJS.Timeout | null>(null)
+  useEffect(() => {
+    if (addProductDebounceRef.current) clearTimeout(addProductDebounceRef.current)
+    addProductDebounceRef.current = setTimeout(() => {
+      searchProducts(addProductSearch)
+    }, 300)
+    return () => {
+      if (addProductDebounceRef.current) clearTimeout(addProductDebounceRef.current)
+    }
+  }, [addProductSearch, searchProducts])
+
+  // ==========================================
+  // Add product to list
+  // ==========================================
+  const addProductToList = useCallback(async (product: Product) => {
+    if (!selectedList) return
+    const sb = createClient()
+
+    // Calculate price from markup if available
+    const basePrice = product.price_eur || 0
+    const markup = selectedList.markup_pct || 0
+    const price = basePrice > 0 ? basePrice * (1 + markup / 100) : 0
+
+    const { error } = await sb
+      .from('tt_price_list_items')
+      .upsert({
+        price_list_id: selectedList.id,
+        product_id: product.id,
+        price: Math.round(price * 100) / 100,
+        created_at: new Date().toISOString(),
+      }, { onConflict: 'price_list_id,product_id' })
+
+    if (error) {
+      addToast({ type: 'error', title: 'Error agregando producto', message: error.message })
+    } else {
+      addToast({ type: 'success', title: 'Producto agregado', message: product.sku })
+      loadDetailItems(selectedList)
+      loadPriceLists()
+    }
+  }, [selectedList, addToast, loadDetailItems, loadPriceLists])
+
+  // ==========================================
+  // Remove product from list
+  // ==========================================
+  const removeItem = useCallback(async (itemId: string) => {
+    if (!selectedList) return
+    const sb = createClient()
+    const { error } = await sb
+      .from('tt_price_list_items')
+      .delete()
+      .eq('id', itemId)
+
+    if (error) {
+      addToast({ type: 'error', title: 'Error eliminando item', message: error.message })
+    } else {
+      addToast({ type: 'success', title: 'Producto removido de la tarifa' })
+      loadDetailItems(selectedList)
+      loadPriceLists()
+    }
+  }, [selectedList, addToast, loadDetailItems, loadPriceLists])
+
+  // ==========================================
+  // Update item price
+  // ==========================================
+  const saveItemPrice = useCallback(async (itemId: string, newPrice: number) => {
+    const sb = createClient()
+    const { error } = await sb
+      .from('tt_price_list_items')
+      .update({ price: Math.round(newPrice * 100) / 100 })
+      .eq('id', itemId)
+
+    if (error) {
+      addToast({ type: 'error', title: 'Error actualizando precio', message: error.message })
+    } else {
+      setEditingItemId(null)
+      setEditingPrice('')
+      if (selectedList) loadDetailItems(selectedList)
+    }
+  }, [addToast, selectedList, loadDetailItems])
+
+  // ==========================================
+  // Bulk apply markup
+  // ==========================================
+  const applyBulkMarkup = useCallback(async () => {
+    if (!selectedList || !bulkMarkup) return
+    const markupPct = parseFloat(bulkMarkup)
+    if (isNaN(markupPct)) {
+      addToast({ type: 'warning', title: 'Markup invalido' })
+      return
+    }
+
+    setBulkApplying(true)
+    const sb = createClient()
+
+    // Get all items with their product catalog prices
+    const { data: items } = await sb
+      .from('tt_price_list_items')
+      .select('id, product_id')
+      .eq('price_list_id', selectedList.id)
+
+    if (!items || items.length === 0) {
+      addToast({ type: 'warning', title: 'No hay productos en la lista' })
+      setBulkApplying(false)
+      return
+    }
+
+    const sb2 = createClient()
+    const productIds = items.map(i => i.product_id as string)
+    const { data: products } = await sb2
+      .from('tt_products')
+      .select('id, price_eur')
+      .in('id', productIds)
+
+    if (!products) {
+      setBulkApplying(false)
+      return
+    }
+
+    const priceMap = new Map<string, number>()
+    for (const p of products) {
+      priceMap.set(p.id, (p.price_eur as number) || 0)
+    }
+
+    // Update each item
+    const sb3 = createClient()
+    let updated = 0
+    for (const item of items) {
+      const catalogPrice = priceMap.get(item.product_id as string) || 0
+      if (catalogPrice > 0) {
+        const newPrice = Math.round(catalogPrice * (1 + markupPct / 100) * 100) / 100
+        const { error } = await sb3
+          .from('tt_price_list_items')
+          .update({ price: newPrice })
+          .eq('id', item.id)
+        if (!error) updated++
+      }
+    }
+
+    // Also update the markup_pct on the list itself
+    const sb4 = createClient()
+    await sb4
+      .from('tt_price_lists')
+      .update({ markup_pct: markupPct, updated_at: new Date().toISOString() })
+      .eq('id', selectedList.id)
+
+    setBulkApplying(false)
+    addToast({
+      type: 'success',
+      title: `Markup ${markupPct}% aplicado`,
+      message: `${updated} de ${items.length} productos actualizados`,
+    })
+    loadDetailItems(selectedList)
+    loadPriceLists()
+  }, [selectedList, bulkMarkup, addToast, loadDetailItems, loadPriceLists])
+
+  // ==========================================
+  // CSV Import
+  // ==========================================
+  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setImportFile(file)
+
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      const text = ev.target?.result as string
+      const lines = text.split('\n').filter(l => l.trim())
+      // Skip header
+      const header = lines[0].toLowerCase()
+      const hasSku = header.includes('sku')
+      const startIdx = hasSku ? 1 : 0
+
+      const parsed: Array<{ sku: string; price: number }> = []
+      for (let i = startIdx; i < lines.length; i++) {
+        const cols = lines[i].split(/[,;\t]/).map(c => c.trim().replace(/^["']|["']$/g, ''))
+        if (cols.length >= 2) {
+          const sku = cols[0]
+          const price = parseFloat(cols[1].replace(',', '.'))
+          if (sku && !isNaN(price)) {
+            parsed.push({ sku, price })
+          }
+        }
+      }
+      setImportPreview(parsed)
+    }
+    reader.readAsText(file)
+  }, [])
+
+  const executeImport = useCallback(async () => {
+    if (!selectedList || importPreview.length === 0) return
+
+    setImporting(true)
+    const sb = createClient()
+
+    // Look up product IDs by SKU
+    const skus = importPreview.map(r => r.sku)
+    const { data: products } = await sb
+      .from('tt_products')
+      .select('id, sku')
+      .in('sku', skus)
+
+    if (!products || products.length === 0) {
+      addToast({ type: 'error', title: 'No se encontraron productos con esos SKUs' })
+      setImporting(false)
+      return
+    }
+
+    const skuToId = new Map<string, string>()
+    for (const p of products) {
+      skuToId.set((p.sku as string).toUpperCase(), p.id as string)
+    }
+
+    const sb2 = createClient()
+    let imported = 0
+    let notFound = 0
+    for (const row of importPreview) {
+      const productId = skuToId.get(row.sku.toUpperCase())
+      if (productId) {
+        const { error } = await sb2
+          .from('tt_price_list_items')
+          .upsert({
+            price_list_id: selectedList.id,
+            product_id: productId,
+            price: Math.round(row.price * 100) / 100,
+            created_at: new Date().toISOString(),
+          }, { onConflict: 'price_list_id,product_id' })
+        if (!error) imported++
+      } else {
+        notFound++
+      }
+    }
+
+    setImporting(false)
+    setShowImportModal(false)
+    setImportFile(null)
+    setImportPreview([])
+    addToast({
+      type: 'success',
+      title: `Importacion completada`,
+      message: `${imported} precios importados${notFound > 0 ? `, ${notFound} SKUs no encontrados` : ''}`,
+    })
+    loadDetailItems(selectedList)
+    loadPriceLists()
+  }, [selectedList, importPreview, addToast, loadDetailItems, loadPriceLists])
+
+  // ==========================================
+  // Filtered detail items
+  // ==========================================
+  const filteredItems = useMemo(() => {
+    if (!itemSearch.trim()) return listItems
+    const q = itemSearch.toLowerCase()
+    return listItems.filter(item =>
+      item.product?.sku?.toLowerCase().includes(q) ||
+      item.product?.name?.toLowerCase().includes(q) ||
+      item.product?.brand?.toLowerCase().includes(q)
+    )
+  }, [listItems, itemSearch])
+
+  // ==========================================
+  // RENDER: DETAIL VIEW
+  // ==========================================
+  if (view === 'detail' && selectedList) {
+    return (
+      <div className="space-y-4">
+        {/* Header */}
+        <div className="flex items-center gap-4 flex-wrap">
+          <Button variant="ghost" size="sm" onClick={() => { setView('list'); setSelectedList(null) }}>
+            <ArrowLeft size={16} /> Volver a tarifas
+          </Button>
+          <div className="flex-1">
+            <h2 className="text-lg font-bold text-[#F0F2F5]">{selectedList.name}</h2>
+            <div className="flex items-center gap-2 mt-1">
+              <Badge variant={selectedList.active ? 'success' : 'default'} size="sm">
+                {selectedList.active ? 'Activa' : 'Inactiva'}
+              </Badge>
+              <Badge variant="orange" size="sm">{selectedList.currency}</Badge>
+              {selectedList.markup_pct > 0 && (
+                <Badge variant="info" size="sm">Markup {selectedList.markup_pct}%</Badge>
+              )}
+              <span className="text-xs text-[#6B7280]">
+                {listItems.length} productos
+              </span>
+            </div>
+          </div>
+          <Button variant="secondary" size="sm" onClick={() => openEditModal(selectedList)}>
+            <Edit3 size={14} /> Editar tarifa
+          </Button>
+        </div>
+
+        {/* Description */}
+        {selectedList.description && (
+          <p className="text-sm text-[#9CA3AF] bg-[#141820] border border-[#1E2330] rounded-lg px-4 py-3">
+            {selectedList.description}
+          </p>
+        )}
+
+        {/* Actions bar */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <SearchBar
+            placeholder="Buscar en esta tarifa..."
+            value={itemSearch}
+            onChange={setItemSearch}
+            className="flex-1 min-w-[200px]"
+          />
+          <Button variant="primary" size="sm" onClick={() => { setShowAddProduct(!showAddProduct); setAddProductSearch(''); setAddProductResults([]) }}>
+            <Plus size={14} /> Agregar productos
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => setShowImportModal(true)}>
+            <Upload size={14} /> Importar CSV
+          </Button>
+        </div>
+
+        {/* Bulk markup */}
+        <Card className="p-4">
+          <div className="flex items-center gap-3 flex-wrap">
+            <Percent size={16} className="text-[#FF6600]" />
+            <span className="text-sm text-[#9CA3AF]">Aplicar markup sobre precio catalogo:</span>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                value={bulkMarkup}
+                onChange={(e) => setBulkMarkup(e.target.value)}
+                placeholder="Ej: 25"
+                className="w-24 h-8 rounded bg-[#1E2330] border border-[#2A3040] px-2 text-xs text-[#F0F2F5] placeholder:text-[#4B5563] focus:outline-none focus:ring-1 focus:ring-orange-500/50"
+              />
+              <span className="text-xs text-[#6B7280]">%</span>
+            </div>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={applyBulkMarkup}
+              loading={bulkApplying}
+              disabled={!bulkMarkup || bulkApplying}
+            >
+              Aplicar markup {bulkMarkup ? `${bulkMarkup}%` : ''} sobre precio catalogo
+            </Button>
+          </div>
+        </Card>
+
+        {/* Add product panel */}
+        {showAddProduct && (
+          <Card className="p-4 border-[#FF6600]/30">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-semibold text-[#FF6600]">Agregar productos a la tarifa</h4>
+                <button onClick={() => setShowAddProduct(false)} className="text-[#6B7280] hover:text-[#F0F2F5]">
+                  <X size={16} />
+                </button>
+              </div>
+              <SearchBar
+                placeholder="Buscar por SKU, nombre o marca..."
+                value={addProductSearch}
+                onChange={setAddProductSearch}
+                autoFocus
+              />
+              {addProductLoading && (
+                <div className="flex justify-center py-4">
+                  <Loader2 className="animate-spin text-[#FF6600]" size={20} />
+                </div>
+              )}
+              {addProductResults.length > 0 && (
+                <div className="max-h-[300px] overflow-y-auto rounded-lg border border-[#1E2330]">
+                  <table className="w-full text-sm">
+                    <thead className="bg-[#0F1218] border-b border-[#1E2330] sticky top-0">
+                      <tr>
+                        <th className="px-3 py-2 text-left text-xs text-[#6B7280]">SKU</th>
+                        <th className="px-3 py-2 text-left text-xs text-[#6B7280]">Producto</th>
+                        <th className="px-3 py-2 text-left text-xs text-[#6B7280]">Marca</th>
+                        <th className="px-3 py-2 text-right text-xs text-[#6B7280]">Precio Cat.</th>
+                        <th className="px-3 py-2 text-center text-xs text-[#6B7280] w-[80px]">Accion</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#1E2330]">
+                      {addProductResults.map(prod => {
+                        const alreadyAdded = listItems.some(li => li.product_id === prod.id)
+                        return (
+                          <tr key={prod.id} className="hover:bg-[#1A1F2E]">
+                            <td className="px-3 py-2 font-mono text-xs text-[#FF6600]">{prod.sku}</td>
+                            <td className="px-3 py-2 text-[#F0F2F5] text-xs max-w-[200px] truncate">{prod.name}</td>
+                            <td className="px-3 py-2"><Badge size="sm">{prod.brand}</Badge></td>
+                            <td className="px-3 py-2 text-right text-xs text-[#9CA3AF]">
+                              {prod.price_eur > 0 ? formatCurrency(prod.price_eur, 'EUR') : '-'}
+                            </td>
+                            <td className="px-3 py-2 text-center">
+                              {alreadyAdded ? (
+                                <span className="text-[10px] text-emerald-400 flex items-center justify-center gap-1">
+                                  <Check size={12} /> Agregado
+                                </span>
+                              ) : (
+                                <button
+                                  onClick={() => addProductToList(prod)}
+                                  className="px-2 py-1 rounded bg-[#FF6600] hover:bg-[#E55A00] text-white text-[10px] font-bold transition-colors"
+                                >
+                                  + Agregar
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {addProductSearch.trim().length >= 2 && !addProductLoading && addProductResults.length === 0 && (
+                <p className="text-xs text-[#4B5563] text-center py-3">No se encontraron productos</p>
+              )}
+            </div>
+          </Card>
+        )}
+
+        {/* Items table */}
+        {detailLoading ? (
+          <div className="flex justify-center py-20">
+            <Loader2 className="animate-spin text-[#FF6600]" size={32} />
+          </div>
+        ) : filteredItems.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 text-[#4B5563]">
+            <DollarSign size={48} className="mb-4" />
+            <p className="text-lg font-medium">
+              {listItems.length === 0 ? 'No hay productos en esta tarifa' : 'Sin resultados de busqueda'}
+            </p>
+            <p className="text-sm mt-1">
+              {listItems.length === 0
+                ? 'Agrega productos para empezar a armar la tarifa'
+                : 'Proba con otro termino de busqueda'}
+            </p>
+            {listItems.length === 0 && (
+              <Button variant="primary" size="sm" className="mt-4" onClick={() => setShowAddProduct(true)}>
+                <Plus size={14} /> Agregar productos
+              </Button>
+            )}
+          </div>
+        ) : (
+          <Card className="p-0 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-[#0F1218] border-b border-[#1E2330]">
+                  <tr>
+                    <th className="px-3 py-3 text-left text-xs font-semibold text-[#6B7280] uppercase">SKU</th>
+                    <th className="px-3 py-3 text-left text-xs font-semibold text-[#6B7280] uppercase">Producto</th>
+                    <th className="px-3 py-3 text-left text-xs font-semibold text-[#6B7280] uppercase">Marca</th>
+                    <th className="px-3 py-3 text-right text-xs font-semibold text-[#6B7280] uppercase">Precio Catalogo</th>
+                    <th className="px-3 py-3 text-right text-xs font-semibold text-[#6B7280] uppercase">Precio Tarifa</th>
+                    <th className="px-3 py-3 text-right text-xs font-semibold text-[#6B7280] uppercase">Diferencia</th>
+                    <th className="px-3 py-3 text-center text-xs font-semibold text-[#6B7280] uppercase w-[100px]">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#1E2330]">
+                  {filteredItems.map(item => {
+                    const catalogPrice = item.product?.price_eur || 0
+                    const diff = catalogPrice > 0 ? ((item.price - catalogPrice) / catalogPrice * 100) : 0
+                    const isEditing = editingItemId === item.id
+
+                    return (
+                      <tr key={item.id} className="hover:bg-[#1A1F2E] transition-colors">
+                        <td className="px-3 py-2.5 font-mono text-xs text-[#FF6600]">
+                          {item.product?.sku || '-'}
+                        </td>
+                        <td className="px-3 py-2.5 text-sm text-[#F0F2F5] max-w-[250px] truncate">
+                          {item.product?.name || 'Producto no encontrado'}
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <Badge size="sm">{item.product?.brand || '-'}</Badge>
+                        </td>
+                        <td className="px-3 py-2.5 text-right text-xs text-[#6B7280]">
+                          {catalogPrice > 0 ? formatCurrency(catalogPrice, 'EUR') : '-'}
+                        </td>
+                        <td className="px-3 py-2.5 text-right">
+                          {isEditing ? (
+                            <div className="flex items-center justify-end gap-1">
+                              <input
+                                type="number"
+                                value={editingPrice}
+                                onChange={(e) => setEditingPrice(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    const val = parseFloat(editingPrice)
+                                    if (!isNaN(val)) saveItemPrice(item.id, val)
+                                  }
+                                  if (e.key === 'Escape') { setEditingItemId(null); setEditingPrice('') }
+                                }}
+                                autoFocus
+                                className="w-24 h-7 rounded bg-[#1E2330] border border-[#FF6600] px-2 text-xs text-[#F0F2F5] focus:outline-none text-right"
+                              />
+                              <button
+                                onClick={() => {
+                                  const val = parseFloat(editingPrice)
+                                  if (!isNaN(val)) saveItemPrice(item.id, val)
+                                }}
+                                className="p-1 rounded hover:bg-emerald-500/20 text-emerald-400"
+                              >
+                                <Check size={14} />
+                              </button>
+                              <button
+                                onClick={() => { setEditingItemId(null); setEditingPrice('') }}
+                                className="p-1 rounded hover:bg-[#1E2330] text-[#6B7280]"
+                              >
+                                <X size={14} />
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => { setEditingItemId(item.id); setEditingPrice(String(item.price)) }}
+                              className="font-bold text-[#FF6600] hover:text-[#FF8833] transition-colors cursor-pointer"
+                            >
+                              {formatCurrency(item.price, selectedList.currency)}
+                            </button>
+                          )}
+                        </td>
+                        <td className="px-3 py-2.5 text-right text-xs">
+                          {catalogPrice > 0 ? (
+                            <span className={diff >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                              {diff >= 0 ? '+' : ''}{diff.toFixed(1)}%
+                            </span>
+                          ) : (
+                            <span className="text-[#4B5563]">-</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2.5 text-center">
+                          <button
+                            onClick={() => removeItem(item.id)}
+                            className="p-1.5 rounded hover:bg-red-500/10 text-[#6B7280] hover:text-red-400 transition-colors"
+                            title="Quitar de la tarifa"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        )}
+
+        {/* CSV Import Modal */}
+        <Modal isOpen={showImportModal} onClose={() => { setShowImportModal(false); setImportFile(null); setImportPreview([]) }} title="Importar precios desde CSV" size="lg">
+          <div className="space-y-4">
+            <div className="bg-[#0F1218] border border-[#1E2330] rounded-lg p-4">
+              <p className="text-sm text-[#9CA3AF] mb-2">El archivo CSV debe tener 2 columnas:</p>
+              <div className="font-mono text-xs text-[#6B7280] bg-[#141820] rounded p-3">
+                <p className="text-[#FF6600]">sku,price</p>
+                <p>ABC-001,125.50</p>
+                <p>ABC-002,89.90</p>
+                <p>DEF-100,340.00</p>
+              </div>
+              <p className="text-[10px] text-[#4B5563] mt-2">Separadores aceptados: coma, punto y coma, tab</p>
+            </div>
+
+            <div>
+              <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-[#2A3040] rounded-lg cursor-pointer hover:border-[#FF6600]/50 transition-colors bg-[#0F1218]">
+                <FileSpreadsheet size={32} className="text-[#4B5563] mb-2" />
+                <span className="text-sm text-[#6B7280]">
+                  {importFile ? importFile.name : 'Click para seleccionar archivo CSV'}
+                </span>
+                <input type="file" accept=".csv,.txt,.tsv" className="hidden" onChange={handleFileChange} />
+              </label>
+            </div>
+
+            {importPreview.length > 0 && (
+              <div>
+                <p className="text-sm text-[#9CA3AF] mb-2">
+                  Vista previa: <span className="text-[#FF6600] font-bold">{importPreview.length}</span> filas detectadas
+                </p>
+                <div className="max-h-[200px] overflow-y-auto rounded border border-[#1E2330]">
+                  <table className="w-full text-xs">
+                    <thead className="bg-[#0F1218] sticky top-0">
+                      <tr>
+                        <th className="px-3 py-2 text-left text-[#6B7280]">SKU</th>
+                        <th className="px-3 py-2 text-right text-[#6B7280]">Precio</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#1E2330]">
+                      {importPreview.slice(0, 20).map((row, i) => (
+                        <tr key={i}>
+                          <td className="px-3 py-1.5 font-mono text-[#F0F2F5]">{row.sku}</td>
+                          <td className="px-3 py-1.5 text-right text-[#FF6600]">{row.price.toFixed(2)}</td>
+                        </tr>
+                      ))}
+                      {importPreview.length > 20 && (
+                        <tr>
+                          <td colSpan={2} className="px-3 py-1.5 text-center text-[#4B5563]">
+                            ... y {importPreview.length - 20} filas mas
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3 pt-2">
+              <Button variant="secondary" onClick={() => { setShowImportModal(false); setImportFile(null); setImportPreview([]) }}>
+                Cancelar
+              </Button>
+              <Button
+                variant="primary"
+                onClick={executeImport}
+                loading={importing}
+                disabled={importPreview.length === 0 || importing}
+              >
+                <Upload size={14} /> Importar {importPreview.length} precios
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      </div>
+    )
+  }
+
+  // ==========================================
+  // RENDER: LIST VIEW
+  // ==========================================
   return (
     <div className="space-y-4">
-      <Card>
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-[#9CA3AF]">Filtrar por marca:</span>
-          <Select options={[{ value: '', label: 'Todas' }, ...BRANDS_STATIC.map(b => ({ value: b, label: b }))]} value={brandFilter} onChange={(e) => setBrandFilter(e.target.value)} />
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <KPICard
+          label="Total tarifas"
+          value={priceLists.length}
+          icon={<DollarSign size={22} />}
+        />
+        <KPICard
+          label="Tarifas activas"
+          value={priceLists.filter(l => l.active).length}
+          icon={<Check size={22} />}
+          color="#10B981"
+        />
+        <KPICard
+          label="Productos con precio"
+          value={priceLists.reduce((sum, l) => sum + (l.item_count || 0), 0)}
+          icon={<Package size={22} />}
+          color="#3B82F6"
+        />
+        <KPICard
+          label="Tarifa por defecto"
+          value={priceLists.find(l => l.is_default)?.name || 'Ninguna'}
+          icon={<Award size={22} />}
+          color="#F59E0B"
+        />
+      </div>
+
+      {/* Action bar */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <h2 className="text-lg font-bold text-[#FF6600] tracking-wide">
+          LISTAS DE PRECIOS{' '}
+          <span className="text-[#6B7280] font-normal text-sm">
+            &mdash; {loading ? '...' : `${priceLists.length} TARIFAS`}
+          </span>
+        </h2>
+        <Button variant="primary" size="sm" onClick={openCreateModal}>
+          <Plus size={14} /> Nueva tarifa
+        </Button>
+      </div>
+
+      {/* List loading */}
+      {loading ? (
+        <div className="flex flex-col items-center justify-center py-20">
+          <Loader2 className="animate-spin text-[#FF6600] mb-3" size={32} />
+          <p className="text-sm text-[#4B5563]">Cargando tarifas...</p>
         </div>
-      </Card>
-      <Card className="p-0 overflow-hidden">
-        {loading ? (
-          <div className="flex items-center justify-center py-20"><Loader2 className="animate-spin text-[#FF6600]" size={32} /></div>
-        ) : (
-          <Table>
-            <TableHeader><TableRow><TableHead>SKU</TableHead><TableHead>Producto</TableHead><TableHead>Marca</TableHead><TableHead>Precio lista</TableHead><TableHead>Costo</TableHead><TableHead>Moneda</TableHead></TableRow></TableHeader>
-            <TableBody>
-              {products.map((p) => (
-                <TableRow key={p.id as string}>
-                  <TableCell className="font-mono text-xs">{p.sku as string}</TableCell>
-                  <TableCell className="text-[#F0F2F5] max-w-[200px] truncate">{p.name as string}</TableCell>
-                  <TableCell><Badge>{p.brand as string}</Badge></TableCell>
-                  <TableCell className="font-bold text-[#FF6600]">{formatCurrency((p.price_eur as number) || 0)}</TableCell>
-                  <TableCell className="text-[#6B7280]">{formatCurrency((p.cost_eur as number) || 0)}</TableCell>
-                  <TableCell>EUR</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </Card>
+      ) : priceLists.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-20 text-[#4B5563]">
+          <DollarSign size={48} className="mb-4" />
+          <p className="text-lg font-medium">No hay tarifas creadas</p>
+          <p className="text-sm mt-1">Crea tu primera lista de precios</p>
+          <Button variant="primary" size="sm" className="mt-4" onClick={openCreateModal}>
+            <Plus size={14} /> Nueva tarifa
+          </Button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {priceLists.map(pl => (
+            <Card key={pl.id} hover className="relative group">
+              {/* Default badge */}
+              {pl.is_default && (
+                <div className="absolute top-3 right-3">
+                  <Badge variant="warning" size="sm">Por defecto</Badge>
+                </div>
+              )}
+
+              <div className="space-y-3">
+                {/* Header */}
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-[#FF6600]/10 flex items-center justify-center shrink-0">
+                    <DollarSign size={20} className="text-[#FF6600]" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-sm font-bold text-[#F0F2F5] truncate">{pl.name}</h3>
+                    {pl.description && (
+                      <p className="text-xs text-[#6B7280] mt-0.5 line-clamp-1">{pl.description}</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Stats */}
+                <div className="flex items-center gap-3 flex-wrap">
+                  <Badge variant="orange" size="sm">{pl.currency}</Badge>
+                  <Badge variant={pl.active ? 'success' : 'default'} size="sm">
+                    {pl.active ? 'Activa' : 'Inactiva'}
+                  </Badge>
+                  {pl.markup_pct > 0 && (
+                    <Badge variant="info" size="sm">+{pl.markup_pct}%</Badge>
+                  )}
+                </div>
+
+                {/* Item count */}
+                <div className="flex items-center justify-between pt-2 border-t border-[#1E2330]">
+                  <span className="text-xs text-[#6B7280]">
+                    {pl.item_count || 0} productos
+                  </span>
+                  <span className="text-[10px] text-[#4B5563]">
+                    {pl.updated_at ? new Date(pl.updated_at).toLocaleDateString('es-AR') : ''}
+                  </span>
+                </div>
+
+                {/* Actions */}
+                <div className="flex items-center gap-2 pt-1">
+                  <Button variant="primary" size="sm" className="flex-1" onClick={() => openDetail(pl)}>
+                    <Eye size={14} /> Ver precios
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => openEditModal(pl)}>
+                    <Edit3 size={14} />
+                  </Button>
+                  <button
+                    onClick={() => toggleActive(pl)}
+                    className="p-2 rounded-lg hover:bg-[#1E2330] text-[#6B7280] hover:text-[#F0F2F5] transition-colors"
+                    title={pl.active ? 'Desactivar' : 'Activar'}
+                  >
+                    {pl.active ? <ToggleRight size={16} className="text-emerald-400" /> : <ToggleLeft size={16} />}
+                  </button>
+                  {deleteConfirm === pl.id ? (
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => handleDelete(pl.id)}
+                        className="px-2 py-1 rounded bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold"
+                      >
+                        Confirmar
+                      </button>
+                      <button
+                        onClick={() => setDeleteConfirm(null)}
+                        className="px-2 py-1 rounded bg-[#1E2330] text-[#6B7280] text-[10px]"
+                      >
+                        No
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setDeleteConfirm(pl.id)}
+                      className="p-2 rounded-lg hover:bg-red-500/10 text-[#6B7280] hover:text-red-400 transition-colors"
+                      title="Eliminar tarifa"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {/* Create / Edit Modal */}
+      <Modal isOpen={modalOpen} onClose={() => setModalOpen(false)} title={editingList ? 'Editar tarifa' : 'Nueva tarifa'} size="md">
+        <div className="space-y-4">
+          <Input
+            label="Nombre"
+            value={form.name}
+            onChange={(e) => setForm(prev => ({ ...prev, name: e.target.value }))}
+            placeholder="Ej: Tarifa distribuidores EUR"
+          />
+
+          <div className="w-full">
+            <label className="block text-sm font-medium text-[#9CA3AF] mb-1.5">Descripcion</label>
+            <textarea
+              value={form.description}
+              onChange={(e) => setForm(prev => ({ ...prev, description: e.target.value }))}
+              placeholder="Descripcion opcional..."
+              rows={2}
+              className="w-full rounded-lg bg-[#1E2330] border border-[#2A3040] px-3 py-2 text-sm text-[#F0F2F5] placeholder:text-[#4B5563] focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 transition-all resize-none"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <Select
+              label="Moneda"
+              options={[
+                { value: 'EUR', label: 'EUR - Euro' },
+                { value: 'USD', label: 'USD - Dolar' },
+                { value: 'ARS', label: 'ARS - Peso argentino' },
+              ]}
+              value={form.currency}
+              onChange={(e) => setForm(prev => ({ ...prev, currency: e.target.value as 'EUR' | 'USD' | 'ARS' }))}
+            />
+
+            <Input
+              label="Markup %"
+              type="number"
+              value={String(form.markup_pct)}
+              onChange={(e) => setForm(prev => ({ ...prev, markup_pct: parseFloat(e.target.value) || 0 }))}
+              placeholder="0"
+            />
+          </div>
+
+          <div className="flex items-center gap-6">
+            <label className="flex items-center gap-2 cursor-pointer text-sm text-[#9CA3AF] hover:text-[#F0F2F5]">
+              <input
+                type="checkbox"
+                checked={form.is_default}
+                onChange={(e) => setForm(prev => ({ ...prev, is_default: e.target.checked }))}
+                className="w-4 h-4 rounded border-[#2A3040] bg-[#1E2330] text-[#FF6600] focus:ring-[#FF6600] focus:ring-offset-0"
+              />
+              Tarifa por defecto
+            </label>
+
+            <label className="flex items-center gap-2 cursor-pointer text-sm text-[#9CA3AF] hover:text-[#F0F2F5]">
+              <input
+                type="checkbox"
+                checked={form.active}
+                onChange={(e) => setForm(prev => ({ ...prev, active: e.target.checked }))}
+                className="w-4 h-4 rounded border-[#2A3040] bg-[#1E2330] text-[#FF6600] focus:ring-[#FF6600] focus:ring-offset-0"
+              />
+              Activa
+            </label>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-4 border-t border-[#1E2330]">
+            <Button variant="secondary" onClick={() => setModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button variant="primary" onClick={handleSave} loading={saving} disabled={saving}>
+              {editingList ? 'Guardar cambios' : 'Crear tarifa'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }

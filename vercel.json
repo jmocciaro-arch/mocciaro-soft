@@ -1,0 +1,28 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/alerts",
+      "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/cron/daily-digest",
+      "schedule": "5 8 * * *"
+    },
+    {
+      "path": "/api/fx/rates",
+      "schedule": "0 10 * * *"
+    },
+    {
+      "path": "/api/sequences/process",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/ai/daily-summary?cron=1",
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/cron/check-emails",
+      "schedule": "*/15 * * * *"
+    }
+  ]
+}

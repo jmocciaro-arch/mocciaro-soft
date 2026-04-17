@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo, Suspense } from 'react'
+import { useState, useEffect, useCallback, useMemo, Suspense, type ReactNode } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -15,13 +15,14 @@ import { useToast } from '@/components/ui/toast'
 import { ExportButton } from '@/components/ui/export-button'
 import { ImportButton } from '@/components/ui/import-button'
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table'
+import { SearchableSelect } from '@/components/ui/searchable-select'
 import { formatCurrency, formatDate, formatRelative, getInitials } from '@/lib/utils'
 import { DocumentDetailLayout, type WorkflowStep } from '@/components/workflow/document-detail-layout'
 import { DocumentItemsTree, type DocumentItem } from '@/components/workflow/document-items-tree'
 import { DocumentListCard } from '@/components/workflow/document-list-card'
 import { DocumentForm } from '@/components/workflow/document-form'
 import { documentToTableRow, localPOToRow, purchaseInvoiceToRow, mapStatus, extractClientName, extractDocRef } from '@/lib/document-helpers'
-import type { Supplier, SupplierContact, PurchaseInvoice, PurchasePayment } from '@/types'
+import type { Supplier, SupplierContact, SupplierInteraction, PurchaseInvoice, PurchasePayment, PurchaseCreditNote, PurchaseCreditNoteItem } from '@/types'
 import { useCompanyFilter } from '@/hooks/use-company-filter'
 import {
   ShoppingCart, Plus, Package, Truck, CheckCircle, Clock,
@@ -30,7 +31,10 @@ import {
   Hash, ArrowLeft, Edit3, Save, Trash2, Star, ChevronRight,
   Contact, CreditCard, CalendarDays, AlertTriangle, Banknote,
   Receipt, ArrowUpRight, CalendarClock, CircleDollarSign,
-  Layers, ArrowRightLeft, Grid3X3, List
+  Layers, ArrowRightLeft, Grid3X3, List,
+  Brain, Sparkles, Activity, ExternalLink, Copy, RefreshCw,
+  MessageCircle, PhoneCall, Video, ThumbsDown, Wrench,
+  TrendingUp, ShieldCheck, BarChart2, Link
 } from 'lucide-react'
 
 type Row = Record<string, unknown>
@@ -74,6 +78,14 @@ const DOC_STATUS: Record<string, { label: string; variant: 'default' | 'success'
 }
 
 const PO_STATUS: Record<string, { label: string; variant: 'default' | 'success' | 'warning' | 'danger' | 'info' | 'orange' }> = {
+  // DB uses Spanish status values (CHECK constraint)
+  borrador: { label: 'Borrador', variant: 'default' },
+  enviada: { label: 'Enviada', variant: 'info' },
+  confirmada: { label: 'Confirmada', variant: 'info' },
+  recibida_parcial: { label: 'Recepcion parcial', variant: 'warning' },
+  recibida: { label: 'Recibida', variant: 'success' },
+  cancelada: { label: 'Cancelada', variant: 'danger' },
+  // Legacy English keys (backward compat with old records)
   draft: { label: 'Borrador', variant: 'default' },
   sent: { label: 'Enviada', variant: 'info' },
   partial: { label: 'Parcial', variant: 'warning' },
@@ -94,6 +106,7 @@ const comprasTabs = [
   { id: 'pedidos', label: 'Pedidos', icon: <ShoppingCart size={16} /> },
   { id: 'recepciones', label: 'Recepciones', icon: <Truck size={16} /> },
   { id: 'facturas', label: 'Facturas compra', icon: <FileCheck size={16} /> },
+  { id: 'abonos', label: 'Abonos', icon: <Receipt size={16} /> },
   { id: 'pagos', label: 'Pagos', icon: <CreditCard size={16} /> },
   { id: 'calendario', label: 'Calendario pagos', icon: <CalendarDays size={16} /> },
   { id: 'intercompany', label: 'Intercompany', icon: <ArrowRightLeft size={16} /> },
@@ -138,18 +151,50 @@ function generateInvoiceNumber(): string {
 }
 
 // Helper: build workflow steps for a purchase order
+// DB status values (Spanish): borrador, enviada, confirmada, recibida_parcial, recibida, cancelada
 function buildPOWorkflow(po: Row): WorkflowStep[] {
-  const st = (po.status as string) || 'draft'
+  const st = (po.status as string) || 'borrador'
+  // Normalize: accept both English and Spanish
+  const isDraft = st === 'borrador' || st === 'draft'
+  const isSent = st === 'enviada' || st === 'sent'
+  const isConfirmed = st === 'confirmada'
+  const isPartial = st === 'recibida_parcial' || st === 'partial'
+  const isReceived = st === 'recibida' || st === 'received'
+  const isClosed = st === 'closed'
+  const isCancelled = st === 'cancelada'
+
+  const pastSent = !isDraft
+  const pastConfirmed = pastSent && !isSent
+  const pastReceived = isReceived || isClosed
+  const hasInvoice = isClosed // factura registrada y pagada
+
   return [
-    { key: 'solicitud', label: 'Solicitud', icon: '\uD83D\uDCCB', status: 'completed', tooltip: 'Necesidad detectada' },
     {
-      key: 'pap', label: 'Pedido proveedor', icon: '\uD83D\uDED2',
-      status: st === 'draft' ? 'current' : st === 'sent' ? 'current' : 'completed',
+      key: 'borrador', label: 'Borrador', icon: '\uD83D\uDCCB',
+      status: isDraft ? 'current' : 'completed',
+    },
+    {
+      key: 'enviada', label: 'Enviada', icon: '\uD83D\uDCE8',
+      status: isSent ? 'current' : pastSent ? 'completed' : 'pending',
       documentRef: (po.supplier_name as string) || '',
       date: po.created_at ? new Date(po.created_at as string).toLocaleDateString('es-ES') : '',
     },
-    { key: 'recepcion', label: 'Recepcion', icon: '\uD83D\uDCE6', status: st === 'partial' ? 'partial' : st === 'received' || st === 'closed' ? 'completed' : 'pending' },
-    { key: 'factura_compra', label: 'Factura compra', icon: '\uD83D\uDCB3', status: st === 'closed' ? 'completed' : 'pending' },
+    {
+      key: 'confirmada', label: 'Confirmada', icon: '\u2705',
+      status: isConfirmed ? 'current' : pastConfirmed ? 'completed' : 'pending',
+    },
+    {
+      key: 'recepcion', label: 'Recepcion', icon: '\uD83D\uDCE6',
+      status: isPartial ? 'partial' : isReceived || isClosed ? 'completed' : pastConfirmed && !isConfirmed ? 'current' : 'pending',
+    },
+    {
+      key: 'factura_compra', label: 'Factura compra', icon: '\uD83D\uDCB3',
+      status: hasInvoice ? 'completed' : pastReceived ? 'current' : 'pending',
+    },
+    {
+      key: 'pagada', label: 'Pagada', icon: '\uD83D\uDCB0',
+      status: isClosed ? 'completed' : 'pending',
+    },
   ]
 }
 
@@ -252,13 +297,14 @@ async function checkPaymentAlerts() {
 // ===============================================================
 // SUPPLIER DETAIL VIEW (3-column layout like Clients)
 // ===============================================================
-function SupplierDetail({ supplier, onClose, onUpdate }: {
+function SupplierDetail({ supplier: supplierProp, onClose, onUpdate }: {
   supplier: Supplier
   onClose: () => void
   onUpdate: () => void
 }) {
   const { addToast } = useToast()
   const supabase = createClient()
+  const [supplier, setSupplier] = useState<Supplier>(supplierProp)
   const [activeDetailTab, setActiveDetailTab] = useState('datos')
   const [editing, setEditing] = useState(false)
   const [editData, setEditData] = useState<Partial<Supplier>>({})
@@ -276,6 +322,16 @@ function SupplierDetail({ supplier, onClose, onUpdate }: {
   const [pendingInvoices, setPendingInvoices] = useState<PurchaseInvoice[]>([])
   const [totalPaidYear, setTotalPaidYear] = useState(0)
   const [lastPayment, setLastPayment] = useState<PurchasePayment | null>(null)
+  // Nuevas features: AI score, interactions, doc chain, portal
+  const [interactions, setInteractions] = useState<SupplierInteraction[]>([])
+  const [loadingInteractions, setLoadingInteractions] = useState(false)
+  const [scoringAI, setScoringAI] = useState(false)
+  const [showAddInteraction, setShowAddInteraction] = useState(false)
+  const [newInteraction, setNewInteraction] = useState({ type: 'note' as SupplierInteraction['type'], subject: '', body: '', outcome: '', rating: '' })
+  const [savingInteraction, setSavingInteraction] = useState(false)
+  const [generatingPortal, setGeneratingPortal] = useState(false)
+  const [portalCopied, setPortalCopied] = useState(false)
+  const [documentChain, setDocumentChain] = useState<Row[]>([])
 
   const loadContacts = useCallback(async () => {
     setLoadingContacts(true)
@@ -295,16 +351,26 @@ function SupplierDetail({ supplier, onClose, onUpdate }: {
     const { data } = await sb
       .from('tt_purchase_orders')
       .select('*')
-      .ilike('supplier_name', `%${supplier.name}%`)
+      .eq('supplier_id', supplier.id)
       .order('created_at', { ascending: false })
       .limit(30)
-    setPurchaseOrders(data || [])
+    // Fallback: buscar por nombre si no hay supplier_id FK
+    if (!data || data.length === 0) {
+      const { data: byName } = await sb
+        .from('tt_purchase_orders')
+        .select('*')
+        .ilike('supplier_name', `%${supplier.name}%`)
+        .order('created_at', { ascending: false })
+        .limit(30)
+      setPurchaseOrders(byName || [])
+    } else {
+      setPurchaseOrders(data)
+    }
     setLoadingPOs(false)
-  }, [supplier.name])
+  }, [supplier.id, supplier.name])
 
   const loadPaymentInfo = useCallback(async () => {
     const sb = createClient()
-    // Pending invoices for this supplier
     const { data: invs } = await sb
       .from('tt_purchase_invoices')
       .select('*')
@@ -313,7 +379,6 @@ function SupplierDetail({ supplier, onClose, onUpdate }: {
       .order('due_date', { ascending: true })
     setPendingInvoices((invs || []) as PurchaseInvoice[])
 
-    // Total paid this year
     const yearStart = new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0]
     const { data: payments } = await sb
       .from('tt_purchase_payments')
@@ -322,7 +387,6 @@ function SupplierDetail({ supplier, onClose, onUpdate }: {
       .gte('payment_date', yearStart)
     setTotalPaidYear((payments || []).reduce((s: number, p: { amount: number }) => s + (p.amount || 0), 0))
 
-    // Last payment
     const { data: lastP } = await sb
       .from('tt_purchase_payments')
       .select('*')
@@ -332,7 +396,37 @@ function SupplierDetail({ supplier, onClose, onUpdate }: {
     setLastPayment(lastP?.[0] as PurchasePayment || null)
   }, [supplier.id])
 
-  useEffect(() => { loadContacts(); loadPurchaseOrders(); loadPaymentInfo() }, [loadContacts, loadPurchaseOrders, loadPaymentInfo])
+  const loadInteractions = useCallback(async () => {
+    setLoadingInteractions(true)
+    const sb = createClient()
+    const { data } = await sb
+      .from('tt_supplier_interactions')
+      .select('*')
+      .eq('supplier_id', supplier.id)
+      .order('created_at', { ascending: false })
+      .limit(50)
+    setInteractions((data || []) as SupplierInteraction[])
+    setLoadingInteractions(false)
+  }, [supplier.id])
+
+  const loadDocumentChain = useCallback(async () => {
+    const sb = createClient()
+    const { data } = await sb
+      .from('tt_purchase_orders')
+      .select('id, po_number, status, total, created_at, expected_delivery')
+      .eq('supplier_id', supplier.id)
+      .order('created_at', { ascending: false })
+      .limit(20)
+    setDocumentChain(data || [])
+  }, [supplier.id])
+
+  useEffect(() => {
+    loadContacts()
+    loadPurchaseOrders()
+    loadPaymentInfo()
+    loadInteractions()
+    loadDocumentChain()
+  }, [loadContacts, loadPurchaseOrders, loadPaymentInfo, loadInteractions, loadDocumentChain])
 
   function startEditing() {
     setEditing(true)
@@ -366,9 +460,116 @@ function SupplierDetail({ supplier, onClose, onUpdate }: {
       payment_terms: editData.payment_terms,
       notes: editData.notes,
     }).eq('id', supplier.id)
-    if (!error) { setEditing(false); addToast({ type: 'success', title: 'Proveedor actualizado' }); onUpdate() }
+    if (!error) {
+      setEditing(false)
+      setSupplier(prev => ({ ...prev, ...editData }))
+      addToast({ type: 'success', title: 'Proveedor actualizado' })
+      onUpdate()
+    }
     else addToast({ type: 'error', title: 'Error', message: error.message })
     setSaving(false)
+  }
+
+  async function runAIScore() {
+    setScoringAI(true)
+    try {
+      const res = await fetch('/api/suppliers/score', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ supplierId: supplier.id, persist: true }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Error IA')
+      setSupplier(prev => ({
+        ...prev,
+        ai_score: data.score,
+        ai_tags: data.tags,
+        ai_analysis: data.analysis,
+        ai_analysis_at: new Date().toISOString(),
+        ai_profile: {
+          delivery_score: data.delivery_score,
+          quality_score: data.quality_score,
+          price_score: data.price_score,
+          reliability_score: data.reliability_score,
+          last_analysis_summary: data.analysis,
+          suggested_action: data.suggested_action,
+        },
+      }))
+      addToast({ type: 'success', title: 'Score IA calculado', message: `Score: ${data.score}/100` })
+    } catch (err) {
+      addToast({ type: 'error', title: 'Error IA', message: (err as Error).message })
+    }
+    setScoringAI(false)
+  }
+
+  async function addInteraction() {
+    if (!newInteraction.subject.trim()) { addToast({ type: 'error', title: 'El asunto es obligatorio' }); return }
+    setSavingInteraction(true)
+    try {
+      const { error } = await supabase.from('tt_supplier_interactions').insert({
+        supplier_id: supplier.id,
+        company_id: null, // se setea via RLS / trigger si aplica
+        type: newInteraction.type,
+        direction: ['email_sent', 'call'].includes(newInteraction.type) ? 'outbound' : 'inbound',
+        subject: newInteraction.subject,
+        body: newInteraction.body || null,
+        outcome: newInteraction.outcome || null,
+        rating: newInteraction.rating ? parseInt(newInteraction.rating) : null,
+      })
+      if (error) throw error
+      setShowAddInteraction(false)
+      setNewInteraction({ type: 'note', subject: '', body: '', outcome: '', rating: '' })
+      addToast({ type: 'success', title: 'Interaccion registrada' })
+      loadInteractions()
+    } catch (err) {
+      addToast({ type: 'error', title: 'Error', message: (err as Error).message })
+    }
+    setSavingInteraction(false)
+  }
+
+  async function generatePortalToken() {
+    setGeneratingPortal(true)
+    try {
+      const token = crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '')
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+      const { error } = await supabase.from('tt_supplier_portal_tokens').insert({
+        supplier_id: supplier.id,
+        company_id: null,
+        token,
+        is_active: true,
+        expires_at: expiresAt,
+      })
+      if (error) throw error
+      await supabase.from('tt_suppliers').update({ portal_token: token, portal_token_expires_at: expiresAt }).eq('id', supplier.id)
+      setSupplier(prev => ({ ...prev, portal_token: token, portal_token_expires_at: expiresAt }))
+      addToast({ type: 'success', title: 'Portal generado', message: 'El link expira en 30 dias' })
+    } catch (err) {
+      addToast({ type: 'error', title: 'Error', message: (err as Error).message })
+    }
+    setGeneratingPortal(false)
+  }
+
+  function copyPortalLink() {
+    if (!supplier.portal_token) return
+    const url = `${window.location.origin}/api/portal/supplier/${supplier.portal_token}`
+    navigator.clipboard.writeText(url)
+    setPortalCopied(true)
+    setTimeout(() => setPortalCopied(false), 2000)
+    addToast({ type: 'success', title: 'Link copiado' })
+  }
+
+  function sendPOByEmail() {
+    if (!supplier.email) { addToast({ type: 'error', title: 'El proveedor no tiene email registrado' }); return }
+    const subject = encodeURIComponent(`Orden de Compra — ${supplier.name}`)
+    const body = encodeURIComponent(`Estimados ${supplier.name},\n\nAdjunto les enviamos la orden de compra correspondiente.\n\nSaludos,\nEquipo Mocciaro`)
+    window.open(`mailto:${supplier.email}?subject=${subject}&body=${body}`, '_blank')
+  }
+
+  function sendPOByWhatsApp() {
+    if (!supplier.phone) { addToast({ type: 'error', title: 'El proveedor no tiene telefono registrado' }); return }
+    const phone = supplier.phone.replace(/[^0-9+]/g, '')
+    const msg = encodeURIComponent(`Hola ${supplier.name}, les enviamos la orden de compra. Por favor confirmar recepcion.`)
+    window.open(`https://wa.me/${phone}?text=${msg}`, '_blank')
   }
 
   async function addContact() {
@@ -416,7 +617,11 @@ function SupplierDetail({ supplier, onClose, onUpdate }: {
     { id: 'datos', label: 'Datos' },
     { id: 'contactos', label: `Contactos (${contacts.length})` },
     { id: 'historial', label: `Historial (${purchaseOrders.length})` },
+    { id: 'cadena', label: 'Cadena Doc.' },
+    { id: 'interacciones', label: `Interacciones (${interactions.length})` },
+    { id: 'ia', label: supplier.ai_score ? `IA ${supplier.ai_score}/100` : 'IA Score' },
     { id: 'pagos', label: `Pagos (${pendingInvoices.length})` },
+    { id: 'portal', label: 'Portal' },
   ]
 
   return (
@@ -437,11 +642,28 @@ function SupplierDetail({ supplier, onClose, onUpdate }: {
           {hasOverdueInvoice && (
             <Badge variant="danger" size="sm">PAGO VENCIDO</Badge>
           )}
+          {supplier.ai_score !== null && supplier.ai_score !== undefined && (
+            <Badge
+              variant={supplier.ai_score >= 80 ? 'success' : supplier.ai_score >= 50 ? 'warning' : 'danger'}
+              size="sm"
+            >
+              <Brain size={10} className="mr-1 inline" />
+              IA {supplier.ai_score}/100
+            </Badge>
+          )}
         </div>
         <div className="flex gap-2">
           {supplier.phone && <a href={`tel:${supplier.phone}`}><Button variant="ghost" size="sm"><Phone size={14} /></Button></a>}
-          {supplier.email && <a href={`mailto:${supplier.email}`}><Button variant="ghost" size="sm"><Mail size={14} /></Button></a>}
-          {supplier.phone && <a href={`https://wa.me/${supplier.phone.replace(/[^0-9+]/g, '')}`} target="_blank" rel="noreferrer"><Button variant="ghost" size="sm"><MessageSquare size={14} /></Button></a>}
+          {supplier.email && (
+            <Button variant="ghost" size="sm" onClick={sendPOByEmail} title="Enviar OC por email">
+              <Mail size={14} />
+            </Button>
+          )}
+          {supplier.phone && (
+            <Button variant="ghost" size="sm" onClick={sendPOByWhatsApp} title="Enviar OC por WhatsApp">
+              <MessageSquare size={14} />
+            </Button>
+          )}
         </div>
       </div>
 
@@ -477,10 +699,49 @@ function SupplierDetail({ supplier, onClose, onUpdate }: {
             <h3 className="text-xs font-semibold text-[#6B7280] uppercase mb-3">Acciones rapidas</h3>
             <div className="grid grid-cols-2 gap-2">
               {supplier.phone && <a href={`tel:${supplier.phone}`}><Button variant="secondary" size="sm" className="w-full text-xs"><Phone size={12} /> Llamar</Button></a>}
-              {supplier.email && <a href={`mailto:${supplier.email}`}><Button variant="secondary" size="sm" className="w-full text-xs"><Mail size={12} /> Email</Button></a>}
-              {supplier.phone && <a href={`https://wa.me/${supplier.phone.replace(/[^0-9+]/g, '')}`} target="_blank" rel="noreferrer"><Button variant="secondary" size="sm" className="w-full text-xs"><MessageSquare size={12} /> WhatsApp</Button></a>}
+              {supplier.email && <Button variant="secondary" size="sm" className="w-full text-xs" onClick={sendPOByEmail}><Mail size={12} /> Enviar OC</Button>}
+              {supplier.phone && <Button variant="secondary" size="sm" className="w-full text-xs" onClick={sendPOByWhatsApp}><MessageSquare size={12} /> WA OC</Button>}
+              <Button variant="secondary" size="sm" className="w-full text-xs" onClick={() => setShowAddInteraction(true)}><Activity size={12} /> Interaccion</Button>
             </div>
           </Card>
+
+          {/* AI Score card en sidebar */}
+          {supplier.ai_score !== null && supplier.ai_score !== undefined && supplier.ai_profile && (
+            <Card>
+              <h3 className="text-xs font-semibold text-[#6B7280] uppercase mb-3 flex items-center gap-1.5"><Brain size={12} /> Score IA</h3>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-[#6B7280]">Global</span>
+                  <span className={`text-sm font-bold ${supplier.ai_score >= 80 ? 'text-emerald-400' : supplier.ai_score >= 50 ? 'text-amber-400' : 'text-red-400'}`}>{supplier.ai_score}/100</span>
+                </div>
+                {supplier.ai_profile.delivery_score !== undefined && (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-[#6B7280]">Entrega</span>
+                    <span className="text-[#F0F2F5]">{supplier.ai_profile.delivery_score}/100</span>
+                  </div>
+                )}
+                {supplier.ai_profile.quality_score !== undefined && (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-[#6B7280]">Calidad</span>
+                    <span className="text-[#F0F2F5]">{supplier.ai_profile.quality_score}/100</span>
+                  </div>
+                )}
+                {supplier.ai_profile.reliability_score !== undefined && (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-[#6B7280]">Fiabilidad</span>
+                    <span className="text-[#F0F2F5]">{supplier.ai_profile.reliability_score}/100</span>
+                  </div>
+                )}
+                {supplier.ai_tags && supplier.ai_tags.length > 0 && (
+                  <div className="flex flex-wrap gap-1 pt-1">
+                    {supplier.ai_tags.slice(0, 4).map(tag => (
+                      <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded bg-[#1E2330] text-[#9CA3AF]">{tag}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </Card>
+          )}
         </div>
 
         {/* CENTER PANEL */}
@@ -711,6 +972,357 @@ function SupplierDetail({ supplier, onClose, onUpdate }: {
               )}
             </div>
           )}
+
+          {/* TAB: Cadena de documentos */}
+          {activeDetailTab === 'cadena' && (
+            <div className="space-y-4">
+              <h3 className="text-sm font-semibold text-[#F0F2F5]">Cadena de documentos — {supplier.name}</h3>
+              <p className="text-xs text-[#6B7280]">Flujo de documentos: OC enviada → Recepcion → Factura compra → Pago</p>
+              {documentChain.length === 0 ? (
+                <Card><p className="text-center text-[#6B7280] py-6">No hay ordenes de compra registradas para este proveedor</p></Card>
+              ) : (
+                <div className="space-y-3">
+                  {documentChain.map((po) => {
+                    const st = (po.status as string) || 'draft'
+                    const steps: Array<{ label: string; done: boolean; current: boolean }> = [
+                      { label: 'OC Enviada', done: true, current: st === 'sent' },
+                      { label: 'Recepcion', done: st === 'received' || st === 'closed', current: st === 'partial' },
+                      { label: 'Factura', done: st === 'closed', current: false },
+                      { label: 'Pago', done: false, current: false },
+                    ]
+                    return (
+                      <Card key={po.id as string}>
+                        <div className="flex items-start justify-between mb-3">
+                          <div>
+                            <p className="text-sm font-semibold text-[#F0F2F5]">{(po.po_number as string) || `OC-${(po.id as string).slice(0, 8).toUpperCase()}`}</p>
+                            <p className="text-xs text-[#6B7280]">{po.created_at ? formatDate(po.created_at as string) : '-'}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm font-bold text-[#FF6600]">{formatCurrency((po.total as number) || 0)}</p>
+                            <Badge variant={PO_STATUS[st]?.variant || 'default'} size="sm">{PO_STATUS[st]?.label || st}</Badge>
+                          </div>
+                        </div>
+                        {/* Mini workflow */}
+                        <div className="flex items-center gap-1">
+                          {steps.map((step, i) => (
+                            <div key={step.label} className="flex items-center gap-1 flex-1">
+                              <div className={`flex-1 text-center py-1 px-2 rounded text-[10px] font-medium ${
+                                step.done ? 'bg-emerald-500/20 text-emerald-400' :
+                                step.current ? 'bg-amber-500/20 text-amber-400' :
+                                'bg-[#1E2330] text-[#4B5563]'
+                              }`}>
+                                {step.label}
+                              </div>
+                              {i < steps.length - 1 ? <ChevronRight size={10} className="text-[#4B5563] shrink-0" /> : null}
+                            </div>
+                          ))}
+                        </div>
+                        {po.expected_delivery ? (
+                          <p className="text-[10px] text-[#4B5563] mt-2">Entrega esperada: {formatDate(po.expected_delivery as string)}</p>
+                        ) : null}
+                      </Card>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB: Interacciones */}
+          {activeDetailTab === 'interacciones' && (
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <h3 className="text-sm font-semibold text-[#F0F2F5]">Timeline de interacciones</h3>
+                <Button variant="primary" size="sm" onClick={() => setShowAddInteraction(true)}><Plus size={14} /> Agregar</Button>
+              </div>
+              {loadingInteractions ? (
+                <div className="flex justify-center py-10"><Loader2 className="animate-spin text-[#FF6600]" size={24} /></div>
+              ) : interactions.length === 0 ? (
+                <Card>
+                  <div className="text-center py-8 text-[#4B5563]">
+                    <Activity size={32} className="mx-auto mb-2 opacity-30" />
+                    <p className="text-sm">No hay interacciones registradas</p>
+                    <p className="text-xs mt-1">Registra llamadas, emails, reuniones e incidencias</p>
+                  </div>
+                </Card>
+              ) : (
+                <div className="space-y-2">
+                  {interactions.map((interaction) => {
+                    const typeIcons: Record<string, ReactNode> = {
+                      email_sent: <Mail size={14} className="text-blue-400" />,
+                      email_received: <Mail size={14} className="text-emerald-400" />,
+                      call: <PhoneCall size={14} className="text-emerald-400" />,
+                      meeting: <Video size={14} className="text-purple-400" />,
+                      complaint: <ThumbsDown size={14} className="text-red-400" />,
+                      quality_issue: <Wrench size={14} className="text-red-400" />,
+                      price_negotiation: <TrendingUp size={14} className="text-amber-400" />,
+                      delivery_issue: <Truck size={14} className="text-orange-400" />,
+                      payment_sent: <CreditCard size={14} className="text-emerald-400" />,
+                      note: <FileText size={14} className="text-[#6B7280]" />,
+                      other: <MessageCircle size={14} className="text-[#6B7280]" />,
+                    }
+                    const typeLabels: Record<string, string> = {
+                      email_sent: 'Email enviado', email_received: 'Email recibido', call: 'Llamada',
+                      meeting: 'Reunion', complaint: 'Reclamo', quality_issue: 'Problema calidad',
+                      price_negotiation: 'Negociacion precio', delivery_issue: 'Problema entrega',
+                      payment_sent: 'Pago enviado', note: 'Nota', other: 'Otro',
+                    }
+                    return (
+                      <Card key={interaction.id}>
+                        <div className="flex items-start gap-3">
+                          <div className="w-8 h-8 rounded-full bg-[#1E2330] flex items-center justify-center shrink-0">
+                            {typeIcons[interaction.type] || <MessageCircle size={14} className="text-[#6B7280]" />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs font-semibold text-[#9CA3AF]">{typeLabels[interaction.type] || interaction.type}</span>
+                              {interaction.rating && (
+                                <div className="flex gap-0.5">
+                                  {Array.from({ length: 5 }).map((_, i) => (
+                                    <Star key={i} size={10} className={i < interaction.rating! ? 'text-amber-400 fill-amber-400' : 'text-[#4B5563]'} />
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            {interaction.subject && <p className="text-sm font-medium text-[#F0F2F5] mt-0.5">{interaction.subject}</p>}
+                            {interaction.body && <p className="text-xs text-[#6B7280] mt-1 line-clamp-2">{interaction.body}</p>}
+                            {interaction.outcome && <p className="text-xs text-amber-400 mt-1">Resultado: {interaction.outcome}</p>}
+                            <p className="text-[10px] text-[#4B5563] mt-1">{formatRelative(interaction.created_at)}</p>
+                          </div>
+                        </div>
+                      </Card>
+                    )
+                  })}
+                </div>
+              )}
+
+              <Modal isOpen={showAddInteraction} onClose={() => setShowAddInteraction(false)} title="Registrar interaccion" size="md">
+                <div className="space-y-4">
+                  <Select
+                    label="Tipo de interaccion"
+                    value={newInteraction.type}
+                    onChange={(e) => setNewInteraction({ ...newInteraction, type: e.target.value as SupplierInteraction['type'] })}
+                    options={[
+                      { value: 'email_sent', label: 'Email enviado' },
+                      { value: 'email_received', label: 'Email recibido' },
+                      { value: 'call', label: 'Llamada' },
+                      { value: 'meeting', label: 'Reunion' },
+                      { value: 'complaint', label: 'Reclamo' },
+                      { value: 'quality_issue', label: 'Problema de calidad' },
+                      { value: 'price_negotiation', label: 'Negociacion de precio' },
+                      { value: 'delivery_issue', label: 'Problema de entrega' },
+                      { value: 'payment_sent', label: 'Pago enviado' },
+                      { value: 'note', label: 'Nota interna' },
+                      { value: 'other', label: 'Otro' },
+                    ]}
+                  />
+                  <Input label="Asunto *" value={newInteraction.subject} onChange={(e) => setNewInteraction({ ...newInteraction, subject: e.target.value })} />
+                  <div>
+                    <label className="block text-xs font-medium text-[#9CA3AF] mb-1.5">Detalle</label>
+                    <textarea
+                      className="w-full bg-[#0F1218] border border-[#2A3040] rounded-lg px-3 py-2 text-sm text-[#F0F2F5] placeholder-[#4B5563] focus:outline-none focus:border-[#FF6600] resize-none"
+                      rows={3}
+                      value={newInteraction.body}
+                      onChange={(e) => setNewInteraction({ ...newInteraction, body: e.target.value })}
+                      placeholder="Descripcion de la interaccion..."
+                    />
+                  </div>
+                  <Input label="Resultado / Conclusiones" value={newInteraction.outcome} onChange={(e) => setNewInteraction({ ...newInteraction, outcome: e.target.value })} />
+                  <Select
+                    label="Valoracion (opcional)"
+                    value={newInteraction.rating}
+                    onChange={(e) => setNewInteraction({ ...newInteraction, rating: e.target.value })}
+                    options={[
+                      { value: '', label: 'Sin valorar' },
+                      { value: '1', label: '1 — Muy malo' },
+                      { value: '2', label: '2 — Malo' },
+                      { value: '3', label: '3 — Regular' },
+                      { value: '4', label: '4 — Bueno' },
+                      { value: '5', label: '5 — Excelente' },
+                    ]}
+                  />
+                  <div className="flex justify-end gap-2 pt-2">
+                    <Button variant="secondary" onClick={() => setShowAddInteraction(false)}>Cancelar</Button>
+                    <Button variant="primary" onClick={addInteraction} loading={savingInteraction}><Save size={14} /> Guardar</Button>
+                  </div>
+                </div>
+              </Modal>
+            </div>
+          )}
+
+          {/* TAB: IA Score */}
+          {activeDetailTab === 'ia' && (
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <h3 className="text-sm font-semibold text-[#F0F2F5]">Analisis IA del proveedor</h3>
+                <Button variant="primary" size="sm" onClick={runAIScore} loading={scoringAI}>
+                  <Sparkles size={14} /> {supplier.ai_score ? 'Re-analizar' : 'Analizar con IA'}
+                </Button>
+              </div>
+
+              {!supplier.ai_score && !scoringAI && (
+                <Card>
+                  <div className="text-center py-8 text-[#4B5563]">
+                    <Brain size={40} className="mx-auto mb-2 opacity-30" />
+                    <p className="text-sm">Sin analisis IA todavia</p>
+                    <p className="text-xs mt-1">Hace click en &ldquo;Analizar con IA&rdquo; para evaluar este proveedor</p>
+                  </div>
+                </Card>
+              )}
+
+              {scoringAI && (
+                <Card>
+                  <div className="flex items-center gap-3 py-4">
+                    <Loader2 size={24} className="animate-spin text-[#FF6600]" />
+                    <p className="text-sm text-[#9CA3AF]">Analizando historial del proveedor...</p>
+                  </div>
+                </Card>
+              )}
+
+              {supplier.ai_score !== null && supplier.ai_score !== undefined && !scoringAI && (
+                <>
+                  {/* Score global */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="p-4 rounded-xl bg-[#0F1218] border border-[#1E2330] text-center">
+                      <p className="text-xs text-[#6B7280] mb-1">Score Global</p>
+                      <p className={`text-2xl font-bold ${supplier.ai_score >= 80 ? 'text-emerald-400' : supplier.ai_score >= 50 ? 'text-amber-400' : 'text-red-400'}`}>{supplier.ai_score}</p>
+                      <p className="text-[10px] text-[#4B5563]">/ 100</p>
+                    </div>
+                    {supplier.ai_profile?.delivery_score !== undefined && (
+                      <div className="p-4 rounded-xl bg-[#0F1218] border border-[#1E2330] text-center">
+                        <p className="text-xs text-[#6B7280] mb-1 flex items-center justify-center gap-1"><Truck size={10} /> Entrega</p>
+                        <p className="text-xl font-bold text-[#F0F2F5]">{supplier.ai_profile.delivery_score}</p>
+                      </div>
+                    )}
+                    {supplier.ai_profile?.quality_score !== undefined && (
+                      <div className="p-4 rounded-xl bg-[#0F1218] border border-[#1E2330] text-center">
+                        <p className="text-xs text-[#6B7280] mb-1 flex items-center justify-center gap-1"><ShieldCheck size={10} /> Calidad</p>
+                        <p className="text-xl font-bold text-[#F0F2F5]">{supplier.ai_profile.quality_score}</p>
+                      </div>
+                    )}
+                    {supplier.ai_profile?.reliability_score !== undefined && (
+                      <div className="p-4 rounded-xl bg-[#0F1218] border border-[#1E2330] text-center">
+                        <p className="text-xs text-[#6B7280] mb-1 flex items-center justify-center gap-1"><BarChart2 size={10} /> Fiabilidad</p>
+                        <p className="text-xl font-bold text-[#F0F2F5]">{supplier.ai_profile.reliability_score}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Analisis textual */}
+                  {supplier.ai_analysis && (
+                    <Card>
+                      <h4 className="text-xs font-semibold text-[#6B7280] uppercase mb-2">Analisis</h4>
+                      <p className="text-sm text-[#F0F2F5] leading-relaxed">{supplier.ai_analysis}</p>
+                      {supplier.ai_profile?.suggested_action && (
+                        <div className="mt-3 p-3 rounded-lg bg-[#FF6600]/10 border border-[#FF6600]/20">
+                          <p className="text-xs text-[#FF6600] font-semibold">Accion sugerida: {supplier.ai_profile.suggested_action}</p>
+                        </div>
+                      )}
+                    </Card>
+                  )}
+
+                  {/* Tags */}
+                  {supplier.ai_tags && supplier.ai_tags.length > 0 && (
+                    <Card>
+                      <h4 className="text-xs font-semibold text-[#6B7280] uppercase mb-2">Tags IA</h4>
+                      <div className="flex flex-wrap gap-2">
+                        {supplier.ai_tags.map(tag => (
+                          <span key={tag} className="px-2 py-1 rounded-full text-xs bg-[#1E2330] text-[#9CA3AF] border border-[#2A3040]">{tag}</span>
+                        ))}
+                      </div>
+                    </Card>
+                  )}
+
+                  {supplier.ai_analysis_at && (
+                    <p className="text-[10px] text-[#4B5563] text-right">
+                      Analizado {formatRelative(supplier.ai_analysis_at)} · por {supplier.ai_provider || 'IA'}
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* TAB: Portal del proveedor */}
+          {activeDetailTab === 'portal' && (
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <h3 className="text-sm font-semibold text-[#F0F2F5]">Portal del proveedor</h3>
+                <Button variant="primary" size="sm" onClick={generatePortalToken} loading={generatingPortal}>
+                  <Link size={14} /> {supplier.portal_token ? 'Regenerar link' : 'Generar link de acceso'}
+                </Button>
+              </div>
+
+              <Card>
+                <p className="text-xs text-[#6B7280] mb-3">
+                  El portal permite al proveedor ver sus ordenes de compra, estado de recepciones y pagos pendientes
+                  sin necesidad de login. El link tiene validez de 30 dias.
+                </p>
+
+                {!supplier.portal_token ? (
+                  <div className="text-center py-6 text-[#4B5563]">
+                    <ExternalLink size={32} className="mx-auto mb-2 opacity-30" />
+                    <p className="text-sm">Portal no generado</p>
+                    <p className="text-xs mt-1">Genera un link de acceso para compartir con el proveedor</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 p-3 rounded-lg bg-[#0F1218] border border-[#1E2330]">
+                      <code className="text-xs text-[#FF6600] font-mono truncate flex-1">
+                        {typeof window !== 'undefined' ? `${window.location.origin}/api/portal/supplier/${supplier.portal_token}` : `[origin]/api/portal/supplier/${supplier.portal_token}`}
+                      </code>
+                      <Button variant="ghost" size="sm" onClick={copyPortalLink}>
+                        {portalCopied ? <CheckCircle size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                      </Button>
+                    </div>
+                    {supplier.portal_token_expires_at && (
+                      <p className="text-xs text-[#6B7280]">
+                        Expira: {formatDate(supplier.portal_token_expires_at)}
+                        {new Date(supplier.portal_token_expires_at) < new Date() && (
+                          <span className="ml-2 text-red-400 font-semibold">EXPIRADO</span>
+                        )}
+                      </p>
+                    )}
+                    {supplier.portal_last_seen && (
+                      <p className="text-xs text-[#6B7280]">Ultimo acceso: {formatRelative(supplier.portal_last_seen)}</p>
+                    )}
+
+                    {/* Send portal link */}
+                    <div className="pt-2 flex gap-2">
+                      {supplier.email && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => {
+                            const url = typeof window !== 'undefined' ? `${window.location.origin}/api/portal/supplier/${supplier.portal_token}` : ''
+                            const subject = encodeURIComponent(`Portal de proveedor — ${supplier.name}`)
+                            const body = encodeURIComponent(`Estimados ${supplier.name},\n\nPueden acceder a su portal de proveedor en el siguiente link:\n\n${url}\n\nAhí podrán ver sus ordenes de compra, recepciones y estado de pagos.\n\nSaludos,\nEquipo Mocciaro`)
+                            window.open(`mailto:${supplier.email}?subject=${subject}&body=${body}`, '_blank')
+                          }}
+                        >
+                          <Mail size={12} /> Enviar por email
+                        </Button>
+                      )}
+                      {supplier.phone && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => {
+                            const url = typeof window !== 'undefined' ? `${window.location.origin}/api/portal/supplier/${supplier.portal_token}` : ''
+                            const phone = supplier.phone!.replace(/[^0-9+]/g, '')
+                            const msg = encodeURIComponent(`Hola ${supplier.name}, les compartimos el acceso a su portal de proveedor: ${url}`)
+                            window.open(`https://wa.me/${phone}?text=${msg}`, '_blank')
+                          }}
+                        >
+                          <MessageSquare size={12} /> Enviar por WhatsApp
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </Card>
+            </div>
+          )}
         </div>
 
         {/* RIGHT PANEL */}
@@ -734,6 +1346,16 @@ function SupplierDetail({ supplier, onClose, onUpdate }: {
                 <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center"><Receipt size={14} className="text-amber-400" /></div>
                 <div><p className="text-xs text-[#6B7280]">Facturas pendientes</p><p className="text-sm font-semibold text-[#F0F2F5]">{pendingInvoices.length}</p></div>
               </div>
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-purple-500/10 flex items-center justify-center"><Activity size={14} className="text-purple-400" /></div>
+                <div><p className="text-xs text-[#6B7280]">Interacciones</p><p className="text-sm font-semibold text-[#F0F2F5]">{interactions.length}</p></div>
+              </div>
+              {supplier.ai_score !== null && supplier.ai_score !== undefined && (
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-[#FF6600]/10 flex items-center justify-center"><Brain size={14} className="text-[#FF6600]" /></div>
+                  <div><p className="text-xs text-[#6B7280]">Score IA</p><p className={`text-sm font-semibold ${supplier.ai_score >= 80 ? 'text-emerald-400' : supplier.ai_score >= 50 ? 'text-amber-400' : 'text-red-400'}`}>{supplier.ai_score}/100</p></div>
+                </div>
+              )}
             </div>
           </Card>
 
@@ -950,6 +1572,8 @@ function ProveedoresTab() {
     { key: '_po_count', label: 'Total OC', sortable: true, type: 'number', defaultVisible: false },
     { key: '_invoices_count', label: 'Facturas', sortable: true, type: 'number', defaultVisible: false },
     { key: '_payments_count', label: 'Pagos', sortable: true, type: 'number', defaultVisible: false },
+    // --- IA ---
+    { key: 'ai_score', label: 'Score IA', sortable: true, type: 'number', render: (v) => v !== null && v !== undefined ? `${v}/100` : '-' },
     // --- Extra ---
     { key: 'notes', label: 'Notas', sortable: false, type: 'text', defaultVisible: false },
     { key: 'created_at', label: 'Creado', sortable: true, type: 'date', defaultVisible: false },
@@ -1087,10 +1711,19 @@ function ProveedoresTab() {
                 {supplier.phone && <span className="text-xs text-[#9CA3AF] flex items-center gap-1"><Phone size={10} />{supplier.phone}</span>}
               </div>
               <div className="pt-3 border-t border-[#1E2330] flex items-center justify-between">
-                <div className="flex gap-1.5">
+                <div className="flex gap-1.5 flex-wrap">
                   {supplier.category && <Badge variant="info" size="sm">{supplier.category}</Badge>}
                   {supplier.payment_terms && <Badge variant="default" size="sm">{supplier.payment_terms}</Badge>}
                 </div>
+                {supplier.ai_score !== null && supplier.ai_score !== undefined && (
+                  <Badge
+                    variant={supplier.ai_score >= 80 ? 'success' : supplier.ai_score >= 50 ? 'warning' : 'danger'}
+                    size="sm"
+                  >
+                    <Brain size={9} className="mr-0.5 inline" />
+                    {supplier.ai_score}
+                  </Badge>
+                )}
               </div>
             </Card>
           ))}
@@ -1236,22 +1869,7 @@ function PedidosCompraTab() {
     setSelectedPO(null); load()
   }
 
-  if (selectedPO && !showReceive) {
-    const src = (selectedPO as Row & { _source?: string })._source === 'tt_documents' ? 'tt_documents' : 'local' as const
-    const allIds = orders.map(o => o.id as string)
-    return (
-      <DocumentForm
-        documentId={selectedPO.id as string}
-        documentType="pap"
-        source={src}
-        onBack={() => { setSelectedPO(null); load() }}
-        onUpdate={load}
-        siblingIds={allIds}
-      />
-    )
-  }
-
-  // Build DataTable rows
+  // Build DataTable rows (must be before any conditional return — hooks rule)
   const tableRows = useMemo(() => {
     return orders.map((po) => {
       const isDoc = (po as Row & { _source?: string })._source === 'tt_documents'
@@ -1277,6 +1895,22 @@ function PedidosCompraTab() {
   const handleRowClick = (row: Record<string, unknown>) => {
     const po = row._raw as Row
     openDetail(po)
+  }
+
+  // Conditional detail view (after all hooks to avoid "fewer hooks" error)
+  if (selectedPO && !showReceive) {
+    const src = (selectedPO as Row & { _source?: string })._source === 'tt_documents' ? 'tt_documents' : 'local' as const
+    const allIds = orders.map(o => o.id as string)
+    return (
+      <DocumentForm
+        documentId={selectedPO.id as string}
+        documentType="pap"
+        source={src}
+        onBack={() => { setSelectedPO(null); load() }}
+        onUpdate={load}
+        siblingIds={allIds}
+      />
+    )
   }
 
   return (
@@ -2134,6 +2768,607 @@ function CalendarioPagosTab() {
 }
 
 // ===============================================================
+// ABONOS TAB (Purchase Credit Notes)
+// ===============================================================
+const CN_STATUS: Record<string, { label: string; variant: 'default' | 'success' | 'warning' | 'danger' | 'info' | 'orange' }> = {
+  pending: { label: 'Pendiente', variant: 'warning' },
+  applied: { label: 'Aplicado', variant: 'success' },
+  rejected: { label: 'Rechazado', variant: 'danger' },
+}
+
+function generateCNNumber(): string {
+  const now = new Date()
+  const y = now.getFullYear().toString().slice(-2)
+  const m = (now.getMonth() + 1).toString().padStart(2, '0')
+  const r = Math.floor(Math.random() * 9999).toString().padStart(4, '0')
+  return `AB-${y}${m}-${r}`
+}
+
+function AbonosTab() {
+  const { addToast } = useToast()
+  const { filterByCompany, defaultCompanyId, companyKey } = useCompanyFilter()
+  const [creditNotes, setCreditNotes] = useState<PurchaseCreditNote[]>([])
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
+  const [showCreate, setShowCreate] = useState(false)
+  const [selectedCN, setSelectedCN] = useState<PurchaseCreditNote | null>(null)
+  const [cnItems, setCnItems] = useState<PurchaseCreditNoteItem[]>([])
+  const [saving, setSaving] = useState(false)
+
+  // Create form state
+  const [newCN, setNewCN] = useState({
+    supplier_id: '',
+    purchase_invoice_id: '',
+    supplier_cn_number: '',
+    supplier_cn_date: '',
+    reason: '',
+    subtotal: 0,
+    tax_rate: 21,
+    notes: '',
+    items: [{ description: '', quantity: 1, unit_price: 0, sku: '', product_id: '' }] as Array<{
+      description: string; quantity: number; unit_price: number; sku: string; product_id: string
+    }>,
+  })
+
+  // Suppliers for searchable select
+  const searchSuppliers = useCallback(async (query: string) => {
+    const sb = createClient()
+    const { data } = await sb
+      .from('tt_suppliers')
+      .select('id, name, legal_name')
+      .eq('active', true)
+      .or(`name.ilike.%${query}%,legal_name.ilike.%${query}%`)
+      .order('name')
+      .limit(20)
+    return (data || []).map(s => ({ value: s.id, label: s.legal_name || s.name }))
+  }, [])
+
+  // Invoices for the selected supplier
+  const [supplierInvoices, setSupplierInvoices] = useState<Array<{ value: string; label: string }>>([])
+  useEffect(() => {
+    if (!newCN.supplier_id) { setSupplierInvoices([]); return }
+    const loadInvoices = async () => {
+      const sb = createClient()
+      const { data } = await sb
+        .from('tt_purchase_invoices')
+        .select('id, number, supplier_invoice_number, total')
+        .eq('supplier_id', newCN.supplier_id)
+        .order('created_at', { ascending: false })
+        .limit(50)
+      setSupplierInvoices(
+        (data || []).map(i => ({
+          value: i.id,
+          label: `${i.number}${i.supplier_invoice_number ? ` (${i.supplier_invoice_number})` : ''} - ${formatCurrency(i.total)}`,
+        }))
+      )
+    }
+    loadInvoices()
+  }, [newCN.supplier_id])
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    const sb = createClient()
+    let q = sb
+      .from('tt_purchase_credit_notes')
+      .select('*, supplier:tt_suppliers(id, name, legal_name), purchase_invoice:tt_purchase_invoices(id, number)')
+      .order('created_at', { ascending: false })
+    q = filterByCompany(q)
+    const { data } = await q
+    setCreditNotes((data || []) as PurchaseCreditNote[])
+    setLoading(false)
+  }, [companyKey])
+
+  useEffect(() => { void load() }, [load])
+
+  // Filter
+  const filtered = useMemo(() => {
+    let result = creditNotes
+    if (statusFilter) {
+      result = result.filter(cn => cn.status === statusFilter)
+    }
+    if (search.trim()) {
+      const tokens = search.trim().toLowerCase().split(/\s+/)
+      result = result.filter(cn => {
+        const sName = cn.supplier?.name || cn.supplier?.legal_name || ''
+        const invRef = (cn.purchase_invoice as PurchaseInvoice | undefined)?.number || ''
+        const searchable = [cn.number, sName, cn.supplier_cn_number, cn.reason, invRef].filter(Boolean).join(' ').toLowerCase()
+        return tokens.every(t => searchable.includes(t))
+      })
+    }
+    return result
+  }, [creditNotes, search, statusFilter])
+
+  // KPIs
+  const pendingTotal = creditNotes.filter(cn => cn.status === 'pending').reduce((s, cn) => s + cn.total, 0)
+  const appliedTotal = creditNotes.filter(cn => cn.status === 'applied').reduce((s, cn) => s + cn.total, 0)
+  const pendingCount = creditNotes.filter(cn => cn.status === 'pending').length
+
+  // Computed subtotal/tax/total for create form
+  const computedSubtotal = newCN.items.reduce((s, item) => s + item.quantity * item.unit_price, 0)
+  const computedTaxAmount = computedSubtotal * newCN.tax_rate / 100
+  const computedTotal = computedSubtotal + computedTaxAmount
+
+  function addItem() {
+    setNewCN(prev => ({
+      ...prev,
+      items: [...prev.items, { description: '', quantity: 1, unit_price: 0, sku: '', product_id: '' }],
+    }))
+  }
+
+  function removeItem(idx: number) {
+    setNewCN(prev => ({
+      ...prev,
+      items: prev.items.filter((_, i) => i !== idx),
+    }))
+  }
+
+  function updateItem(idx: number, field: string, value: string | number) {
+    setNewCN(prev => ({
+      ...prev,
+      items: prev.items.map((item, i) => i === idx ? { ...item, [field]: value } : item),
+    }))
+  }
+
+  async function handleCreate() {
+    if (!newCN.supplier_id) { addToast({ type: 'error', title: 'Selecciona un proveedor' }); return }
+    if (newCN.items.length === 0 || !newCN.items.some(i => i.description.trim())) {
+      addToast({ type: 'error', title: 'Agrega al menos un item con descripcion' }); return
+    }
+    setSaving(true)
+    const sb = createClient()
+    const number = generateCNNumber()
+    const { data: cnData, error } = await sb.from('tt_purchase_credit_notes').insert({
+      number,
+      company_id: defaultCompanyId,
+      supplier_id: newCN.supplier_id,
+      purchase_invoice_id: newCN.purchase_invoice_id || null,
+      supplier_cn_number: newCN.supplier_cn_number || null,
+      supplier_cn_date: newCN.supplier_cn_date || null,
+      reason: newCN.reason || null,
+      status: 'pending',
+      currency: 'EUR',
+      subtotal: computedSubtotal,
+      tax_rate: newCN.tax_rate,
+      tax_amount: computedTaxAmount,
+      total: computedTotal,
+      notes: newCN.notes || null,
+    }).select('id').single()
+
+    if (error || !cnData) {
+      addToast({ type: 'error', title: 'Error al crear abono', message: error?.message || 'Error desconocido' })
+      setSaving(false)
+      return
+    }
+
+    // Insert items
+    const itemsToInsert = newCN.items
+      .filter(i => i.description.trim())
+      .map(i => ({
+        credit_note_id: cnData.id,
+        product_id: i.product_id || null,
+        sku: i.sku || null,
+        description: i.description,
+        quantity: i.quantity,
+        unit_price: i.unit_price,
+        subtotal: i.quantity * i.unit_price,
+      }))
+
+    if (itemsToInsert.length > 0) {
+      await sb.from('tt_purchase_credit_note_items').insert(itemsToInsert)
+    }
+
+    addToast({ type: 'success', title: 'Abono creado', message: `Numero: ${number}` })
+    setShowCreate(false)
+    setNewCN({
+      supplier_id: '', purchase_invoice_id: '', supplier_cn_number: '',
+      supplier_cn_date: '', reason: '', subtotal: 0, tax_rate: 21, notes: '',
+      items: [{ description: '', quantity: 1, unit_price: 0, sku: '', product_id: '' }],
+    })
+    load()
+    setSaving(false)
+  }
+
+  async function openDetail(cn: PurchaseCreditNote) {
+    setSelectedCN(cn)
+    const sb = createClient()
+    const { data } = await sb
+      .from('tt_purchase_credit_note_items')
+      .select('*')
+      .eq('credit_note_id', cn.id)
+      .order('id')
+    setCnItems((data || []) as PurchaseCreditNoteItem[])
+  }
+
+  async function handleApply() {
+    if (!selectedCN) return
+    setSaving(true)
+    const sb = createClient()
+    const { error } = await sb
+      .from('tt_purchase_credit_notes')
+      .update({ status: 'applied', updated_at: new Date().toISOString() })
+      .eq('id', selectedCN.id)
+    if (!error) {
+      addToast({ type: 'success', title: 'Abono aplicado' })
+      setSelectedCN(prev => prev ? { ...prev, status: 'applied' } : null)
+      load()
+    } else {
+      addToast({ type: 'error', title: 'Error', message: error.message })
+    }
+    setSaving(false)
+  }
+
+  async function handleReject() {
+    if (!selectedCN) return
+    setSaving(true)
+    const sb = createClient()
+    const { error } = await sb
+      .from('tt_purchase_credit_notes')
+      .update({ status: 'rejected', updated_at: new Date().toISOString() })
+      .eq('id', selectedCN.id)
+    if (!error) {
+      addToast({ type: 'success', title: 'Abono rechazado' })
+      setSelectedCN(prev => prev ? { ...prev, status: 'rejected' } : null)
+      load()
+    } else {
+      addToast({ type: 'error', title: 'Error', message: error.message })
+    }
+    setSaving(false)
+  }
+
+  // Detail view
+  if (selectedCN) {
+    const sName = selectedCN.supplier?.name || selectedCN.supplier?.legal_name || 'Proveedor'
+    const invRef = (selectedCN.purchase_invoice as PurchaseInvoice | undefined)?.number || null
+    const st = CN_STATUS[selectedCN.status] || CN_STATUS.pending
+
+    return (
+      <div className="space-y-4 animate-in fade-in">
+        <button onClick={() => setSelectedCN(null)} className="flex items-center gap-2 text-[#9CA3AF] hover:text-[#F0F2F5] transition-colors text-sm">
+          <ArrowLeft size={16} /> Volver a abonos
+        </button>
+
+        <div className="flex items-start justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-[#F0F2F5]">{selectedCN.number}</h2>
+            <p className="text-sm text-[#6B7280]">
+              {sName}
+              {selectedCN.supplier_cn_number ? ` | N. abono proveedor: ${selectedCN.supplier_cn_number}` : ''}
+            </p>
+          </div>
+          <Badge variant={st.variant} size="md">{st.label}</Badge>
+        </div>
+
+        {/* Totals cards */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="p-4 rounded-xl bg-[#141820] border border-[#1E2330]">
+            <p className="text-xs text-[#6B7280]">Subtotal</p>
+            <p className="text-lg font-bold text-[#F0F2F5]">{formatCurrency(selectedCN.subtotal)}</p>
+          </div>
+          <div className="p-4 rounded-xl bg-[#141820] border border-[#1E2330]">
+            <p className="text-xs text-[#6B7280]">IVA ({selectedCN.tax_rate}%)</p>
+            <p className="text-lg font-bold text-[#F0F2F5]">{formatCurrency(selectedCN.tax_amount)}</p>
+          </div>
+          <div className="p-4 rounded-xl bg-[#141820] border border-[#1E2330]">
+            <p className="text-xs text-[#6B7280]">Total abono</p>
+            <p className="text-lg font-bold text-[#FF6600]">{formatCurrency(selectedCN.total)}</p>
+          </div>
+          <div className="p-4 rounded-xl bg-[#141820] border border-[#1E2330]">
+            <p className="text-xs text-[#6B7280]">Fecha abono</p>
+            <p className="text-lg font-bold text-[#F0F2F5]">
+              {selectedCN.supplier_cn_date ? formatDate(selectedCN.supplier_cn_date) : '-'}
+            </p>
+          </div>
+        </div>
+
+        {/* Reason */}
+        {selectedCN.reason && (
+          <Card className="p-4">
+            <p className="text-xs text-[#6B7280] mb-1">Motivo</p>
+            <p className="text-sm text-[#F0F2F5]">{selectedCN.reason}</p>
+          </Card>
+        )}
+
+        {/* Linked invoice */}
+        {invRef && (
+          <Card className="p-4">
+            <p className="text-xs text-[#6B7280] mb-1">Factura vinculada</p>
+            <p className="text-sm text-[#F0F2F5] flex items-center gap-2">
+              <FileCheck size={14} className="text-[#FF6600]" /> {invRef}
+            </p>
+          </Card>
+        )}
+
+        {/* Items table */}
+        <Card className="p-0 overflow-hidden">
+          <div className="px-4 py-3 border-b border-[#1E2330]">
+            <h3 className="font-semibold text-sm text-[#F0F2F5]">Items del abono</h3>
+          </div>
+          {cnItems.length === 0 ? (
+            <div className="p-6 text-center text-sm text-[#6B7280]">Sin items registrados</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-[#1E2330] text-[#6B7280]">
+                    <th className="px-4 py-2 text-left font-medium">Descripcion</th>
+                    <th className="px-4 py-2 text-left font-medium">SKU</th>
+                    <th className="px-4 py-2 text-right font-medium">Cantidad</th>
+                    <th className="px-4 py-2 text-right font-medium">Precio unit.</th>
+                    <th className="px-4 py-2 text-right font-medium">Subtotal</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cnItems.map(item => (
+                    <tr key={item.id} className="border-b border-[#1E2330]/50 hover:bg-[#1E2330]/30">
+                      <td className="px-4 py-2 text-[#F0F2F5]">{item.description || '-'}</td>
+                      <td className="px-4 py-2 text-[#9CA3AF]">{item.sku || '-'}</td>
+                      <td className="px-4 py-2 text-right text-[#F0F2F5]">{item.quantity}</td>
+                      <td className="px-4 py-2 text-right text-[#F0F2F5]">{formatCurrency(item.unit_price)}</td>
+                      <td className="px-4 py-2 text-right text-[#FF6600] font-medium">{formatCurrency(item.subtotal)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+
+        {/* Notes */}
+        {selectedCN.notes && (
+          <Card className="p-4">
+            <p className="text-xs text-[#6B7280] mb-1">Notas</p>
+            <p className="text-sm text-[#9CA3AF]">{selectedCN.notes}</p>
+          </Card>
+        )}
+
+        {/* Action buttons */}
+        {selectedCN.status === 'pending' && (
+          <div className="flex gap-2">
+            <Button variant="primary" onClick={handleApply} disabled={saving}>
+              {saving ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle size={16} />}
+              Aplicar abono
+            </Button>
+            <Button variant="secondary" onClick={handleReject} disabled={saving}>
+              <X size={16} /> Rechazar
+            </Button>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // List view
+  return (
+    <div className="space-y-4 animate-in fade-in">
+      {/* KPIs */}
+      <div className="grid grid-cols-3 gap-4">
+        <KPICard
+          label="Abonos pendientes"
+          value={formatCurrency(pendingTotal)}
+          icon={<Receipt size={20} />}
+          color="#EAB308"
+        />
+        <KPICard
+          label="Abonos aplicados"
+          value={formatCurrency(appliedTotal)}
+          icon={<CheckCircle size={20} />}
+          color="#10B981"
+        />
+        <KPICard
+          label="Pendientes"
+          value={pendingCount}
+          icon={<Clock size={20} />}
+          color="#FF6600"
+        />
+      </div>
+
+      {/* Filters and actions */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex-1 min-w-[200px]">
+          <Input
+            placeholder="Buscar abonos..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            icon={<Hash size={14} />}
+          />
+        </div>
+        <Select
+          options={[
+            { value: '', label: 'Todos los estados' },
+            { value: 'pending', label: 'Pendiente' },
+            { value: 'applied', label: 'Aplicado' },
+            { value: 'rejected', label: 'Rechazado' },
+          ]}
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="w-44"
+        />
+        <Button variant="primary" onClick={() => { setShowCreate(true) }}>
+          <Plus size={16} /> Nuevo abono
+        </Button>
+      </div>
+
+      {/* Data table */}
+      <DataTable
+        data={filtered.map(cn => ({
+          id: cn.id,
+          number: cn.number,
+          supplier: cn.supplier?.name || cn.supplier?.legal_name || '-',
+          invoice_ref: (cn.purchase_invoice as PurchaseInvoice | undefined)?.number || '-',
+          date: cn.supplier_cn_date || cn.created_at,
+          total: cn.total,
+          status: cn.status,
+          reason: cn.reason || '-',
+          _raw: cn,
+        }))}
+        columns={[
+          { key: 'number', label: 'Numero', sortable: true },
+          { key: 'supplier', label: 'Proveedor', sortable: true, searchable: true },
+          { key: 'invoice_ref', label: 'Factura ref.', sortable: true },
+          {
+            key: 'date', label: 'Fecha', sortable: true, type: 'date',
+            render: (v) => v ? formatDate(v as string) : '-',
+          },
+          {
+            key: 'total', label: 'Total', sortable: true, type: 'currency',
+            render: (v) => <span className="text-[#FF6600] font-medium">{formatCurrency(v as number)}</span>,
+          },
+          {
+            key: 'status', label: 'Estado', sortable: true, type: 'status',
+            render: (v) => {
+              const st = CN_STATUS[v as string] || CN_STATUS.pending
+              return <Badge variant={st.variant}>{st.label}</Badge>
+            },
+          },
+          { key: 'reason', label: 'Motivo', searchable: true },
+        ]}
+        loading={loading}
+        onRowClick={(row) => openDetail(row._raw as PurchaseCreditNote)}
+        onNewClick={() => setShowCreate(true)}
+        newLabel="Nuevo abono"
+        exportFilename="abonos_compra"
+        totalLabel="abonos"
+      />
+
+      {/* CREATE MODAL */}
+      <Modal isOpen={showCreate} onClose={() => setShowCreate(false)} title="Nuevo abono de proveedor" size="xl">
+        <div className="space-y-4">
+          {/* Supplier */}
+          <SearchableSelect
+            label="Proveedor"
+            value={newCN.supplier_id}
+            onChange={(val) => setNewCN(prev => ({ ...prev, supplier_id: val, purchase_invoice_id: '' }))}
+            placeholder="Buscar proveedor..."
+            onSearch={searchSuppliers}
+            minSearchLength={2}
+          />
+
+          {/* Linked invoice */}
+          {newCN.supplier_id && supplierInvoices.length > 0 && (
+            <SearchableSelect
+              label="Factura vinculada (opcional)"
+              value={newCN.purchase_invoice_id}
+              onChange={(val) => setNewCN(prev => ({ ...prev, purchase_invoice_id: val }))}
+              placeholder="Seleccionar factura..."
+              options={supplierInvoices}
+            />
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <Input
+              label="N. abono proveedor"
+              value={newCN.supplier_cn_number}
+              onChange={(e) => setNewCN(prev => ({ ...prev, supplier_cn_number: e.target.value }))}
+              placeholder="Ej: AB-2024-001"
+            />
+            <Input
+              label="Fecha abono proveedor"
+              type="date"
+              value={newCN.supplier_cn_date}
+              onChange={(e) => setNewCN(prev => ({ ...prev, supplier_cn_date: e.target.value }))}
+            />
+          </div>
+
+          <Input
+            label="Motivo del abono"
+            value={newCN.reason}
+            onChange={(e) => setNewCN(prev => ({ ...prev, reason: e.target.value }))}
+            placeholder="Ej: Devolucion de mercaderia, diferencia de precio..."
+          />
+
+          {/* Items */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-medium text-[#9CA3AF]">Items</label>
+              <Button variant="ghost" size="sm" onClick={addItem}>
+                <Plus size={14} /> Agregar item
+              </Button>
+            </div>
+            <div className="space-y-2">
+              {newCN.items.map((item, idx) => (
+                <div key={idx} className="grid grid-cols-[1fr_80px_80px_100px_32px] gap-2 items-end">
+                  <Input
+                    placeholder="Descripcion"
+                    value={item.description}
+                    onChange={(e) => updateItem(idx, 'description', e.target.value)}
+                  />
+                  <Input
+                    placeholder="Cant."
+                    type="number"
+                    min="1"
+                    value={item.quantity}
+                    onChange={(e) => updateItem(idx, 'quantity', Number(e.target.value))}
+                  />
+                  <Input
+                    placeholder="SKU"
+                    value={item.sku}
+                    onChange={(e) => updateItem(idx, 'sku', e.target.value)}
+                  />
+                  <Input
+                    placeholder="Precio"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={item.unit_price}
+                    onChange={(e) => updateItem(idx, 'unit_price', Number(e.target.value))}
+                  />
+                  <button
+                    onClick={() => removeItem(idx)}
+                    className="h-10 w-8 flex items-center justify-center text-[#6B7280] hover:text-red-400 transition-colors"
+                    disabled={newCN.items.length <= 1}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Tax rate */}
+          <div className="grid grid-cols-3 gap-3">
+            <Select
+              label="Tipo IVA"
+              options={[
+                { value: '0', label: '0% (Intracomunitaria)' },
+                { value: '4', label: '4% (Superreducido)' },
+                { value: '10', label: '10% (Reducido)' },
+                { value: '21', label: '21% (General)' },
+              ]}
+              value={String(newCN.tax_rate)}
+              onChange={(e) => setNewCN(prev => ({ ...prev, tax_rate: Number(e.target.value) }))}
+            />
+            <div className="p-3 rounded-xl bg-[#141820] border border-[#1E2330]">
+              <p className="text-xs text-[#6B7280] mb-1">Subtotal</p>
+              <p className="text-lg font-bold text-[#F0F2F5]">{formatCurrency(computedSubtotal)}</p>
+            </div>
+            <div className="p-3 rounded-xl bg-[#141820] border border-[#1E2330]">
+              <p className="text-xs text-[#6B7280] mb-1">Total (con IVA)</p>
+              <p className="text-lg font-bold text-[#FF6600]">{formatCurrency(computedTotal)}</p>
+            </div>
+          </div>
+
+          <Input
+            label="Notas"
+            value={newCN.notes}
+            onChange={(e) => setNewCN(prev => ({ ...prev, notes: e.target.value }))}
+            placeholder="Notas internas..."
+          />
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="secondary" onClick={() => setShowCreate(false)}>Cancelar</Button>
+            <Button variant="primary" onClick={handleCreate} disabled={saving}>
+              {saving ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+              Crear abono
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  )
+}
+
+// ===============================================================
 // INTERCOMPANY TAB
 // ===============================================================
 function IntercompanyTab() {
@@ -2556,6 +3791,7 @@ export default function ComprasPage() {
               {activeTab === 'pedidos' && <PedidosCompraTab />}
               {activeTab === 'recepciones' && <RecepcionesTab />}
               {activeTab === 'facturas' && <FacturasCompraTab />}
+              {activeTab === 'abonos' && <AbonosTab />}
               {activeTab === 'pagos' && <PagosTab />}
               {activeTab === 'calendario' && <CalendarioPagosTab />}
               {activeTab === 'intercompany' && <IntercompanyTab />}

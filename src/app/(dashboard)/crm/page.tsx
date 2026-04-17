@@ -17,6 +17,10 @@ import { formatCurrency, formatDate, formatRelative, CRM_STAGES } from '@/lib/ut
 import type { Opportunity, Client, User } from '@/types'
 import { ExportButton } from '@/components/ui/export-button'
 import { useCompanyFilter } from '@/hooks/use-company-filter'
+import { useCompanyContext } from '@/lib/company-context'
+import { DocumentProcessBar } from '@/components/workflow/document-process-bar'
+import { buildSteps } from '@/lib/workflow-definitions'
+import { LeadsIATab } from './leads/page'
 import {
   Plus, Target, Calendar, User as UserIcon, GripVertical, Save,
   Loader2, Activity, BarChart3, TrendingUp, PieChart, DollarSign,
@@ -91,6 +95,7 @@ export const STAFF_SPECIALTIES = [
 ]
 
 const crmTabs = [
+  { id: 'leads', label: 'Leads IA', icon: <Zap size={16} /> },
   { id: 'pipeline', label: 'Pipeline', icon: <Target size={16} /> },
   { id: 'actividades', label: 'Actividades', icon: <Activity size={16} /> },
   { id: 'informes', label: 'Informes', icon: <BarChart3 size={16} /> },
@@ -101,6 +106,7 @@ const crmTabs = [
 // ═══════════════════════════════════════════════════════
 function PipelineTab() {
   const { filterByCompany, companyKey } = useCompanyFilter()
+  const { activeCompanyId } = useCompanyContext()
   const { addToast } = useToast()
   const [opportunities, setOpportunities] = useState<Opportunity[]>([])
   const [loading, setLoading] = useState(true)
@@ -113,7 +119,7 @@ function PipelineTab() {
   const [filterAssigned, setFilterAssigned] = useState('')
 
   // New opportunity form
-  const emptyOpp = { title: '', client_name: '', client_id: '', value: 0, currency: 'EUR', probability: 50, stage: 'lead' as string, assigned_to: '', expected_close_date: '', notes: '', source: '', urgency: 'media', product_interest: '', contact_name: '', contact_phone: '', contact_email: '' }
+  const emptyOpp = { title: '', client_name: '', client_id: '', value: 0, currency: 'EUR', probability: 20, stage: 'lead' as string, assigned_to: '', expected_close_date: '', notes: '', source: '', urgency: 'media', product_interest: '', contact_name: '', contact_phone: '', contact_email: '' }
   const [newOpp, setNewOpp] = useState(emptyOpp)
   const [savingNew, setSavingNew] = useState(false)
   const [clientSearchResults, setClientSearchResults] = useState<Client[]>([])
@@ -267,9 +273,16 @@ function PipelineTab() {
     const tags = newOpp.urgency ? [newOpp.urgency] : []
     if (newOpp.product_interest) tags.push(newOpp.product_interest)
 
+    if (!activeCompanyId) {
+      addToast({ type: 'error', title: 'Seleccioná una empresa activa antes de crear la oportunidad' })
+      setSavingNew(false)
+      return
+    }
+
     const { error } = await supabase.from('tt_opportunities').insert({
       title: newOpp.title,
       client_id: clientId || null,
+      company_id: activeCompanyId,
       stage: newOpp.stage,
       value: newOpp.value,
       currency: newOpp.currency,
@@ -278,6 +291,8 @@ function PipelineTab() {
       expected_close_date: newOpp.expected_close_date || null,
       notes: newOpp.notes || null,
       source: newOpp.source || null,
+      urgency: newOpp.urgency || null,
+      product_interest: newOpp.product_interest || null,
       tags,
     })
     if (!error) {
@@ -287,7 +302,8 @@ function PipelineTab() {
       setShowNewClientInline(false)
       loadData()
     } else {
-      addToast({ type: 'error', title: 'Error', message: error.message })
+      console.error('Error creando oportunidad:', error)
+      addToast({ type: 'error', title: `Error: ${error.code || ''}`, message: error.message })
     }
     setSavingNew(false)
   }
@@ -386,8 +402,45 @@ function PipelineTab() {
 
       {/* ─── DETAIL MODAL ─── */}
       <Modal isOpen={!!selectedOpp} onClose={() => setSelectedOpp(null)} title={selectedOpp?.title || ''} size="lg">
-        {selectedOpp && (
+        {selectedOpp && (() => {
+          const oppRow = selectedOpp as unknown as Row
+          const oppStepId = editData.stage === 'ganado' ? 'won'
+            : editData.stage === 'pedido' ? 'order'
+            : editData.stage === 'negociacion' ? 'negotiation'
+            : editData.stage === 'propuesta' ? 'proposal'
+            : 'lead'
+          const oppBadgeVariant = editData.stage === 'ganado' || editData.stage === 'pedido' ? 'success'
+            : editData.stage === 'perdido' ? 'danger'
+            : editData.stage === 'negociacion' ? 'warning'
+            : editData.stage === 'propuesta' ? 'info'
+            : 'default'
+          const oppBadgeLabel = CRM_STAGES.find(s => s.id === editData.stage)?.label || editData.stage
+          const clientName = (selectedOpp.client as unknown as { legal_name?: string; name?: string })?.legal_name || (selectedOpp.client as unknown as { name?: string })?.name || ''
+          return (
           <div className="space-y-4">
+            {/* ══════════════════════════════════════════════════════════════
+                REGLA FUNDAMENTAL: Barra sticky con código + stepper + alertas
+                ══════════════════════════════════════════════════════════════ */}
+            <DocumentProcessBar
+              code={(oppRow.code as string) || `OPP-${selectedOpp.id.slice(0, 8)}`}
+              badge={{ label: oppBadgeLabel, variant: oppBadgeVariant }}
+              entity={
+                <span>
+                  {clientName && <><strong>{clientName}</strong> · </>}
+                  Valor: <strong>{formatCurrency((oppRow.value as number) || selectedOpp.expected_value || 0, ((oppRow.currency as string) || 'EUR') as 'EUR' | 'ARS' | 'USD')}</strong>
+                  {editData.assigned_to && users.length > 0 && <> · {users.find(u => u.id === editData.assigned_to)?.full_name || ''}</>}
+                </span>
+              }
+              alerts={[
+                ...(!editData.assigned_to ? [{ type: 'warning' as const, message: 'Sin vendedor asignado' }] : []),
+                ...(!editData.expected_close_date ? [{ type: 'info' as const, message: 'Sin fecha de cierre estimada' }] : []),
+              ]}
+              steps={buildSteps('opportunity', oppStepId)}
+              actions={[
+                { label: 'Guardar', onClick: saveOppEdit, icon: 'save', variant: 'primary', disabled: savingEdit },
+              ]}
+              onClose={() => setSelectedOpp(null)}
+            />
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
               <div className="p-3 rounded-lg bg-[#0F1218] border border-[#1E2330]">
                 <p className="text-xs text-[#6B7280]">Cliente</p>
@@ -408,7 +461,7 @@ function PipelineTab() {
               <Select label="Etapa" options={CRM_STAGES.map(s => ({ value: s.id, label: s.label }))} value={editData.stage} onChange={e => setEditData({ ...editData, stage: e.target.value })} />
             </div>
             <div className="grid grid-cols-2 gap-4">
-              <Input label="Probabilidad (%)" type="number" min={0} max={100} value={editData.probability} onChange={e => setEditData({ ...editData, probability: Number(e.target.value) })} />
+              <Select label="Probabilidad (%)" value={String(editData.probability)} onChange={e => setEditData({ ...editData, probability: Number(e.target.value) })} options={[{value:'0',label:'0%'},{value:'20',label:'20%'},{value:'40',label:'40%'},{value:'60',label:'60%'},{value:'80',label:'80%'},{value:'100',label:'100%'}]} />
               <Select label="Vendedor asignado" options={users.map(u => ({ value: u.id, label: u.full_name }))} value={editData.assigned_to} onChange={e => setEditData({ ...editData, assigned_to: e.target.value })} placeholder="Sin asignar" />
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -423,10 +476,22 @@ function PipelineTab() {
             <p className="text-[10px] text-[#4B5563]">Creado: {selectedOpp.created_at ? formatDate(selectedOpp.created_at) : '-'}</p>
             <div className="flex gap-2 pt-2">
               <Button variant="primary" className="flex-1" onClick={saveOppEdit} loading={savingEdit}><Save size={14} /> Guardar</Button>
-              <Button variant="secondary" onClick={() => setSelectedOpp(null)}>Cerrar</Button>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  const clientId = selectedOpp?.client_id || ''
+                  const params = new URLSearchParams()
+                  if (clientId) params.set('clientId', clientId)
+                  window.location.href = `/cotizador?${params.toString()}`
+                }}
+              >
+                <FileText size={14} /> Cotizar
+              </Button>
+              <Button variant="ghost" onClick={() => setSelectedOpp(null)}>Cerrar</Button>
             </div>
           </div>
-        )}
+          )
+        })()}
       </Modal>
 
       {/* ─── NEW OPPORTUNITY MODAL ─── */}
@@ -529,7 +594,7 @@ function PipelineTab() {
           <div className="grid grid-cols-3 gap-4">
             <Select label="Vendedor asignado" value={newOpp.assigned_to} onChange={e => setNewOpp({ ...newOpp, assigned_to: e.target.value })} options={users.map(u => ({ value: u.id, label: u.full_name }))} placeholder="Sin asignar" />
             <Select label="Etapa" value={newOpp.stage} onChange={e => setNewOpp({ ...newOpp, stage: e.target.value })} options={CRM_STAGES.map(s => ({ value: s.id, label: s.label }))} />
-            <Input label="Probabilidad %" type="number" min={0} max={100} value={newOpp.probability} onChange={e => setNewOpp({ ...newOpp, probability: Number(e.target.value) })} />
+            <Select label="Probabilidad %" value={String(newOpp.probability)} onChange={e => setNewOpp({ ...newOpp, probability: Number(e.target.value) })} options={[{value:'0',label:'0% — No cualificado'},{value:'20',label:'20% — Interés inicial'},{value:'40',label:'40% — Cualificado'},{value:'60',label:'60% — Propuesta enviada'},{value:'80',label:'80% — Negociación'},{value:'100',label:'100% — Ganado'}]} />
           </div>
 
           {/* Close date + Notes */}
@@ -662,13 +727,14 @@ export default function CRMPage() {
   return (
     <div className="space-y-6 animate-fade-in">
       <div>
-        <h1 className="text-2xl font-bold text-[#F0F2F5]">Pipeline CRM</h1>
-        <p className="text-sm text-[#6B7280] mt-1">Pipeline, actividades e informes comerciales</p>
+        <h1 className="text-2xl font-bold text-[#F0F2F5]">CRM</h1>
+        <p className="text-sm text-[#6B7280] mt-1">Leads, pipeline, actividades e informes comerciales</p>
       </div>
       <Suspense fallback={<div className="flex justify-center py-10"><Loader2 className="animate-spin text-[#FF6600]" size={32} /></div>}>
-        <Tabs tabs={crmTabs} defaultTab="pipeline">
+        <Tabs tabs={crmTabs} defaultTab="leads">
           {(activeTab) => (
             <>
+              {activeTab === 'leads' && <LeadsIATab />}
               {activeTab === 'pipeline' && <PipelineTab />}
               {activeTab === 'actividades' && <ActividadesTab />}
               {activeTab === 'informes' && <InformesTab />}

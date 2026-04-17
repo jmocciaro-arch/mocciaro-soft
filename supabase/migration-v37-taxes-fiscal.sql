@@ -1,0 +1,2 @@
+-- Migration v37: Impuestos y Fiscal (Semana 5) — ya ejecutada
+-- tt_tax_configs, tt_custom_statuses, IRPF/RE columns, client tax regime

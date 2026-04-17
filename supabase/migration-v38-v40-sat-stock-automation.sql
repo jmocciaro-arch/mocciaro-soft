@@ -1,0 +1,4 @@
+-- Migration v38-v40: Semanas 6, 7, 8 — ya ejecutada
+-- SAT auto (tt_maintenance_schedules, tt_sat_calendar_events)
+-- Stock virtual (view tt_stock_virtual), Firmas (tt_signatures)
+-- Automatizacion (tt_automations, tt_email_templates, SEPA columns)

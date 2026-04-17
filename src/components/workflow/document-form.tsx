@@ -11,6 +11,8 @@ import { formatCurrency, formatDate, formatRelative, INCOTERMS } from '@/lib/uti
 import { mapStatus } from '@/lib/document-helpers'
 import { DocumentActions, type DocumentActionType } from './document-actions'
 import { SendDocumentModal } from './send-document-modal'
+import { DocumentProcessBar } from './document-process-bar'
+import { buildSteps, type DocumentType } from '@/lib/workflow-definitions'
 import { useCompanyContext } from '@/lib/company-context'
 import { useCompanyFilter } from '@/hooks/use-company-filter'
 import {
@@ -18,9 +20,12 @@ import {
   ChevronLeft, ChevronRight, Trash2, Copy, RefreshCw,
   Plus, X, Search, FileText, Link2, Clock, Paperclip,
   PenTool, Loader2, ExternalLink, GripVertical, Eye, Send,
-  Building2, Minus, TrendingUp, BarChart3,
+  Building2, Minus, TrendingUp, BarChart3, GitMerge,
+  AlertTriangle, CheckCircle2, Scale, PackageCheck, ShieldCheck,
+  DollarSign, CreditCard, Banknote,
 } from 'lucide-react'
 import { DocLink } from '@/components/ui/doc-link'
+import { DocumentChain } from './document-chain'
 
 type Row = Record<string, unknown>
 
@@ -109,6 +114,21 @@ interface ActivityEntry {
   user_name: string
 }
 
+interface PaymentEntry {
+  id: string
+  document_id: string
+  invoice_id: string | null
+  amount: number
+  currency: string
+  payment_date: string
+  payment_method: string
+  bank_reference: string | null
+  bank_account: string | null
+  notes: string | null
+  receipt_url: string | null
+  created_at: string
+}
+
 interface CompanyFullData {
   id: string
   name: string
@@ -121,6 +141,48 @@ interface CompanyFullData {
   phone: string | null
   email: string | null
   website: string | null
+}
+
+// ---------------------------------------------------------------
+// PO vs Invoice Comparison types
+// ---------------------------------------------------------------
+interface InvoiceItemData {
+  id: string
+  purchase_invoice_id: string
+  purchase_order_item_id: string | null
+  product_id: string | null
+  sku: string
+  description: string
+  quantity: number
+  unit_price: number
+  discount_pct: number
+  subtotal: number
+  is_new_item: boolean
+  price_differs: boolean
+  qty_differs: boolean
+  po_unit_price: number | null
+  po_quantity: number | null
+  comparison_status: string | null
+  notes: string | null
+}
+
+type ComparisonStatus = 'ok' | 'precio_diferente' | 'cantidad_diferente' | 'nuevo' | 'faltante'
+
+interface ComparisonRow {
+  /** Unique key for rendering */
+  key: string
+  description: string
+  sku: string
+  /** PO side */
+  poQty: number | null
+  poPrice: number | null
+  poSubtotal: number | null
+  /** Invoice side */
+  invQty: number | null
+  invPrice: number | null
+  invSubtotal: number | null
+  /** Status */
+  status: ComparisonStatus
 }
 
 // ===============================================================
@@ -186,6 +248,11 @@ const PREFIX_MAP: Record<string, string> = {
 
 const TYPE_LABELS: Record<string, string> = {
   coti: 'Cotizacion',
+  cotizacion: 'Cotizacion',
+  presupuesto: 'Presupuesto',
+  proforma: 'Factura Proforma',
+  packing_list: 'Packing List',
+  oferta: 'Oferta Comercial',
   pedido: 'Pedido de Venta',
   delivery_note: 'Albaran / Remito',
   factura: 'Factura',
@@ -193,6 +260,15 @@ const TYPE_LABELS: Record<string, string> = {
   recepcion: 'Recepcion',
   factura_compra: 'Factura de Compra',
 }
+
+// Subtypes that a quote-type document can be switched to
+const QUOTE_SUBTYPES = [
+  { value: 'cotizacion', label: 'Cotizacion', icon: '📋' },
+  { value: 'presupuesto', label: 'Presupuesto', icon: '📄' },
+  { value: 'proforma', label: 'Factura Proforma', icon: '📑' },
+  { value: 'packing_list', label: 'Packing List', icon: '📦' },
+  { value: 'oferta', label: 'Oferta Comercial', icon: '💼' },
+]
 
 const PAYMENT_TERMS = [
   { value: '', label: 'Sin definir' },
@@ -232,7 +308,7 @@ export function DocumentForm({
   const [editMode, setEditMode] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [activeTab, setActiveTab] = useState<'lineas' | 'rentabilidad' | 'mas_info' | 'adjuntos' | 'firma' | 'relacionados'>('lineas')
+  const [activeTab, setActiveTab] = useState<'lineas' | 'rentabilidad' | 'mas_info' | 'adjuntos' | 'firma' | 'relacionados' | 'comparacion' | 'cobros'>('lineas')
   const [productCosts, setProductCosts] = useState<Record<string, number>>({})
 
   // Data
@@ -243,6 +319,13 @@ export function DocumentForm({
   const [parentLinks, setParentLinks] = useState<LinkData[]>([])
   const [childLinks, setChildLinks] = useState<LinkData[]>([])
   const [activity, setActivity] = useState<ActivityEntry[]>([])
+  const [linkedPurchaseInvoice, setLinkedPurchaseInvoice] = useState<{
+    id: string; number: string; total: number; due_date: string | null; status: string;
+    comparison_status?: string | null; po_total?: number | null; difference_amount?: number | null;
+    difference_notes?: string | null; confirmed_by?: string | null; confirmed_at?: string | null;
+  } | null>(null)
+  const [invoiceItems, setInvoiceItems] = useState<InvoiceItemData[]>([])
+  const [comparisonConfirming, setComparisonConfirming] = useState(false)
 
   // Edit state (copies for editing)
   const [editDoc, setEditDoc] = useState<Partial<DocumentData>>({})
@@ -258,6 +341,9 @@ export function DocumentForm({
   const [showMoreMenu, setShowMoreMenu] = useState(false)
   const [showSendModal, setShowSendModal] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+
+  // Convert document
+  const [converting, setConverting] = useState(false)
 
   // Send tracking
   const [lastSend, setLastSend] = useState<{
@@ -277,6 +363,34 @@ export function DocumentForm({
   const [productResults, setProductResults] = useState<Row[]>([])
   const [searchingProducts, setSearchingProducts] = useState(false)
   const productDebounceRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Payments (cobros parciales)
+  const [payments, setPayments] = useState<PaymentEntry[]>([])
+  const [showPaymentForm, setShowPaymentForm] = useState(false)
+  const [savingPayment, setSavingPayment] = useState(false)
+  const [newPayment, setNewPayment] = useState({
+    amount: 0,
+    payment_date: new Date().toISOString().split('T')[0],
+    payment_method: 'transferencia',
+    bank_reference: '',
+    notes: '',
+  })
+
+  // Signatures (firma digital)
+  const [signatures, setSignatures] = useState<Array<{
+    id: string; document_id: string; quote_id: string | null
+    signer_name: string; signer_email: string; signer_role: string
+    signature_data: string | null; signature_url: string | null
+    ip_address: string | null; signed_at: string | null
+    token: string; status: string; expires_at: string | null
+    created_at: string
+  }>>([])
+  const [showSignatureForm, setShowSignatureForm] = useState(false)
+  const [signerName, setSignerName] = useState('')
+  const [signerEmail, setSignerEmail] = useState('')
+  const [signerRole, setSignerRole] = useState<'client' | 'approver' | 'witness'>('client')
+  const [requestingSignature, setRequestingSignature] = useState(false)
+  const [copiedToken, setCopiedToken] = useState<string | null>(null)
 
   // ---------------------------------------------------------------
   // LOAD DATA
@@ -433,6 +547,7 @@ export function DocumentForm({
           pedido: 'tt_sales_orders',
           delivery_note: 'tt_delivery_notes',
           factura: 'tt_invoices',
+          pap: 'tt_purchase_orders',
         }
         const table = tableMap[documentType] || 'tt_quotes'
         const itemTableMap: Record<string, { table: string; fk: string }> = {
@@ -440,53 +555,70 @@ export function DocumentForm({
           pedido: { table: 'tt_so_items', fk: 'sales_order_id' },
           delivery_note: { table: 'tt_dn_items', fk: 'delivery_note_id' },
           factura: { table: 'tt_invoice_items', fk: 'invoice_id' },
+          pap: { table: 'tt_po_items', fk: 'purchase_order_id' },
         }
         const itemConfig = itemTableMap[documentType] || { table: 'tt_quote_items', fk: 'quote_id' }
 
-        const { data: localDoc } = await supabase
+        // PAP (purchase orders) have no client_id FK — different join
+        const isPAP = documentType === 'pap'
+        const selectQuery = isPAP
+          ? '*, company:tt_companies(id, name, currency)'
+          : '*, client:tt_clients(id, name, legal_name, tax_id, email, country), company:tt_companies(id, name, currency)'
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: localDoc } = await (supabase as any)
           .from(table)
-          .select('*, client:tt_clients(id, name, legal_name, tax_id, email, country), company:tt_companies(id, name, currency)')
+          .select(selectQuery)
           .eq('id', documentId)
-          .single()
+          .single() as { data: Row | null }
 
         if (localDoc) {
-          const clientJoined = localDoc.client as ClientData | undefined
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const d = localDoc as any
+          const clientJoined = isPAP ? null : d.client as ClientData | undefined
 
           setDoc({
-            id: localDoc.id,
+            id: d.id,
             type: documentType,
-            status: localDoc.status || 'draft',
-            display_ref: localDoc.doc_number || localDoc.number || '',
-            system_code: localDoc.doc_number || localDoc.number || '',
-            currency: localDoc.currency || 'EUR',
-            total: localDoc.total || 0,
-            subtotal: localDoc.subtotal || 0,
-            tax_amount: localDoc.tax_amount || 0,
-            tax_rate: localDoc.tax_rate || 21,
-            notes: localDoc.notes || '',
-            internal_notes: localDoc.internal_notes || '',
-            created_at: localDoc.created_at || '',
-            updated_at: localDoc.updated_at || '',
-            incoterm: localDoc.incoterm || '',
-            payment_terms: localDoc.payment_terms || '',
-            delivery_date: localDoc.delivery_date || '',
-            valid_until: localDoc.valid_until || '',
-            shipping_address: localDoc.shipping_address || '',
-            subject_iva: localDoc.subject_iva !== false,
-            subject_irpf: localDoc.subject_irpf === true,
-            created_by: localDoc.created_by || '',
-            agent: localDoc.agent || '',
-            tariff: localDoc.tariff || '',
-            client_id: localDoc.client_id || '',
-            company_id: localDoc.company_id || '',
-            client_reference: '',
-            metadata: {},
+            status: d.status || 'draft',
+            display_ref: d.doc_number || d.number || '',
+            system_code: d.doc_number || d.number || '',
+            currency: d.currency || 'EUR',
+            total: d.total || 0,
+            subtotal: d.subtotal || 0,
+            tax_amount: d.tax_amount || 0,
+            tax_rate: isPAP ? (d.tax_rate ?? 0) : (d.tax_rate || 21),
+            notes: d.notes || '',
+            internal_notes: d.internal_notes || '',
+            created_at: d.created_at || '',
+            updated_at: d.updated_at || '',
+            incoterm: d.incoterm || '',
+            payment_terms: d.payment_terms || '',
+            delivery_date: d.expected_date || d.delivery_date || '',
+            valid_until: d.valid_until || '',
+            shipping_address: d.shipping_address || '',
+            subject_iva: isPAP ? false : (d.subject_iva !== false),
+            subject_irpf: d.subject_irpf === true,
+            created_by: d.created_by || '',
+            agent: d.agent || '',
+            tariff: d.tariff || '',
+            client_id: d.client_id || '',
+            company_id: d.company_id || '',
+            client_reference: isPAP ? (d.supplier_name || '') : '',
+            metadata: isPAP
+              ? { supplier_name: d.supplier_name, supplier_email: d.supplier_email }
+              : { doc_subtype: d.doc_subtype || undefined },
           })
 
-          if (clientJoined) setClient(clientJoined)
+          // For PAP, set supplier as "client" display
+          if (isPAP && d.supplier_name) {
+            setClient({ id: '', name: d.supplier_name, legal_name: d.supplier_name, tax_id: null, email: d.supplier_email || null, country: '' } as ClientData)
+          } else if (clientJoined) {
+            setClient(clientJoined)
+          }
 
           // Load selling company
-          const localCompanyId = localDoc.company_id || activeCompany?.id
+          const localCompanyId = d.company_id || activeCompany?.id
           if (localCompanyId) {
             const { data: companyData } = await supabase
               .from('tt_companies')
@@ -496,19 +628,21 @@ export function DocumentForm({
             if (companyData) setCompany(companyData as CompanyFullData)
           }
 
-          // Load items
-          const { data: itemsData } = await supabase
+          // Load items (tt_po_items doesn't have sort_order, use created_at)
+          const itemQuery = supabase
             .from(itemConfig.table)
             .select('*')
             .eq(itemConfig.fk, documentId)
-            .order('sort_order')
+          const { data: itemsData } = isPAP
+            ? await itemQuery.order('created_at')
+            : await itemQuery.order('sort_order')
 
           setItems((itemsData || []).map((it: Row, idx: number) => ({
             id: (it.id as string) || `item-${idx}`,
             sku: (it.sku as string) || '',
             description: (it.description as string) || '',
-            quantity: (it.quantity as number) || 0,
-            unit_price: (it.unit_price as number) || 0,
+            quantity: (it.qty_ordered as number) || (it.quantity as number) || 0,
+            unit_price: (it.unit_cost as number) || (it.unit_price as number) || 0,
             unit_cost: (it.unit_cost as number) || 0,
             discount_pct: (it.discount_pct as number) || 0,
             subtotal: (it.subtotal as number) || (it.line_total as number) || 0,
@@ -518,6 +652,56 @@ export function DocumentForm({
             is_section: false,
             section_label: '',
           })))
+
+          // For PAP: check if there's a linked purchase invoice + load comparison data
+          if (isPAP) {
+            const { data: invData } = await supabase
+              .from('tt_purchase_invoices')
+              .select('id, number, total, due_date, status, supplier_invoice_number, comparison_status, po_total, difference_amount, difference_notes, confirmed_by, confirmed_at')
+              .eq('purchase_order_id', documentId)
+              .limit(1)
+              .maybeSingle()
+            if (invData) {
+              setLinkedPurchaseInvoice({
+                id: invData.id,
+                number: invData.supplier_invoice_number || invData.number,
+                total: invData.total,
+                due_date: invData.due_date,
+                status: invData.status,
+                comparison_status: invData.comparison_status,
+                po_total: invData.po_total,
+                difference_amount: invData.difference_amount,
+                difference_notes: invData.difference_notes,
+                confirmed_by: invData.confirmed_by,
+                confirmed_at: invData.confirmed_at,
+              })
+              // Load invoice items for comparison
+              const { data: invItems } = await supabase
+                .from('tt_purchase_invoice_items')
+                .select('*')
+                .eq('purchase_invoice_id', invData.id)
+                .order('created_at')
+              setInvoiceItems((invItems || []).map((ii: Row) => ({
+                id: (ii.id as string) || '',
+                purchase_invoice_id: (ii.purchase_invoice_id as string) || '',
+                purchase_order_item_id: (ii.purchase_order_item_id as string) || null,
+                product_id: (ii.product_id as string) || null,
+                sku: (ii.sku as string) || '',
+                description: (ii.description as string) || '',
+                quantity: (ii.quantity as number) || 0,
+                unit_price: (ii.unit_price as number) || 0,
+                discount_pct: (ii.discount_pct as number) || 0,
+                subtotal: (ii.subtotal as number) || 0,
+                is_new_item: (ii.is_new_item as boolean) || false,
+                price_differs: (ii.price_differs as boolean) || false,
+                qty_differs: (ii.qty_differs as boolean) || false,
+                po_unit_price: (ii.po_unit_price as number) || null,
+                po_quantity: (ii.po_quantity as number) || null,
+                comparison_status: (ii.comparison_status as string) || null,
+                notes: (ii.notes as string) || null,
+              })))
+            }
+          }
         }
       }
       // Load last send tracking info
@@ -535,6 +719,63 @@ export function DocumentForm({
       } catch {
         // No sends yet, that's ok
         setLastSend(null)
+      }
+
+      // Load payments for invoice-type documents
+      const isInvoiceType = documentType === 'factura' || documentType === 'invoice'
+      if (isInvoiceType) {
+        try {
+          const sb2 = createClient()
+          const { data: paymentsData } = await sb2
+            .from('tt_invoice_payments')
+            .select('*')
+            .eq('document_id', documentId)
+            .order('payment_date', { ascending: false })
+          setPayments((paymentsData || []).map((p: Row) => ({
+            id: (p.id as string) || '',
+            document_id: (p.document_id as string) || '',
+            invoice_id: (p.invoice_id as string) || null,
+            amount: (p.amount as number) || 0,
+            currency: (p.currency as string) || 'EUR',
+            payment_date: (p.payment_date as string) || '',
+            payment_method: (p.payment_method as string) || 'transferencia',
+            bank_reference: (p.bank_reference as string) || null,
+            bank_account: (p.bank_account as string) || null,
+            notes: (p.notes as string) || null,
+            receipt_url: (p.receipt_url as string) || null,
+            created_at: (p.created_at as string) || '',
+          })))
+        } catch {
+          setPayments([])
+        }
+      }
+
+      // Load signatures
+      try {
+        const sbSig = createClient()
+        const { data: sigData } = await sbSig
+          .from('tt_signatures')
+          .select('*')
+          .eq('document_id', documentId)
+          .order('created_at', { ascending: false })
+        setSignatures((sigData || []).map((s: Row) => ({
+          id: (s.id as string) || '',
+          document_id: (s.document_id as string) || '',
+          quote_id: (s.quote_id as string) || null,
+          signer_name: (s.signer_name as string) || '',
+          signer_email: (s.signer_email as string) || '',
+          signer_role: (s.signer_role as string) || 'client',
+          signature_data: (s.signature_data as string) || null,
+          signature_url: (s.signature_url as string) || null,
+          ip_address: (s.ip_address as string) || null,
+          signed_at: (s.signed_at as string) || null,
+          token: (s.token as string) || '',
+          status: (s.status as string) || 'pending',
+          expires_at: (s.expires_at as string) || null,
+          created_at: (s.created_at as string) || '',
+        })))
+      } catch {
+        setSignatures([])
       }
 
     } catch (err) {
@@ -864,6 +1105,45 @@ export function DocumentForm({
   }
 
   // ---------------------------------------------------------------
+  // CONVERT DOCUMENT
+  // ---------------------------------------------------------------
+  const handleConvert = async (targetType: 'pedido' | 'delivery_note' | 'factura') => {
+    if (!doc) return
+    const targetLabels: Record<string, string> = {
+      pedido: 'Pedido',
+      delivery_note: 'Albarán',
+      factura: 'Factura',
+    }
+    setConverting(true)
+    try {
+      const res = await fetch('/api/documents/convert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sourceDocId: documentId,
+          targetType,
+          companyId: doc.company_id,
+        }),
+      })
+      const data = await res.json() as { newDocId?: string; newCode?: string; error?: string; stockAlert?: { insufficient: boolean } }
+      if (!res.ok) throw new Error(data.error || 'Error en conversión')
+
+      const label = targetLabels[targetType] || targetType
+      let msg = `${label} ${data.newCode} creado correctamente`
+      if (data.stockAlert?.insufficient) {
+        msg += ' — ¡Atención! Hay items con stock insuficiente'
+      }
+      addToast({ type: 'success', title: msg })
+      loadDocument()
+      onUpdate?.()
+    } catch (err) {
+      addToast({ type: 'error', title: 'Error en conversión', message: (err as Error).message })
+    } finally {
+      setConverting(false)
+    }
+  }
+
+  // ---------------------------------------------------------------
   // DELETE
   // ---------------------------------------------------------------
   const handleDelete = async () => {
@@ -962,11 +1242,331 @@ export function DocumentForm({
     return { subtotal, taxAmount, total: subtotal + taxAmount }
   })()
 
+  // ---------------------------------------------------------------
+  // PO vs INVOICE COMPARISON
+  // ---------------------------------------------------------------
+  const isPAPWithInvoice = documentType === 'pap' && !!linkedPurchaseInvoice
+  const comparisonRows: ComparisonRow[] = (() => {
+    if (!isPAPWithInvoice) return []
+    const poItems = items.filter(i => !i.is_section)
+    const rows: ComparisonRow[] = []
+
+    if (invoiceItems.length > 0) {
+      // We have real invoice items -- match them
+      const matchedPoIds = new Set<string>()
+
+      for (const ii of invoiceItems) {
+        // Try to find matching PO item by purchase_order_item_id or sku
+        const poMatch = ii.purchase_order_item_id
+          ? poItems.find(p => p.id === ii.purchase_order_item_id)
+          : poItems.find(p => p.sku && p.sku === ii.sku)
+
+        if (poMatch) {
+          matchedPoIds.add(poMatch.id)
+          const priceDiff = Math.abs((poMatch.unit_price || 0) - (ii.unit_price || 0)) > 0.01
+          const qtyDiff = Math.abs((poMatch.quantity || 0) - (ii.quantity || 0)) > 0.001
+          let status: ComparisonStatus = 'ok'
+          if (priceDiff && qtyDiff) status = 'precio_diferente'
+          else if (priceDiff) status = 'precio_diferente'
+          else if (qtyDiff) status = 'cantidad_diferente'
+
+          rows.push({
+            key: `match-${ii.id}`,
+            description: ii.description || poMatch.description,
+            sku: ii.sku || poMatch.sku,
+            poQty: poMatch.quantity,
+            poPrice: poMatch.unit_price,
+            poSubtotal: poMatch.subtotal,
+            invQty: ii.quantity,
+            invPrice: ii.unit_price,
+            invSubtotal: ii.subtotal,
+            status,
+          })
+        } else {
+          // Invoice item not in PO -> NUEVO
+          rows.push({
+            key: `new-${ii.id}`,
+            description: ii.description,
+            sku: ii.sku,
+            poQty: null,
+            poPrice: null,
+            poSubtotal: null,
+            invQty: ii.quantity,
+            invPrice: ii.unit_price,
+            invSubtotal: ii.subtotal,
+            status: 'nuevo',
+          })
+        }
+      }
+
+      // PO items not matched -> FALTANTE
+      for (const po of poItems) {
+        if (!matchedPoIds.has(po.id)) {
+          rows.push({
+            key: `missing-${po.id}`,
+            description: po.description,
+            sku: po.sku,
+            poQty: po.quantity,
+            poPrice: po.unit_price,
+            poSubtotal: po.subtotal,
+            invQty: null,
+            invPrice: null,
+            invSubtotal: null,
+            status: 'faltante',
+          })
+        }
+      }
+    } else {
+      // No invoice items in DB -- auto-generate comparison from PO items + total difference
+      const poTotal = poItems.reduce((s, i) => s + (i.subtotal || 0), 0)
+      const invTotal = linkedPurchaseInvoice!.total || 0
+      const diff = invTotal - poTotal
+
+      // All PO items are "matched" with same values (since we have no line detail)
+      for (const po of poItems) {
+        rows.push({
+          key: `auto-${po.id}`,
+          description: po.description,
+          sku: po.sku,
+          poQty: po.quantity,
+          poPrice: po.unit_price,
+          poSubtotal: po.subtotal,
+          invQty: po.quantity,
+          invPrice: po.unit_price,
+          invSubtotal: po.subtotal,
+          status: 'ok',
+        })
+      }
+
+      // If there's a difference, add synthetic transport/extras line
+      if (Math.abs(diff) > 0.01) {
+        rows.push({
+          key: 'synthetic-transport',
+          description: diff > 0 ? 'GASTOS DE TRANSPORTE' : 'DESCUENTO / AJUSTE',
+          sku: '-',
+          poQty: null,
+          poPrice: null,
+          poSubtotal: null,
+          invQty: 1,
+          invPrice: Math.abs(diff),
+          invSubtotal: diff,
+          status: 'nuevo',
+        })
+      }
+    }
+
+    return rows
+  })()
+
+  const comparisonSummary = (() => {
+    if (!isPAPWithInvoice) return null
+    const poTotal = items.filter(i => !i.is_section).reduce((s, i) => s + (i.subtotal || 0), 0)
+    const invTotal = linkedPurchaseInvoice!.total || 0
+    const diff = invTotal - poTotal
+    const diffPct = poTotal > 0 ? (diff / poTotal) * 100 : 0
+    return { poTotal, invTotal, diff, diffPct }
+  })()
+
+  const handleConfirmComparison = async () => {
+    if (!linkedPurchaseInvoice) return
+    setComparisonConfirming(true)
+    try {
+      const sb = createClient()
+      const poTotal = items.filter(i => !i.is_section).reduce((s, i) => s + (i.subtotal || 0), 0)
+      const invTotal = linkedPurchaseInvoice.total || 0
+
+      await sb.from('tt_purchase_invoices').update({
+        comparison_status: 'confirmed',
+        po_total: poTotal,
+        difference_amount: invTotal - poTotal,
+        confirmed_by: 'admin',
+        confirmed_at: new Date().toISOString(),
+      }).eq('id', linkedPurchaseInvoice.id)
+
+      setLinkedPurchaseInvoice(prev => prev ? {
+        ...prev,
+        comparison_status: 'confirmed',
+        po_total: poTotal,
+        difference_amount: invTotal - poTotal,
+        confirmed_by: 'admin',
+        confirmed_at: new Date().toISOString(),
+      } : null)
+
+      addToast({ type: 'success', title: 'Comparacion confirmada', message: 'Las diferencias fueron revisadas y confirmadas' })
+    } catch (err) {
+      addToast({ type: 'error', title: 'Error', message: (err as Error).message })
+    } finally {
+      setComparisonConfirming(false)
+    }
+  }
+
+  // ---------------------------------------------------------------
+  // REGISTER PAYMENT (cobro parcial)
+  // ---------------------------------------------------------------
+  const isInvoiceType = documentType === 'factura' || documentType === 'invoice'
+  const paidAmount = payments.reduce((sum, p) => sum + p.amount, 0)
+  const docTotal = doc?.total || 0
+  const remainingAmount = Math.max(0, docTotal - paidAmount)
+  const paidPct = docTotal > 0 ? Math.min(100, (paidAmount / docTotal) * 100) : 0
+
+  const handleRegisterPayment = useCallback(async () => {
+    if (!doc || newPayment.amount <= 0) return
+    setSavingPayment(true)
+    try {
+      const sb = createClient()
+
+      // Insert payment
+      const { error: payErr } = await sb.from('tt_invoice_payments').insert({
+        document_id: documentId,
+        invoice_id: null,
+        amount: newPayment.amount,
+        currency: doc.currency || 'EUR',
+        payment_date: newPayment.payment_date,
+        payment_method: newPayment.payment_method,
+        bank_reference: newPayment.bank_reference || null,
+        notes: newPayment.notes || null,
+      })
+      if (payErr) throw payErr
+
+      // Calculate new totals
+      const newPaidAmount = paidAmount + newPayment.amount
+      const newPaymentCount = payments.length + 1
+      const isFullyPaid = newPaidAmount >= docTotal
+
+      // Update tt_documents with paid_amount, payment_count, last_payment_date
+      const updateData: Record<string, unknown> = {
+        paid_amount: newPaidAmount,
+        payment_count: newPaymentCount,
+        last_payment_date: newPayment.payment_date,
+      }
+      // Auto-change status to 'cobrada' if fully paid, or 'partial' if partially paid
+      if (isFullyPaid) {
+        updateData.status = 'paid'
+      } else if (newPaidAmount > 0) {
+        updateData.status = 'partial'
+      }
+
+      await sb.from('tt_documents').update(updateData).eq('id', documentId)
+
+      // Log activity
+      try {
+        await sb.from('tt_activity_log').insert({
+          entity_type: 'document',
+          entity_id: documentId,
+          action: isFullyPaid ? 'cobro_completo' : 'cobro_parcial',
+          detail: `Cobro de ${newPayment.amount.toFixed(2)} ${doc.currency || 'EUR'} via ${newPayment.payment_method}${isFullyPaid ? ' — Factura cobrada al 100%' : ''}`,
+        })
+      } catch { /* ignore */ }
+
+      addToast({
+        type: 'success',
+        title: isFullyPaid ? 'Factura cobrada al 100%' : 'Cobro registrado',
+        message: `${newPayment.amount.toFixed(2)} ${doc.currency || 'EUR'}`,
+      })
+
+      // Reset form
+      setShowPaymentForm(false)
+      setNewPayment({
+        amount: 0,
+        payment_date: new Date().toISOString().split('T')[0],
+        payment_method: 'transferencia',
+        bank_reference: '',
+        notes: '',
+      })
+
+      // Reload
+      loadDocument()
+      onUpdate?.()
+    } catch (err) {
+      addToast({ type: 'error', title: 'Error registrando cobro', message: (err as Error).message })
+    } finally {
+      setSavingPayment(false)
+    }
+  }, [documentId, doc, newPayment, paidAmount, payments.length, docTotal, addToast, loadDocument, onUpdate])
+
   // ===============================================================
   // RENDER
   // ===============================================================
+  // ═══════════════════════════════════════════════════════════════════
+  // Map de documentType → tipo de workflow + paso actual según status
+  // ═══════════════════════════════════════════════════════════════════
+  const workflowTypeMap: Record<string, DocumentType> = {
+    coti: 'quote', cotizacion: 'quote', quote: 'quote',
+    pedido: 'sales_order', sales_order: 'sales_order',
+    albaran: 'delivery_note', remito: 'delivery_note', delivery_note: 'delivery_note',
+    factura: 'invoice', invoice: 'invoice',
+    nota_credito: 'credit_note', credit_note: 'credit_note',
+    oc: 'purchase_order', orden_compra: 'purchase_order', purchase_order: 'purchase_order', pap: 'purchase_order',
+  }
+  const wfType = workflowTypeMap[documentType] || 'quote'
+
+  const statusToStepMap: Record<DocumentType, Record<string, string>> = {
+    quote: { draft: 'draft', borrador: 'draft', pending: 'conditions', sent: 'sent', enviada: 'sent', accepted: 'accepted', aceptada: 'accepted', converted: 'converted', approved: 'approval' },
+    sales_order: { draft: 'created', open: 'created', confirmed: 'po_received', in_production: 'production', shipped: 'delivery', delivered: 'delivery', invoiced: 'invoice' },
+    delivery_note: { draft: 'prepared', prepared: 'prepared', shipped: 'shipped', delivered: 'delivered', signed: 'signed', invoiced: 'invoiced' },
+    invoice: { draft: 'draft', borrador: 'draft', emitida: 'emitted', emitted: 'emitted', autorizada: 'authorized', authorized: 'authorized', sent: 'sent', cobrada: 'collected', paid: 'collected' },
+    credit_note: { draft: 'draft', emitted: 'emitted', authorized: 'authorized', applied: 'applied' },
+    purchase_order: { draft: 'draft', borrador: 'draft', sent: 'sent', enviada: 'sent', confirmed: 'confirmed', confirmada: 'confirmed', received: 'received', recibida: 'received', partial: 'received', recibida_parcial: 'received', invoiced: 'invoiced', paid: 'paid', cancelada: 'draft' },
+    client_po: {}, lead: {}, opportunity: {}, sat_ticket: {}, bank_statement: {},
+  }
+  let currentStepId = statusToStepMap[wfType]?.[doc.status] || Object.values(statusToStepMap[wfType] || {})[0] || 'draft'
+  // For purchase orders: advance step if linked invoice exists
+  if (wfType === 'purchase_order' && linkedPurchaseInvoice) {
+    if (linkedPurchaseInvoice.status === 'paid') {
+      currentStepId = 'paid'
+    } else {
+      // Invoice exists but not paid yet → facturada is completed, pagada is current
+      currentStepId = 'paid' // "paid" as current means facturada=completed, pagada=current
+    }
+  }
+
+  // Variants de badge por status
+  const badgeVariant: 'default'|'warning'|'success'|'danger'|'info' =
+    ['cobrada','paid','accepted','aceptada','delivered','received','recibida','collected','autorizada','authorized'].includes(doc.status) ? 'success'
+    : ['emitted','emitida','sent','enviada','confirmed','confirmada','shipped'].includes(doc.status) ? 'info'
+    : ['cancelled','cancelada','rejected','rechazada'].includes(doc.status) ? 'danger'
+    : ['draft','borrador','pending','prepared','open'].includes(doc.status) ? 'warning'
+    : 'default'
+
+  // Alertas dinámicas
+  const barAlerts: Array<{ type: 'info'|'warning'|'error'|'success'; message: string }> = []
+  if (editMode) barAlerts.push({ type: 'warning', message: 'Estás en modo edición — acordate de guardar' })
+  if (!doc.system_code) barAlerts.push({ type: 'info', message: 'Este documento aún no tiene código asignado' })
+  // Purchase order: invoice & payment alerts
+  if (wfType === 'purchase_order' && linkedPurchaseInvoice) {
+    const inv = linkedPurchaseInvoice
+    if (inv.status === 'paid') {
+      barAlerts.push({ type: 'success', message: `Factura ${inv.number} pagada` })
+    } else if (inv.due_date) {
+      const today = new Date(); today.setHours(0,0,0,0)
+      const due = new Date(inv.due_date); due.setHours(0,0,0,0)
+      const diffDays = Math.ceil((due.getTime() - today.getTime()) / 86400000)
+      if (diffDays < 0) {
+        barAlerts.push({ type: 'error', message: `VENCIDA — Factura ${inv.number} por ${inv.total.toLocaleString('es-ES')} EUR venció hace ${Math.abs(diffDays)} días (${due.toLocaleDateString('es-ES')})` })
+      } else if (diffDays <= 7) {
+        barAlerts.push({ type: 'warning', message: `Factura ${inv.number} por ${inv.total.toLocaleString('es-ES')} EUR vence en ${diffDays} días (${due.toLocaleDateString('es-ES')})` })
+      } else {
+        barAlerts.push({ type: 'info', message: `Factura ${inv.number} por ${inv.total.toLocaleString('es-ES')} EUR — vence el ${due.toLocaleDateString('es-ES')} (${diffDays} días)` })
+      }
+    }
+  }
+
   return (
     <div className="max-w-[1200px] mx-auto space-y-0 animate-fade-in print:bg-white print:text-black">
+
+      {/* ═══════════════════════════════════════════════════════════════
+           REGLA FUNDAMENTAL — Barra de proceso sticky
+          ═══════════════════════════════════════════════════════════════ */}
+      <div className="-mx-4 print:hidden">
+        <DocumentProcessBar
+          code={doc.display_ref || doc.system_code || 'sin-codigo'}
+          badge={{ label: doc.status || '—', variant: badgeVariant }}
+          entity={<span>Tipo: <strong>{documentType.toUpperCase()}</strong> · Total: {formatCurrency(doc.total || 0, (doc.currency as 'EUR'|'USD'|'ARS') || 'EUR')}</span>}
+          alerts={barAlerts}
+          steps={buildSteps(wfType, currentStepId)}
+          actions={[]}
+        />
+      </div>
 
       {/* ====== TOP ACTION BAR ====== */}
       <div className="sticky top-0 z-30 bg-[#0B0E13]/95 backdrop-blur-sm border-b border-[#1E2330] px-4 py-3 -mx-4 mb-4 print:hidden">
@@ -1098,6 +1698,63 @@ export function DocumentForm({
         />
       )}
 
+      {/* ====== CONVERT BUTTONS ====== */}
+      {!editMode && source === 'tt_documents' && (
+        <div className="flex items-center gap-2 flex-wrap mb-3 print:hidden">
+          {/* Cotización → Pedido */}
+          {documentType === 'coti' && (doc.status === 'accepted' || doc.status === 'sent' || doc.status === 'draft') && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => handleConvert('pedido')}
+              loading={converting}
+            >
+              <GitMerge size={13} /> Convertir a Pedido
+            </Button>
+          )}
+          {/* Pedido → Albarán */}
+          {documentType === 'pedido' && (doc.status === 'open' || doc.status === 'partially_delivered') && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => handleConvert('delivery_note')}
+              loading={converting}
+            >
+              <GitMerge size={13} /> Convertir a Albarán
+            </Button>
+          )}
+          {/* Pedido → Factura */}
+          {documentType === 'pedido' && (doc.status === 'fully_delivered' || doc.status === 'partially_invoiced') && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => handleConvert('factura')}
+              loading={converting}
+            >
+              <GitMerge size={13} /> Convertir a Factura
+            </Button>
+          )}
+          {/* Albarán → Factura */}
+          {documentType === 'delivery_note' && (doc.status === 'delivered' || doc.status === 'pending') && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => handleConvert('factura')}
+              loading={converting}
+            >
+              <GitMerge size={13} /> Convertir a Factura
+            </Button>
+          )}
+        </div>
+      )}
+
+      {/* ====== DOCUMENT CHAIN (trazabilidad) ====== */}
+      {!editMode && source === 'tt_documents' && (
+        <div className="mb-3 print:hidden">
+          <DocumentChain documentId={documentId} />
+        </div>
+      )}
+
       {/* ====== PRINT-ONLY HEADER ====== */}
       <div className="hidden print:block mb-6">
         <div className="flex justify-between border-b-2 border-black pb-4">
@@ -1115,7 +1772,7 @@ export function DocumentForm({
             )}
           </div>
           <div className="text-right">
-            <p className="text-xs font-bold uppercase tracking-wider">{TYPE_LABELS[documentType] || documentType}</p>
+            <p className="text-xs font-bold uppercase tracking-wider">{TYPE_LABELS[doc.metadata?.doc_subtype as string || documentType] || TYPE_LABELS[documentType] || documentType}</p>
             <h2 className="text-lg font-bold">{doc.display_ref || doc.system_code}</h2>
             <p className="text-sm">Fecha: {doc.created_at ? formatDate(doc.created_at) : '-'}</p>
             <p className="text-sm">Estado: {currentStatus.label || mapStatus(doc.status)}</p>
@@ -1203,9 +1860,21 @@ export function DocumentForm({
         {/* Row 1: Type badge + Ref + Status */}
         <div className="flex items-center justify-between gap-4 mb-5">
           <div className="flex items-center gap-3 flex-wrap">
-            <span className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide bg-[#FF6600] text-white">
-              {TYPE_LABELS[documentType] || documentType}
-            </span>
+            {editMode && (documentType === 'coti' || documentType === 'cotizacion') ? (
+              <select
+                value={(editDoc.metadata as Record<string, unknown>)?.doc_subtype as string || doc.metadata?.doc_subtype as string || 'cotizacion'}
+                onChange={(e) => setEditDoc({ ...editDoc, metadata: { ...doc.metadata, ...editDoc.metadata as Record<string, unknown>, doc_subtype: e.target.value } })}
+                className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide bg-[#FF6600] text-white border-none outline-none cursor-pointer"
+              >
+                {QUOTE_SUBTYPES.map(st => (
+                  <option key={st.value} value={st.value} className="bg-[#141820] text-[#F0F2F5]">{st.icon} {st.label}</option>
+                ))}
+              </select>
+            ) : (
+              <span className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide bg-[#FF6600] text-white">
+                {TYPE_LABELS[doc.metadata?.doc_subtype as string || documentType] || TYPE_LABELS[documentType] || documentType}
+              </span>
+            )}
             {editMode ? (
               <div className="flex items-center gap-1">
                 <select
@@ -1460,6 +2129,27 @@ export function DocumentForm({
             </div>
           )}
 
+          {/* Payment status badge for invoices */}
+          {isInvoiceType && doc && (
+            <div className="flex items-center gap-2">
+              {paidAmount > 0 ? (
+                <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${
+                  paidPct >= 100
+                    ? 'bg-[#10B981]/15 text-[#10B981]'
+                    : 'bg-[#F59E0B]/15 text-[#F59E0B]'
+                }`}>
+                  <DollarSign size={12} />
+                  Cobrado {formatCurrency(paidAmount, (doc.currency || 'EUR') as 'EUR' | 'USD' | 'ARS')} de {formatCurrency(docTotal, (doc.currency || 'EUR') as 'EUR' | 'USD' | 'ARS')} ({paidPct.toFixed(0)}%)
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[#EF4444]/15 text-[#EF4444]">
+                  <DollarSign size={12} />
+                  Sin cobros
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Financials summary */}
           <div className="ml-auto flex items-center gap-5 text-xs">
             <span className="text-[#6B7280]">
@@ -1572,14 +2262,16 @@ export function DocumentForm({
       <div className="mt-4 print:hidden">
         {/* Tab buttons */}
         <div className="flex gap-1 p-1 bg-[#0F1218] rounded-lg border border-[#1E2330] mb-4 overflow-x-auto print:hidden">
-          {[
+          {([
             { id: 'lineas' as const, label: 'Lineas', icon: <FileText size={14} /> },
             { id: 'rentabilidad' as const, label: 'Rentabilidad', icon: <TrendingUp size={14} /> },
             { id: 'mas_info' as const, label: 'Mas informacion', icon: <FileText size={14} /> },
             { id: 'adjuntos' as const, label: 'Adjuntos', icon: <Paperclip size={14} /> },
             { id: 'firma' as const, label: 'Firma', icon: <PenTool size={14} /> },
             { id: 'relacionados' as const, label: 'Relacionados', icon: <Link2 size={14} /> },
-          ].map((tab) => (
+            ...(isInvoiceType ? [{ id: 'cobros' as const, label: `Cobros${payments.length > 0 ? ` (${payments.length})` : ''}`, icon: <CreditCard size={14} /> }] : []),
+            ...(isPAPWithInvoice ? [{ id: 'comparacion' as const, label: 'Comparacion PO/Factura', icon: <Scale size={14} /> }] : []),
+          ] as Array<{ id: typeof activeTab; label: string; icon: React.ReactNode }>).map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
@@ -2135,32 +2827,229 @@ export function DocumentForm({
 
         {/* ====== TAB: FIRMA ====== */}
         {activeTab === 'firma' && (
-          <div className="bg-[#141820] rounded-xl border border-[#2A3040] p-5">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="bg-[#141820] rounded-xl border border-[#2A3040] p-5 space-y-6">
+            {/* Header + action */}
+            <div className="flex items-center justify-between">
               <div>
-                <label className="block text-xs font-medium text-[#6B7280] mb-2 uppercase tracking-wider">Area de firma</label>
-                <div className="bg-[#0B0E13] border-2 border-dashed border-[#2A3040] rounded-xl h-40 flex items-center justify-center">
-                  <div className="text-center text-[#4B5563]">
-                    <PenTool size={32} className="mx-auto mb-2" />
-                    <p className="text-sm">Area de firma (proximamente)</p>
-                  </div>
-                </div>
+                <h3 className="text-sm font-bold text-[#F0F2F5]">Firmas digitales</h3>
+                <p className="text-xs text-[#6B7280] mt-0.5">Solicita y gestiona firmas para este documento</p>
               </div>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-xs font-medium text-[#6B7280] mb-1.5 uppercase tracking-wider">Firmado por</label>
-                  <div className="bg-[#0B0E13] rounded-lg border border-[#2A3040] px-3 py-2 text-sm text-[#9CA3AF]">
-                    Sin firma
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-[#6B7280] mb-1.5 uppercase tracking-wider">Fecha de firma</label>
-                  <div className="bg-[#0B0E13] rounded-lg border border-[#2A3040] px-3 py-2 text-sm text-[#9CA3AF]">
-                    -
-                  </div>
-                </div>
-              </div>
+              <Button
+                onClick={() => setShowSignatureForm(true)}
+                className="text-xs"
+              >
+                <Plus size={14} /> Solicitar firma
+              </Button>
             </div>
+
+            {/* Signature request form */}
+            {showSignatureForm && (
+              <div className="bg-[#0B0E13] border border-[#2A3040] rounded-xl p-5 space-y-4">
+                <h4 className="text-sm font-semibold text-[#F0F2F5]">Nueva solicitud de firma</h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <Input
+                    label="Nombre del firmante"
+                    value={signerName}
+                    onChange={(e) => setSignerName(e.target.value)}
+                    placeholder="Nombre completo"
+                  />
+                  <Input
+                    label="Email del firmante"
+                    type="email"
+                    value={signerEmail}
+                    onChange={(e) => setSignerEmail(e.target.value)}
+                    placeholder="email@empresa.com"
+                  />
+                  <Select
+                    label="Rol"
+                    value={signerRole}
+                    onChange={(e) => setSignerRole(e.target.value as 'client' | 'approver' | 'witness')}
+                    options={[
+                      { value: 'client', label: 'Cliente' },
+                      { value: 'approver', label: 'Aprobador' },
+                      { value: 'witness', label: 'Testigo' },
+                    ]}
+                  />
+                </div>
+                <div className="flex justify-end gap-3">
+                  <Button
+                    onClick={() => { setShowSignatureForm(false); setSignerName(''); setSignerEmail(''); setSignerRole('client') }}
+                    className="bg-[#1E2330] hover:bg-[#2A3040] text-[#9CA3AF] text-xs"
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    disabled={requestingSignature || !signerName.trim() || !signerEmail.trim()}
+                    onClick={async () => {
+                      setRequestingSignature(true)
+                      try {
+                        const sb = createClient()
+                        const token = crypto.randomUUID()
+                        const expiresAt = new Date()
+                        expiresAt.setDate(expiresAt.getDate() + 7) // 7 days to sign
+                        const { error } = await sb.from('tt_signatures').insert({
+                          document_id: documentId,
+                          quote_id: documentType === 'cotizacion' ? documentId : null,
+                          signer_name: signerName.trim(),
+                          signer_email: signerEmail.trim(),
+                          signer_role: signerRole,
+                          token,
+                          status: 'pending',
+                          expires_at: expiresAt.toISOString(),
+                        })
+                        if (error) throw error
+                        addToast({ type: 'success', title: 'Solicitud de firma creada', message: `Enlace generado para ${signerName}` })
+                        setShowSignatureForm(false)
+                        setSignerName(''); setSignerEmail(''); setSignerRole('client')
+                        // Reload signatures
+                        const { data: sigData } = await sb
+                          .from('tt_signatures')
+                          .select('*')
+                          .eq('document_id', documentId)
+                          .order('created_at', { ascending: false })
+                        setSignatures((sigData || []).map((s: Row) => ({
+                          id: (s.id as string) || '',
+                          document_id: (s.document_id as string) || '',
+                          quote_id: (s.quote_id as string) || null,
+                          signer_name: (s.signer_name as string) || '',
+                          signer_email: (s.signer_email as string) || '',
+                          signer_role: (s.signer_role as string) || 'client',
+                          signature_data: (s.signature_data as string) || null,
+                          signature_url: (s.signature_url as string) || null,
+                          ip_address: (s.ip_address as string) || null,
+                          signed_at: (s.signed_at as string) || null,
+                          token: (s.token as string) || '',
+                          status: (s.status as string) || 'pending',
+                          expires_at: (s.expires_at as string) || null,
+                          created_at: (s.created_at as string) || '',
+                        })))
+                      } catch (err) {
+                        addToast({ type: 'error', title: 'Error creando solicitud', message: (err as Error).message })
+                      } finally {
+                        setRequestingSignature(false)
+                      }
+                    }}
+                    className="text-xs"
+                  >
+                    {requestingSignature ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                    Crear solicitud
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Signatures list */}
+            {signatures.length === 0 && !showSignatureForm ? (
+              <div className="bg-[#0B0E13] border-2 border-dashed border-[#2A3040] rounded-xl py-12 flex flex-col items-center justify-center">
+                <PenTool size={40} className="text-[#4B5563] mb-3" />
+                <p className="text-sm text-[#6B7280]">No hay solicitudes de firma</p>
+                <p className="text-xs text-[#4B5563] mt-1">Hace clic en &quot;Solicitar firma&quot; para enviar una solicitud</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {signatures.map((sig) => {
+                  const isExpired = sig.expires_at && new Date(sig.expires_at) < new Date() && sig.status === 'pending'
+                  const effectiveStatus = isExpired ? 'expired' : sig.status
+                  const sigUrl = `https://cotizador-torquetools.vercel.app/portal/${sig.token}`
+                  const roleLabels: Record<string, string> = { client: 'Cliente', approver: 'Aprobador', witness: 'Testigo' }
+
+                  return (
+                    <div key={sig.id} className="bg-[#0B0E13] border border-[#2A3040] rounded-xl p-4">
+                      <div className="flex items-start justify-between gap-4">
+                        {/* Signer info */}
+                        <div className="flex-1 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-semibold text-[#F0F2F5]">{sig.signer_name}</span>
+                            <span className="text-xs text-[#6B7280]">({roleLabels[sig.signer_role] || sig.signer_role})</span>
+                            {effectiveStatus === 'pending' && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                <Clock size={10} /> Pendiente
+                              </span>
+                            )}
+                            {effectiveStatus === 'signed' && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                <CheckCircle2 size={10} /> Firmado
+                              </span>
+                            )}
+                            {effectiveStatus === 'rejected' && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-500/10 text-red-400 border border-red-500/20">
+                                <X size={10} /> Rechazado
+                              </span>
+                            )}
+                            {effectiveStatus === 'expired' && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#1E2330] text-[#6B7280] border border-[#2A3040]">
+                                <Clock size={10} /> Expirado
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-[#6B7280]">{sig.signer_email}</p>
+
+                          {/* Link to share (only for pending) */}
+                          {effectiveStatus === 'pending' && (
+                            <div className="flex items-center gap-2 mt-2">
+                              <div className="flex-1 bg-[#141820] border border-[#2A3040] rounded-lg px-3 py-1.5 text-xs text-[#9CA3AF] font-mono truncate">
+                                {sigUrl}
+                              </div>
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard.writeText(sigUrl)
+                                  setCopiedToken(sig.token)
+                                  setTimeout(() => setCopiedToken(null), 2000)
+                                }}
+                                className="px-3 py-1.5 rounded-lg bg-[#1E2330] hover:bg-[#2A3040] text-[#9CA3AF] hover:text-[#F0F2F5] transition-colors text-xs flex items-center gap-1"
+                              >
+                                {copiedToken === sig.token ? <><CheckCircle2 size={12} /> Copiado</> : <><Copy size={12} /> Copiar</>}
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Signed details */}
+                          {effectiveStatus === 'signed' && (
+                            <div className="mt-3 space-y-3">
+                              {/* Signature image preview */}
+                              {(sig.signature_url || sig.signature_data) && (
+                                <div>
+                                  <label className="block text-xs font-medium text-[#6B7280] mb-1.5 uppercase tracking-wider">Firma</label>
+                                  <div className="bg-white rounded-lg p-3 inline-block border border-[#2A3040]">
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img
+                                      src={sig.signature_url || sig.signature_data || ''}
+                                      alt={`Firma de ${sig.signer_name}`}
+                                      className="max-h-20 max-w-[200px] object-contain"
+                                    />
+                                  </div>
+                                </div>
+                              )}
+                              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                                <div>
+                                  <label className="block text-[10px] font-medium text-[#6B7280] uppercase tracking-wider">Firmado por</label>
+                                  <p className="text-sm text-[#F0F2F5] mt-0.5">{sig.signer_name}</p>
+                                </div>
+                                <div>
+                                  <label className="block text-[10px] font-medium text-[#6B7280] uppercase tracking-wider">Fecha de firma</label>
+                                  <p className="text-sm text-[#F0F2F5] mt-0.5">{sig.signed_at ? formatDate(sig.signed_at) : '-'}</p>
+                                </div>
+                                <div>
+                                  <label className="block text-[10px] font-medium text-[#6B7280] uppercase tracking-wider">IP</label>
+                                  <p className="text-sm text-[#9CA3AF] font-mono mt-0.5">{sig.ip_address || '-'}</p>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Expiry info */}
+                          {sig.expires_at && effectiveStatus !== 'signed' && (
+                            <p className="text-[10px] text-[#4B5563] mt-1">
+                              {effectiveStatus === 'expired' ? 'Expiro' : 'Expira'}: {formatDate(sig.expires_at)}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </div>
         )}
 
@@ -2259,6 +3148,496 @@ export function DocumentForm({
                       </div>
                     </div>
                   ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ====== TAB: COBROS (Pagos parciales) ====== */}
+        {activeTab === 'cobros' && isInvoiceType && doc && (
+          <div className="space-y-4">
+            {/* Progress bar */}
+            <div className="bg-[#141820] rounded-xl border border-[#2A3040] p-5">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <CreditCard size={18} className="text-[#FF6600]" />
+                  <h3 className="text-base font-bold text-[#F0F2F5]">Estado de cobro</h3>
+                </div>
+                <span className={`text-sm font-bold ${
+                  paidPct >= 100 ? 'text-[#10B981]' : paidPct > 0 ? 'text-[#F59E0B]' : 'text-[#EF4444]'
+                }`}>
+                  {paidPct.toFixed(0)}% cobrado
+                </span>
+              </div>
+
+              {/* Progress bar visual */}
+              <div className="w-full h-5 rounded-full overflow-hidden bg-[#1E2330] mb-3">
+                <div
+                  className={`h-full rounded-full transition-all duration-500 ${
+                    paidPct >= 100 ? 'bg-[#10B981]' : paidPct >= 50 ? 'bg-[#F59E0B]' : paidPct > 0 ? 'bg-[#FF6600]' : ''
+                  }`}
+                  style={{ width: `${Math.min(100, paidPct)}%` }}
+                />
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
+                <div className="text-center">
+                  <p className="text-[10px] text-[#6B7280] uppercase tracking-wider">Total factura</p>
+                  <p className="text-lg font-bold text-[#F0F2F5] font-mono">
+                    {formatCurrency(docTotal, (doc.currency || 'EUR') as 'EUR' | 'USD' | 'ARS')}
+                  </p>
+                </div>
+                <div className="text-center">
+                  <p className="text-[10px] text-[#6B7280] uppercase tracking-wider">Cobrado</p>
+                  <p className="text-lg font-bold text-[#10B981] font-mono">
+                    {formatCurrency(paidAmount, (doc.currency || 'EUR') as 'EUR' | 'USD' | 'ARS')}
+                  </p>
+                </div>
+                <div className="text-center">
+                  <p className="text-[10px] text-[#6B7280] uppercase tracking-wider">Pendiente</p>
+                  <p className={`text-lg font-bold font-mono ${remainingAmount > 0 ? 'text-[#EF4444]' : 'text-[#10B981]'}`}>
+                    {formatCurrency(remainingAmount, (doc.currency || 'EUR') as 'EUR' | 'USD' | 'ARS')}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Payment list */}
+            <div className="bg-[#141820] rounded-xl border border-[#2A3040] overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-3 border-b border-[#2A3040]">
+                <h4 className="text-sm font-bold text-[#F0F2F5]">Cobros registrados ({payments.length})</h4>
+                {remainingAmount > 0 && (
+                  <button
+                    onClick={() => {
+                      setNewPayment(prev => ({ ...prev, amount: Math.round(remainingAmount * 100) / 100 }))
+                      setShowPaymentForm(true)
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#FF6600] text-white text-xs font-bold hover:bg-[#FF6600]/90 transition-colors"
+                  >
+                    <Plus size={14} /> Registrar cobro
+                  </button>
+                )}
+              </div>
+
+              {payments.length > 0 ? (
+                <div className="divide-y divide-[#1E2330]">
+                  {payments.map((payment) => {
+                    const methodLabels: Record<string, { label: string; color: string }> = {
+                      transferencia: { label: 'Transferencia', color: '#3B82F6' },
+                      efectivo: { label: 'Efectivo', color: '#10B981' },
+                      tarjeta: { label: 'Tarjeta', color: '#8B5CF6' },
+                      cheque: { label: 'Cheque', color: '#F59E0B' },
+                      pagare: { label: 'Pagare', color: '#EF4444' },
+                      compensacion: { label: 'Compensacion', color: '#6366F1' },
+                      otro: { label: 'Otro', color: '#6B7280' },
+                    }
+                    const method = methodLabels[payment.payment_method] || methodLabels.otro
+                    return (
+                      <div key={payment.id} className="flex items-center justify-between px-5 py-3 hover:bg-[#1C2230]/50 transition-colors">
+                        <div className="flex items-center gap-4">
+                          <div className="w-10 h-10 rounded-lg bg-[#10B981]/10 flex items-center justify-center">
+                            <Banknote size={18} className="text-[#10B981]" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-bold text-[#F0F2F5]">
+                                {formatCurrency(payment.amount, (payment.currency || doc.currency || 'EUR') as 'EUR' | 'USD' | 'ARS')}
+                              </span>
+                              <span
+                                className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider"
+                                style={{ background: `${method.color}20`, color: method.color }}
+                              >
+                                {method.label}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-3 mt-0.5">
+                              <span className="text-xs text-[#6B7280]">
+                                {payment.payment_date ? formatDate(payment.payment_date) : '-'}
+                              </span>
+                              {payment.bank_reference && (
+                                <span className="text-xs text-[#9CA3AF] font-mono">
+                                  Ref: {payment.bank_reference}
+                                </span>
+                              )}
+                              {payment.notes && (
+                                <span className="text-xs text-[#6B7280] italic max-w-[200px] truncate">
+                                  {payment.notes}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <span className="text-xs text-[#4B5563]">
+                          {payment.created_at ? formatDate(payment.created_at) : ''}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <DollarSign size={32} className="mx-auto mb-2 text-[#4B5563] opacity-50" />
+                  <p className="text-sm text-[#6B7280]">Sin cobros registrados</p>
+                  <p className="text-xs text-[#4B5563] mt-1">Registra el primer cobro para esta factura</p>
+                </div>
+              )}
+            </div>
+
+            {/* Inline Payment Form */}
+            {showPaymentForm && (
+              <div className="bg-[#141820] rounded-xl border border-[#FF6600]/30 p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-bold text-[#FF6600]">Registrar nuevo cobro</h4>
+                  <button
+                    onClick={() => setShowPaymentForm(false)}
+                    className="text-[#6B7280] hover:text-[#F0F2F5]"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-medium text-[#6B7280] mb-1 uppercase tracking-wider">
+                      Importe *
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      max={remainingAmount}
+                      value={newPayment.amount || ''}
+                      onChange={(e) => setNewPayment({ ...newPayment, amount: Number(e.target.value) })}
+                      className="h-10 w-full rounded-lg bg-[#0B0E13] border border-[#FF6600] px-3 text-sm text-[#F0F2F5] focus:outline-none font-mono"
+                      placeholder={`Max: ${remainingAmount.toFixed(2)}`}
+                    />
+                    <p className="text-[10px] text-[#6B7280] mt-1">
+                      Pendiente: {formatCurrency(remainingAmount, (doc.currency || 'EUR') as 'EUR' | 'USD' | 'ARS')}
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-medium text-[#6B7280] mb-1 uppercase tracking-wider">
+                      Fecha de cobro
+                    </label>
+                    <input
+                      type="date"
+                      value={newPayment.payment_date}
+                      onChange={(e) => setNewPayment({ ...newPayment, payment_date: e.target.value })}
+                      className="h-10 w-full rounded-lg bg-[#0B0E13] border border-[#2A3040] focus:border-[#FF6600] px-3 text-sm text-[#F0F2F5] focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-medium text-[#6B7280] mb-1 uppercase tracking-wider">
+                      Metodo de pago
+                    </label>
+                    <select
+                      value={newPayment.payment_method}
+                      onChange={(e) => setNewPayment({ ...newPayment, payment_method: e.target.value })}
+                      className="h-10 w-full rounded-lg bg-[#0B0E13] border border-[#2A3040] focus:border-[#FF6600] px-3 text-sm text-[#F0F2F5] focus:outline-none"
+                    >
+                      <option value="transferencia">Transferencia bancaria</option>
+                      <option value="efectivo">Efectivo</option>
+                      <option value="tarjeta">Tarjeta</option>
+                      <option value="cheque">Cheque</option>
+                      <option value="pagare">Pagare</option>
+                      <option value="compensacion">Compensacion</option>
+                      <option value="otro">Otro</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-medium text-[#6B7280] mb-1 uppercase tracking-wider">
+                      Referencia bancaria
+                    </label>
+                    <input
+                      type="text"
+                      value={newPayment.bank_reference}
+                      onChange={(e) => setNewPayment({ ...newPayment, bank_reference: e.target.value })}
+                      className="h-10 w-full rounded-lg bg-[#0B0E13] border border-[#2A3040] focus:border-[#FF6600] px-3 text-sm text-[#F0F2F5] focus:outline-none"
+                      placeholder="Nro. transferencia, cheque..."
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-medium text-[#6B7280] mb-1 uppercase tracking-wider">
+                    Notas
+                  </label>
+                  <input
+                    type="text"
+                    value={newPayment.notes}
+                    onChange={(e) => setNewPayment({ ...newPayment, notes: e.target.value })}
+                    className="h-10 w-full rounded-lg bg-[#0B0E13] border border-[#2A3040] focus:border-[#FF6600] px-3 text-sm text-[#F0F2F5] focus:outline-none"
+                    placeholder="Observaciones del cobro..."
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-[#2A3040]">
+                  <Button variant="secondary" size="sm" onClick={() => setShowPaymentForm(false)}>
+                    Cancelar
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={handleRegisterPayment}
+                    loading={savingPayment}
+                    disabled={!newPayment.amount || newPayment.amount <= 0}
+                  >
+                    <Save size={14} /> Registrar cobro
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ====== TAB: COMPARACION PO vs FACTURA ====== */}
+        {activeTab === 'comparacion' && isPAPWithInvoice && comparisonSummary && (
+          <div className="space-y-4">
+            {/* Summary Header Card */}
+            <div className="bg-[#141820] rounded-xl border border-[#2A3040] p-5">
+              <div className="flex items-center gap-3 mb-4">
+                <Scale size={20} className="text-[#FF6600]" />
+                <h3 className="text-base font-bold text-[#F0F2F5]">Comparacion: Pedido vs Factura de Compra</h3>
+                {linkedPurchaseInvoice?.comparison_status === 'confirmed' && (
+                  <span className="ml-auto flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#10B981]/15 text-[#10B981] text-xs font-bold">
+                    <ShieldCheck size={14} />
+                    Confirmada {linkedPurchaseInvoice.confirmed_at
+                      ? `el ${formatDate(linkedPurchaseInvoice.confirmed_at, 'dd/MM/yyyy HH:mm')}`
+                      : ''}
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                {/* PO Total */}
+                <div className="bg-[#0B0E13] rounded-lg border border-[#1E2330] p-4">
+                  <p className="text-[10px] font-medium text-[#6B7280] uppercase tracking-wider mb-1">Total Pedido (PO)</p>
+                  <p className="text-xl font-bold text-[#F0F2F5] font-mono">
+                    {formatCurrency(comparisonSummary.poTotal, (doc.currency as 'EUR' | 'USD' | 'ARS') || 'EUR')}
+                  </p>
+                </div>
+                {/* Invoice Total */}
+                <div className="bg-[#0B0E13] rounded-lg border border-[#1E2330] p-4">
+                  <p className="text-[10px] font-medium text-[#6B7280] uppercase tracking-wider mb-1">Total Factura</p>
+                  <p className="text-xl font-bold text-[#F0F2F5] font-mono">
+                    {formatCurrency(comparisonSummary.invTotal, (doc.currency as 'EUR' | 'USD' | 'ARS') || 'EUR')}
+                  </p>
+                  <p className="text-xs text-[#6B7280] mt-1">Factura: {linkedPurchaseInvoice!.number}</p>
+                </div>
+                {/* Difference */}
+                <div className={`rounded-lg border p-4 ${
+                  Math.abs(comparisonSummary.diff) < 0.01
+                    ? 'bg-[#10B981]/10 border-[#10B981]/30'
+                    : comparisonSummary.diff > 0
+                      ? 'bg-[#F59E0B]/10 border-[#F59E0B]/30'
+                      : 'bg-[#3B82F6]/10 border-[#3B82F6]/30'
+                }`}>
+                  <p className="text-[10px] font-medium text-[#6B7280] uppercase tracking-wider mb-1">Diferencia</p>
+                  <p className={`text-xl font-bold font-mono ${
+                    Math.abs(comparisonSummary.diff) < 0.01
+                      ? 'text-[#10B981]'
+                      : comparisonSummary.diff > 0
+                        ? 'text-[#F59E0B]'
+                        : 'text-[#3B82F6]'
+                  }`}>
+                    {comparisonSummary.diff > 0 ? '+' : ''}
+                    {formatCurrency(comparisonSummary.diff, (doc.currency as 'EUR' | 'USD' | 'ARS') || 'EUR')}
+                  </p>
+                </div>
+                {/* Percentage */}
+                <div className={`rounded-lg border p-4 ${
+                  Math.abs(comparisonSummary.diffPct) < 0.1
+                    ? 'bg-[#10B981]/10 border-[#10B981]/30'
+                    : Math.abs(comparisonSummary.diffPct) > 5
+                      ? 'bg-[#EF4444]/10 border-[#EF4444]/30'
+                      : 'bg-[#F59E0B]/10 border-[#F59E0B]/30'
+                }`}>
+                  <p className="text-[10px] font-medium text-[#6B7280] uppercase tracking-wider mb-1">% Diferencia</p>
+                  <p className={`text-xl font-bold font-mono ${
+                    Math.abs(comparisonSummary.diffPct) < 0.1
+                      ? 'text-[#10B981]'
+                      : Math.abs(comparisonSummary.diffPct) > 5
+                        ? 'text-[#EF4444]'
+                        : 'text-[#F59E0B]'
+                  }`}>
+                    {comparisonSummary.diffPct > 0 ? '+' : ''}
+                    {comparisonSummary.diffPct.toFixed(2)}%
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Line-by-line Comparison Table */}
+            <div className="bg-[#141820] rounded-xl border border-[#2A3040] overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-[#2A3040]">
+                      <th className="text-left px-3 py-3 text-[10px] font-medium text-[#6B7280] uppercase tracking-wider" rowSpan={2}>Item</th>
+                      <th className="text-center px-2 py-1.5 text-[10px] font-medium text-[#6B7280] uppercase tracking-wider border-b border-[#2A3040] bg-[#0F1218]" colSpan={3}>Pedido (PO)</th>
+                      <th className="text-center px-2 py-1.5 text-[10px] font-medium text-[#6B7280] uppercase tracking-wider border-b border-[#2A3040] bg-[#181E28]" colSpan={3}>Factura</th>
+                      <th className="text-center px-3 py-3 text-[10px] font-medium text-[#6B7280] uppercase tracking-wider" rowSpan={2}>Estado</th>
+                    </tr>
+                    <tr className="border-b border-[#2A3040] text-[#6B7280] text-[10px] uppercase tracking-wider">
+                      <th className="text-right px-2 py-2 bg-[#0F1218]">Cant.</th>
+                      <th className="text-right px-2 py-2 bg-[#0F1218]">Precio</th>
+                      <th className="text-right px-2 py-2 bg-[#0F1218]">Subtotal</th>
+                      <th className="text-right px-2 py-2 bg-[#181E28]">Cant.</th>
+                      <th className="text-right px-2 py-2 bg-[#181E28]">Precio</th>
+                      <th className="text-right px-2 py-2 bg-[#181E28]">Subtotal</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {comparisonRows.map((row) => {
+                      const statusConfig: Record<ComparisonStatus, { label: string; bg: string; badgeBg: string; badgeText: string }> = {
+                        ok: { label: 'OK', bg: '', badgeBg: 'bg-[#10B981]/15', badgeText: 'text-[#10B981]' },
+                        precio_diferente: { label: 'Precio diferente', bg: 'bg-[#F59E0B]/5', badgeBg: 'bg-[#F59E0B]/15', badgeText: 'text-[#F59E0B]' },
+                        cantidad_diferente: { label: 'Cantidad diferente', bg: 'bg-[#F59E0B]/5', badgeBg: 'bg-[#EAB308]/15', badgeText: 'text-[#EAB308]' },
+                        nuevo: { label: 'NUEVO', bg: 'bg-[#3B82F6]/5', badgeBg: 'bg-[#3B82F6]/15', badgeText: 'text-[#3B82F6]' },
+                        faltante: { label: 'FALTANTE', bg: 'bg-[#EF4444]/5', badgeBg: 'bg-[#EF4444]/15', badgeText: 'text-[#EF4444]' },
+                      }
+                      const cfg = statusConfig[row.status]
+                      const curr = (doc.currency as 'EUR' | 'USD' | 'ARS') || 'EUR'
+
+                      return (
+                        <tr key={row.key} className={`border-b border-[#1E2330] ${cfg.bg} hover:bg-[#1E2330]/50 transition-colors`}>
+                          {/* Item description */}
+                          <td className="px-3 py-2.5">
+                            <div>
+                              <p className="text-[#F0F2F5] font-medium text-sm">{row.description}</p>
+                              {row.sku && row.sku !== '-' && (
+                                <p className="text-[#6B7280] text-xs font-mono">{row.sku}</p>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* PO side */}
+                          <td className={`text-right px-2 py-2.5 font-mono text-xs bg-[#0F1218]/50 ${
+                            row.status === 'nuevo' ? 'text-[#4B5563]' : 'text-[#9CA3AF]'
+                          }`}>
+                            {row.poQty != null ? row.poQty : <span className="text-[#4B5563]">-</span>}
+                          </td>
+                          <td className={`text-right px-2 py-2.5 font-mono text-xs bg-[#0F1218]/50 ${
+                            row.status === 'precio_diferente' ? 'text-[#F59E0B] font-bold' : row.status === 'nuevo' ? 'text-[#4B5563]' : 'text-[#9CA3AF]'
+                          }`}>
+                            {row.poPrice != null ? formatCurrency(row.poPrice, curr) : <span className="text-[#4B5563]">-</span>}
+                          </td>
+                          <td className={`text-right px-2 py-2.5 font-mono text-xs bg-[#0F1218]/50 ${
+                            row.status === 'nuevo' ? 'text-[#4B5563]' : 'text-[#9CA3AF]'
+                          }`}>
+                            {row.poSubtotal != null ? formatCurrency(row.poSubtotal, curr) : <span className="text-[#4B5563]">-</span>}
+                          </td>
+
+                          {/* Invoice side */}
+                          <td className={`text-right px-2 py-2.5 font-mono text-xs bg-[#181E28]/50 ${
+                            row.status === 'faltante' ? 'text-[#4B5563]' : row.status === 'cantidad_diferente' ? 'text-[#EAB308] font-bold' : 'text-[#F0F2F5]'
+                          }`}>
+                            {row.invQty != null ? row.invQty : <span className="text-[#4B5563]">-</span>}
+                          </td>
+                          <td className={`text-right px-2 py-2.5 font-mono text-xs bg-[#181E28]/50 ${
+                            row.status === 'faltante' ? 'text-[#4B5563]' : row.status === 'precio_diferente' ? 'text-[#F59E0B] font-bold' : 'text-[#F0F2F5]'
+                          }`}>
+                            {row.invPrice != null ? formatCurrency(row.invPrice, curr) : <span className="text-[#4B5563]">-</span>}
+                          </td>
+                          <td className={`text-right px-2 py-2.5 font-mono text-xs bg-[#181E28]/50 ${
+                            row.status === 'faltante' ? 'text-[#4B5563]' : row.status === 'nuevo' ? 'text-[#3B82F6] font-bold' : 'text-[#F0F2F5]'
+                          }`}>
+                            {row.invSubtotal != null ? formatCurrency(row.invSubtotal, curr) : <span className="text-[#4B5563]">-</span>}
+                          </td>
+
+                          {/* Status badge */}
+                          <td className="text-center px-2 py-2.5">
+                            <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${cfg.badgeBg} ${cfg.badgeText}`}>
+                              {row.status === 'ok' && <CheckCircle2 size={11} />}
+                              {row.status === 'precio_diferente' && <AlertTriangle size={11} />}
+                              {row.status === 'cantidad_diferente' && <AlertTriangle size={11} />}
+                              {row.status === 'nuevo' && <PackageCheck size={11} />}
+                              {row.status === 'faltante' && <X size={11} />}
+                              {cfg.label}
+                            </span>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                  {/* Table footer with totals */}
+                  <tfoot>
+                    <tr className="border-t-2 border-[#2A3040] bg-[#0F1218]">
+                      <td className="px-3 py-3 text-xs font-bold text-[#F0F2F5] uppercase">Totales</td>
+                      <td className="text-right px-2 py-3 bg-[#0F1218]" />
+                      <td className="text-right px-2 py-3 bg-[#0F1218]" />
+                      <td className="text-right px-2 py-3 font-mono text-sm font-bold text-[#9CA3AF] bg-[#0F1218]">
+                        {formatCurrency(comparisonSummary.poTotal, (doc.currency as 'EUR' | 'USD' | 'ARS') || 'EUR')}
+                      </td>
+                      <td className="text-right px-2 py-3 bg-[#181E28]" />
+                      <td className="text-right px-2 py-3 bg-[#181E28]" />
+                      <td className="text-right px-2 py-3 font-mono text-sm font-bold text-[#F0F2F5] bg-[#181E28]">
+                        {formatCurrency(comparisonSummary.invTotal, (doc.currency as 'EUR' | 'USD' | 'ARS') || 'EUR')}
+                      </td>
+                      <td className="text-center px-2 py-3">
+                        {Math.abs(comparisonSummary.diff) < 0.01 ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-[#10B981]/15 text-[#10B981]">
+                            <CheckCircle2 size={11} />
+                            COINCIDE
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-[#F59E0B]/15 text-[#F59E0B]">
+                            <AlertTriangle size={11} />
+                            {comparisonSummary.diff > 0 ? '+' : ''}{formatCurrency(comparisonSummary.diff, (doc.currency as 'EUR' | 'USD' | 'ARS') || 'EUR')}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+
+            {/* Confirm Button */}
+            {linkedPurchaseInvoice?.comparison_status !== 'confirmed' ? (
+              <div className="flex items-center justify-between bg-[#141820] rounded-xl border border-[#2A3040] p-5">
+                <div className="flex items-center gap-3">
+                  <AlertTriangle size={20} className="text-[#F59E0B]" />
+                  <div>
+                    <p className="text-sm font-medium text-[#F0F2F5]">Revision pendiente</p>
+                    <p className="text-xs text-[#6B7280]">
+                      {Math.abs(comparisonSummary.diff) < 0.01
+                        ? 'Los totales coinciden. Confirma la revision para cerrar el control.'
+                        : `Hay una diferencia de ${comparisonSummary.diff > 0 ? '+' : ''}${formatCurrency(comparisonSummary.diff, (doc.currency as 'EUR' | 'USD' | 'ARS') || 'EUR')} (${comparisonSummary.diffPct.toFixed(2)}%). Revisa las lineas y confirma.`
+                      }
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  variant="primary"
+                  onClick={handleConfirmComparison}
+                  disabled={comparisonConfirming}
+                  className="shrink-0"
+                >
+                  {comparisonConfirming ? (
+                    <><Loader2 size={14} className="animate-spin" /> Confirmando...</>
+                  ) : (
+                    <><ShieldCheck size={14} /> Confirmar diferencias</>
+                  )}
+                </Button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-3 bg-[#10B981]/10 rounded-xl border border-[#10B981]/30 p-5">
+                <ShieldCheck size={20} className="text-[#10B981]" />
+                <div>
+                  <p className="text-sm font-medium text-[#10B981]">Comparacion confirmada</p>
+                  <p className="text-xs text-[#6B7280]">
+                    Confirmado {linkedPurchaseInvoice.confirmed_at
+                      ? `el ${formatDate(linkedPurchaseInvoice.confirmed_at, 'dd/MM/yyyy HH:mm')}`
+                      : ''}
+                    {linkedPurchaseInvoice.confirmed_by
+                      ? ` por ${linkedPurchaseInvoice.confirmed_by}`
+                      : ''}
+                  </p>
                 </div>
               </div>
             )}

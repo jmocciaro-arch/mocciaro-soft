@@ -3,14 +3,16 @@
 import { Card } from '@/components/ui/card'
 import { Select } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
-import { CheckCircle, FileText, Wrench, Gauge } from 'lucide-react'
+import { CheckCircle, FileText, Wrench, Gauge, Camera } from 'lucide-react'
 import { formatCurrency } from '@/lib/utils'
-import type { CierreData, DiagnosticoData, CotizacionData, ReparacionData, TorqueData } from '../sat-workflow-types'
+import { MediaCapture } from '@/components/sat/media-capture'
+import type { CierreData, DiagnosticoData, CotizacionData, ReparacionData, TorqueData, WorkflowPhoto } from '../sat-workflow-types'
 
 interface StepCierreProps {
   data: CierreData
   onChange: (data: CierreData) => void
   readOnly?: boolean
+  ticketId?: string
   // Summary data from previous steps
   diagnostico: DiagnosticoData
   cotizacion: CotizacionData
@@ -25,7 +27,7 @@ const FINAL_STATUSES = [
   { value: 'devuelto_sin_reparar', label: 'Devuelto sin reparar' },
 ]
 
-export function StepCierre({ data, onChange, readOnly, diagnostico, cotizacion, reparacion, torque }: StepCierreProps) {
+export function StepCierre({ data, onChange, readOnly, ticketId, diagnostico, cotizacion, reparacion, torque }: StepCierreProps) {
   const update = (partial: Partial<CierreData>) => {
     onChange({ ...data, ...partial })
   }
@@ -132,6 +134,23 @@ export function StepCierre({ data, onChange, readOnly, diagnostico, cotizacion, 
           className="w-full h-24 rounded-lg bg-[#1E2330] border border-[#2A3040] px-3 py-2 text-sm text-[#F0F2F5] placeholder:text-[#4B5563] focus:outline-none focus:ring-2 focus:ring-purple-500/50 resize-none"
           placeholder="Instrucciones de entrega, recomendaciones al cliente..."
           readOnly={readOnly}
+        />
+      </Card>
+
+      {/* Fotos y videos de egreso */}
+      <Card>
+        <h3 className="text-sm font-semibold text-[#A855F7] mb-2 flex items-center gap-2">
+          <Camera size={16} /> Fotos y videos de egreso
+        </h3>
+        <p className="text-xs text-[#6B7280] mb-3">
+          Registrá cómo se va la herramienta: fotos del estado final y video del funcionamiento post-reparación. Queda como prueba para el cliente.
+        </p>
+        <MediaCapture
+          media={(data.photos_out || []) as WorkflowPhoto[]}
+          onChange={(media) => update({ photos_out: media })}
+          pathPrefix={`tickets/${ticketId || 'draft'}/out`}
+          maxItems={15}
+          disabled={readOnly}
         />
       </Card>
 
