@@ -16,17 +16,16 @@ import { formatCurrency } from '@/lib/utils'
 import { ExportButton } from '@/components/ui/export-button'
 import { ImportButton } from '@/components/ui/import-button'
 import {
-  Package, Grid3X3, List, Loader2, ShoppingCart, Tag, Award, DollarSign,
+  Package, Loader2, ShoppingCart, Tag, Award, DollarSign,
   ChevronDown, ChevronRight, X, RotateCcw, Plus, Search, ArrowUpDown,
-  SlidersHorizontal, ChevronLeft, Upload, Trash2, Edit3, Eye, FileSpreadsheet,
+  ChevronLeft, Upload, Trash2, Edit3, Eye, FileSpreadsheet,
   Check, Percent, ArrowLeft, ToggleLeft, ToggleRight
 } from 'lucide-react'
 import { useToast } from '@/components/ui/toast'
 import { useCompanyContext } from '@/lib/company-context'
 import { Input } from '@/components/ui/input'
 
-type Row = Record<string, unknown>
-const PAGE_SIZE = 100
+const PAGE_SIZE = 50
 
 // -------------------------------------------------------
 // Types
@@ -54,11 +53,56 @@ interface Product {
   origin: string | null
   price_usd: number | null
   price_ars: number | null
+  product_type: string | null
+  family_id: string | null
+  price_min: number | null
+  search_text: string | null
 }
 
-interface FacetItem {
+interface ProductFamily {
+  id: string
+  name: string
+  slug: string
+  description: string | null
+  icon_url: string | null
+  icon_svg: string | null
+  parent_id: string | null
+  sort_order: number
+  filter_config: FilterConfig | null
+  active: boolean
+  product_count?: number
+}
+
+interface FilterConfig {
+  filters: FilterDef[]
+}
+
+interface FilterDef {
+  key: string
+  label: string
+  type: 'icon_select' | 'range' | 'select' | 'text'
+  field: string
+  unit?: string
+  options?: FilterOption[]
+  min_field?: string
+  max_field?: string
+  spec_key?: string
+}
+
+interface FilterOption {
   value: string
-  count: number
+  label: string
+  icon?: string
+}
+
+interface SearchResult {
+  id: string
+  sku: string
+  name: string
+  brand: string
+  price_eur: number
+  image_url: string | null
+  relevance: number
 }
 
 interface RangeFilter {
@@ -68,7 +112,26 @@ interface RangeFilter {
 
 type SortOption = 'name_asc' | 'name_desc' | 'price_asc' | 'price_desc'
 
-const BRANDS_STATIC = ['FEIN', 'TOHNICHI', 'TECNA', 'INGERSOLL RAND', 'SPEEDRILL', 'FIAM', 'APEX', 'URYU']
+// -------------------------------------------------------
+// Family emoji map
+// -------------------------------------------------------
+const FAMILY_EMOJI: Record<string, string> = {
+  'atornilladores': '\uD83D\uDD27',
+  'llaves-de-torque': '\uD83D\uDD29',
+  'equilibradoras': '\u2696\uFE0F',
+  'bits-y-puntas': '\uD83D\uDD28',
+  'soldadura': '\u26A1',
+  'epp': '\uD83E\uDDBA',
+  'accesorios': '\uD83D\uDD17',
+  'repuestos': '\uD83D\uDEE0\uFE0F',
+}
+
+const FAMILY_COLUMNS: Record<string, string[]> = {
+  'atornilladores': ['image', 'sku', 'name', 'torque', 'rpm', 'encastre', 'weight', 'price', 'cotizar'],
+  'llaves-de-torque': ['image', 'sku', 'name', 'torque', 'encastre', 'brand', 'price', 'cotizar'],
+  'equilibradoras': ['image', 'sku', 'name', 'weight', 'brand', 'price', 'cotizar'],
+  'bits-y-puntas': ['image', 'sku', 'name', 'drive', 'tip_type', 'length', 'price', 'cotizar'],
+}
 
 const catalogoTabs = [
   { id: 'productos', label: 'Productos', icon: <Package size={16} /> },
@@ -78,989 +141,854 @@ const catalogoTabs = [
 ]
 
 // ===============================================================
-// COLLAPSIBLE FILTER SECTION
-// ===============================================================
-function FilterSection({
-  title,
-  defaultOpen = true,
-  children,
-}: {
-  title: string
-  defaultOpen?: boolean
-  children: React.ReactNode
-}) {
-  const [open, setOpen] = useState(defaultOpen)
-  return (
-    <div className="border-b border-[#1E2330] last:border-b-0">
-      <button
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between px-4 py-3 text-xs font-bold uppercase tracking-wider text-[#FF6600] hover:bg-[#141820] transition-colors"
-      >
-        {title}
-        {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-      </button>
-      {open && <div className="px-4 pb-3">{children}</div>}
-    </div>
-  )
-}
-
-// ===============================================================
-// FACET LIST (clickable items with counts)
-// ===============================================================
-function FacetList({
-  items,
-  selected,
-  onSelect,
-  maxVisible = 12,
-}: {
-  items: FacetItem[]
-  selected: string | null
-  onSelect: (val: string | null) => void
-  maxVisible?: number
-}) {
-  const [showAll, setShowAll] = useState(false)
-  const visible = showAll ? items : items.slice(0, maxVisible)
-  const hasMore = items.length > maxVisible
-
-  return (
-    <div className="space-y-0.5">
-      {visible.map((item) => (
-        <button
-          key={item.value}
-          onClick={() => onSelect(selected === item.value ? null : item.value)}
-          className={`w-full flex items-center justify-between px-2 py-1.5 rounded text-xs transition-all ${
-            selected === item.value
-              ? 'bg-[#FF6600]/15 text-[#FF6600] font-semibold'
-              : 'text-[#9CA3AF] hover:text-[#F0F2F5] hover:bg-[#1A1F2E]'
-          }`}
-        >
-          <span className="truncate text-left">{item.value}</span>
-          <span className={`ml-2 shrink-0 text-[10px] ${selected === item.value ? 'text-[#FF6600]' : 'text-[#4B5563]'}`}>
-            {item.count}
-          </span>
-        </button>
-      ))}
-      {hasMore && (
-        <button
-          onClick={() => setShowAll(!showAll)}
-          className="w-full text-center text-[10px] text-[#FF6600] hover:text-[#FF8833] py-1 mt-1"
-        >
-          {showAll ? 'Ver menos' : `Ver todos (${items.length})`}
-        </button>
-      )}
-    </div>
-  )
-}
-
-// ===============================================================
-// RANGE FILTER (Min / Max inputs)
-// ===============================================================
-function RangeInputs({
-  value,
-  onChange,
-  placeholderMin = 'Min',
-  placeholderMax = 'Max',
-}: {
-  value: RangeFilter
-  onChange: (v: RangeFilter) => void
-  placeholderMin?: string
-  placeholderMax?: string
-}) {
-  return (
-    <div className="flex gap-2">
-      <input
-        type="number"
-        value={value.min}
-        onChange={(e) => onChange({ ...value, min: e.target.value })}
-        placeholder={placeholderMin}
-        className="w-full h-8 rounded bg-[#1E2330] border border-[#2A3040] px-2 text-xs text-[#F0F2F5] placeholder:text-[#4B5563] focus:outline-none focus:ring-1 focus:ring-orange-500/50"
-      />
-      <input
-        type="number"
-        value={value.max}
-        onChange={(e) => onChange({ ...value, max: e.target.value })}
-        placeholder={placeholderMax}
-        className="w-full h-8 rounded bg-[#1E2330] border border-[#2A3040] px-2 text-xs text-[#F0F2F5] placeholder:text-[#4B5563] focus:outline-none focus:ring-1 focus:ring-orange-500/50"
-      />
-    </div>
-  )
-}
-
-// ===============================================================
-// PRODUCTOS TAB (full catalog with sidebar)
+// PRODUCTOS TAB — Visual Product Catalog (vessel-europe style)
 // ===============================================================
 function ProductosTab() {
   const router = useRouter()
-  const pathname = usePathname()
-  const searchParams = useSearchParams()
 
-  // ---------- State ----------
+  // ---------- Core State ----------
+  const [families, setFamilies] = useState<ProductFamily[]>([])
+  const [familiesLoading, setFamiliesLoading] = useState(true)
+  const [selectedFamily, setSelectedFamily] = useState<ProductFamily | null>(null)
+
+  // Search
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([])
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [showSearchDropdown, setShowSearchDropdown] = useState(false)
+  const searchDebounceRef = useRef<NodeJS.Timeout | null>(null)
+  const searchContainerRef = useRef<HTMLDivElement>(null)
+
+  // Products (when family is selected)
   const [products, setProducts] = useState<Product[]>([])
   const [totalCount, setTotalCount] = useState(0)
-  const [loading, setLoading] = useState(true)
+  const [productsLoading, setProductsLoading] = useState(false)
   const [page, setPage] = useState(1)
+  const [sortBy, setSortBy] = useState<SortOption>('name_asc')
 
-  const [search, setSearch] = useState(searchParams.get('q') || '')
-  const [viewMode, setViewMode] = useState<'table' | 'grid'>(
-    (searchParams.get('view') as 'table' | 'grid') || 'table'
-  )
-  const [sortBy, setSortBy] = useState<SortOption>(
-    (searchParams.get('sort') as SortOption) || 'name_asc'
-  )
+  // Dynamic filters from filter_config
+  const [activeFilters, setActiveFilters] = useState<Record<string, string>>({})
+  const [rangeFilters, setRangeFilters] = useState<Record<string, RangeFilter>>({})
+  const filterDebounceRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Product detail modal
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
 
-  // Sidebar filters
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(searchParams.get('cat') || null)
-  const [selectedSubcategory, setSelectedSubcategory] = useState<string | null>(searchParams.get('subcat') || null)
-  const [selectedBrand, setSelectedBrand] = useState<string | null>(searchParams.get('brand') || null)
-  const [selectedSerie, setSelectedSerie] = useState<string | null>(searchParams.get('serie') || null)
-  const [selectedEncastre, setSelectedEncastre] = useState<string | null>(searchParams.get('enc') || null)
-  const [weightRange, setWeightRange] = useState<RangeFilter>({ min: searchParams.get('wmin') || '', max: searchParams.get('wmax') || '' })
-  const [torqueRange, setTorqueRange] = useState<RangeFilter>({ min: searchParams.get('tmin') || '', max: searchParams.get('tmax') || '' })
-  const [largoRange, setLargoRange] = useState<RangeFilter>({ min: searchParams.get('lmin') || '', max: searchParams.get('lmax') || '' })
-  const [rpmRange, setRpmRange] = useState<RangeFilter>({ min: searchParams.get('rmin') || '', max: searchParams.get('rmax') || '' })
-  const [stockOnly, setStockOnly] = useState(searchParams.get('stock') === '1')
-
-  // Facet counts
-  const [catFacets, setCatFacets] = useState<FacetItem[]>([])
-  const [subcatFacets, setSubcatFacets] = useState<FacetItem[]>([])
-  const [brandFacets, setBrandFacets] = useState<FacetItem[]>([])
-  const [serieFacets, setSerieFacets] = useState<FacetItem[]>([])
-  const [encastreFacets, setEncastreFacets] = useState<FacetItem[]>([])
-  const [facetsLoading, setFacetsLoading] = useState(true)
-
-  // Mobile sidebar
-  const [sidebarOpen, setSidebarOpen] = useState(false)
-
-  const debounceRef = useRef<NodeJS.Timeout | null>(null)
-
-  // Total pages
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
 
-  // ---------- Sync URL params ----------
-  const syncUrlParams = useCallback(() => {
-    const params = new URLSearchParams()
-    params.set('tab', 'productos')
-    if (search) params.set('q', search)
-    if (selectedCategory) params.set('cat', selectedCategory)
-    if (selectedSubcategory) params.set('subcat', selectedSubcategory)
-    if (selectedBrand) params.set('brand', selectedBrand)
-    if (selectedSerie) params.set('serie', selectedSerie)
-    if (selectedEncastre) params.set('enc', selectedEncastre)
-    if (weightRange.min) params.set('wmin', weightRange.min)
-    if (weightRange.max) params.set('wmax', weightRange.max)
-    if (torqueRange.min) params.set('tmin', torqueRange.min)
-    if (torqueRange.max) params.set('tmax', torqueRange.max)
-    if (largoRange.min) params.set('lmin', largoRange.min)
-    if (largoRange.max) params.set('lmax', largoRange.max)
-    if (rpmRange.min) params.set('rmin', rpmRange.min)
-    if (rpmRange.max) params.set('rmax', rpmRange.max)
-    if (stockOnly) params.set('stock', '1')
-    if (viewMode !== 'table') params.set('view', viewMode)
-    if (sortBy !== 'name_asc') params.set('sort', sortBy)
-    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
-  }, [search, selectedCategory, selectedSubcategory, selectedBrand, selectedSerie, selectedEncastre, weightRange, torqueRange, largoRange, rpmRange, stockOnly, viewMode, sortBy, router, pathname])
+  // ---------- Load families on mount ----------
+  const loadFamilies = useCallback(async () => {
+    setFamiliesLoading(true)
+    const sb = createClient()
 
-  // ---------- Load facets ----------
-  const loadFacets = useCallback(async () => {
-    setFacetsLoading(true)
-    const supabase = createClient()
-
-    // Categories with counts
-    const { data: catData } = await supabase
-      .from('tt_products')
-      .select('category')
+    const { data: familyData } = await sb
+      .from('tt_product_families')
+      .select('*')
       .eq('active', true)
-      .not('category', 'is', null)
+      .order('sort_order', { ascending: true })
 
-    if (catData) {
-      const map = new Map<string, number>()
-      for (const r of catData) {
-        const v = r.category as string
-        if (v) map.set(v, (map.get(v) || 0) + 1)
+    if (familyData && familyData.length > 0) {
+      // Get product counts per family
+      const sb2 = createClient()
+      const { data: countData } = await sb2
+        .from('tt_products')
+        .select('family_id')
+        .eq('active', true)
+        .not('family_id', 'is', null)
+
+      const countMap = new Map<string, number>()
+      if (countData) {
+        for (const row of countData) {
+          const fid = row.family_id as string
+          countMap.set(fid, (countMap.get(fid) || 0) + 1)
+        }
       }
-      setCatFacets(
-        Array.from(map.entries())
-          .map(([value, count]) => ({ value, count }))
-          .sort((a, b) => b.count - a.count)
-      )
+
+      const fams = (familyData as ProductFamily[]).map(f => ({
+        ...f,
+        product_count: countMap.get(f.id) || 0,
+      }))
+      setFamilies(fams)
+    } else {
+      setFamilies([])
     }
-
-    // Brands with counts
-    const { data: brandData } = await supabase
-      .from('tt_products')
-      .select('brand')
-      .eq('active', true)
-      .not('brand', 'is', null)
-
-    if (brandData) {
-      const map = new Map<string, number>()
-      for (const r of brandData) {
-        const v = r.brand as string
-        if (v) map.set(v, (map.get(v) || 0) + 1)
-      }
-      setBrandFacets(
-        Array.from(map.entries())
-          .map(([value, count]) => ({ value, count }))
-          .sort((a, b) => b.count - a.count)
-      )
-    }
-
-    // Encastre with counts
-    const { data: encData } = await supabase
-      .from('tt_products')
-      .select('encastre')
-      .eq('active', true)
-      .not('encastre', 'is', null)
-
-    if (encData) {
-      const map = new Map<string, number>()
-      for (const r of encData) {
-        const v = r.encastre as string
-        if (v) map.set(v, (map.get(v) || 0) + 1)
-      }
-      setEncastreFacets(
-        Array.from(map.entries())
-          .map(([value, count]) => ({ value, count }))
-          .sort((a, b) => b.count - a.count)
-      )
-    }
-
-    setFacetsLoading(false)
+    setFamiliesLoading(false)
   }, [])
 
-  // Load subcategories (dependent on selected category)
-  const loadSubcatFacets = useCallback(async () => {
-    const supabase = createClient()
-    let q = supabase
-      .from('tt_products')
-      .select('subcategory')
-      .eq('active', true)
-      .not('subcategory', 'is', null)
+  useEffect(() => {
+    loadFamilies()
+  }, [loadFamilies])
 
-    if (selectedCategory) q = q.eq('category', selectedCategory)
-
-    const { data } = await q
-    if (data) {
-      const map = new Map<string, number>()
-      for (const r of data) {
-        const v = r.subcategory as string
-        if (v) map.set(v, (map.get(v) || 0) + 1)
-      }
-      setSubcatFacets(
-        Array.from(map.entries())
-          .map(([value, count]) => ({ value, count }))
-          .sort((a, b) => b.count - a.count)
-      )
+  // ---------- Fuzzy search via RPC ----------
+  const performSearch = useCallback(async (query: string) => {
+    if (!query.trim() || query.trim().length < 2) {
+      setSearchResults([])
+      setShowSearchDropdown(false)
+      return
     }
-  }, [selectedCategory])
+    setSearchLoading(true)
+    setShowSearchDropdown(true)
+    const sb = createClient()
 
-  // Load series (dependent on selected brand)
-  const loadSerieFacets = useCallback(async () => {
-    const supabase = createClient()
-    let q = supabase
-      .from('tt_products')
-      .select('serie')
-      .eq('active', true)
-      .not('serie', 'is', null)
+    const { data, error } = await sb.rpc('search_products_fuzzy', {
+      query_text: query.trim(),
+      max_results: 12,
+    })
 
-    if (selectedBrand) q = q.ilike('brand', selectedBrand)
+    if (!error && data) {
+      setSearchResults(data as SearchResult[])
+    } else {
+      // Fallback to ilike search if RPC fails
+      const sb2 = createClient()
+      const tokens = query.trim().toLowerCase().split(/\s+/)
+      let q = sb2
+        .from('tt_products')
+        .select('id, sku, name, brand, price_eur, image_url')
+        .eq('active', true)
+        .limit(12)
 
-    const { data } = await q
-    if (data) {
-      const map = new Map<string, number>()
-      for (const r of data) {
-        const v = r.serie as string
-        if (v) map.set(v, (map.get(v) || 0) + 1)
+      for (const token of tokens) {
+        q = q.or(`name.ilike.%${token}%,sku.ilike.%${token}%,brand.ilike.%${token}%`)
       }
-      setSerieFacets(
-        Array.from(map.entries())
-          .map(([value, count]) => ({ value, count }))
-          .sort((a, b) => b.count - a.count)
-      )
-    }
-  }, [selectedBrand])
 
-  // ---------- Load products ----------
-  const loadProducts = useCallback(async (pageNum: number) => {
-    setLoading(true)
-    const supabase = createClient()
+      const { data: fallbackData } = await q
+      setSearchResults((fallbackData || []).map((r: Record<string, unknown>) => ({ ...r, relevance: 0 } as SearchResult)))
+    }
+    setSearchLoading(false)
+  }, [])
+
+  // Debounced search
+  useEffect(() => {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
+    searchDebounceRef.current = setTimeout(() => {
+      performSearch(searchQuery)
+    }, 300)
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
+    }
+  }, [searchQuery, performSearch])
+
+  // Close search dropdown on click outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
+        setShowSearchDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  // ---------- Load products for selected family ----------
+  const loadProducts = useCallback(async (family: ProductFamily | null, pageNum: number, sort: SortOption, filters: Record<string, string>, ranges: Record<string, RangeFilter>) => {
+    setProductsLoading(true)
+    const sb = createClient()
     const fromOffset = (pageNum - 1) * PAGE_SIZE
 
-    // Sort
     let orderCol = 'name'
     let orderAsc = true
-    if (sortBy === 'name_desc') { orderCol = 'name'; orderAsc = false }
-    else if (sortBy === 'price_asc') { orderCol = 'price_eur'; orderAsc = true }
-    else if (sortBy === 'price_desc') { orderCol = 'price_eur'; orderAsc = false }
+    if (sort === 'name_desc') { orderCol = 'name'; orderAsc = false }
+    else if (sort === 'price_asc') { orderCol = 'price_eur'; orderAsc = true }
+    else if (sort === 'price_desc') { orderCol = 'price_eur'; orderAsc = false }
 
-    let query = supabase
+    let query = sb
       .from('tt_products')
-      .select(
-        'id, sku, name, description, brand, category, subcategory, price_eur, cost_eur, image_url, specs, active, torque_min, torque_max, rpm, encastre, weight_kg, serie, modelo, origin, price_usd, price_ars',
-        { count: 'exact' }
-      )
+      .select('*', { count: 'exact' })
       .eq('active', true)
       .order(orderCol, { ascending: orderAsc })
       .range(fromOffset, fromOffset + PAGE_SIZE - 1)
 
-    // Apply filters
-    if (selectedBrand) query = query.ilike('brand', selectedBrand)
-    if (selectedCategory) query = query.eq('category', selectedCategory)
-    if (selectedSubcategory) query = query.eq('subcategory', selectedSubcategory)
-    if (selectedSerie) query = query.ilike('serie', selectedSerie)
-    if (selectedEncastre) query = query.eq('encastre', selectedEncastre)
+    if (family) {
+      query = query.eq('family_id', family.id)
+    }
 
-    // Range filters
-    if (weightRange.min) query = query.gte('weight_kg', parseFloat(weightRange.min))
-    if (weightRange.max) query = query.lte('weight_kg', parseFloat(weightRange.max))
-    if (torqueRange.min) query = query.gte('torque_min', parseFloat(torqueRange.min))
-    if (torqueRange.max) query = query.lte('torque_max', parseFloat(torqueRange.max))
-    if (rpmRange.min) query = query.gte('rpm', parseFloat(rpmRange.min))
-    if (rpmRange.max) query = query.lte('rpm', parseFloat(rpmRange.max))
+    // Apply dynamic filters from filter_config
+    for (const [key, value] of Object.entries(filters)) {
+      if (!value) continue
+      // Determine the actual DB field from filter_config
+      const filterDef = family?.filter_config?.filters?.find(f => f.key === key)
+      if (filterDef) {
+        if (filterDef.spec_key) {
+          // Filter on specs JSONB: specs->>key = value
+          query = query.eq(`specs->${filterDef.spec_key}` as string, value)
+        } else {
+          query = query.eq(filterDef.field, value)
+        }
+      }
+    }
 
-    // Search (multi-token AND)
-    if (search.trim()) {
-      const tokens = search.trim().toLowerCase().split(/\s+/)
-      for (const token of tokens) {
-        query = query.or(
-          `name.ilike.%${token}%,sku.ilike.%${token}%,brand.ilike.%${token}%,category.ilike.%${token}%`
-        )
+    // Apply range filters
+    for (const [key, range] of Object.entries(ranges)) {
+      if (!range.min && !range.max) continue
+      const filterDef = family?.filter_config?.filters?.find(f => f.key === key)
+      if (filterDef) {
+        if (filterDef.min_field && range.min) {
+          query = query.gte(filterDef.min_field, parseFloat(range.min))
+        }
+        if (filterDef.max_field && range.max) {
+          query = query.lte(filterDef.max_field, parseFloat(range.max))
+        }
+        if (filterDef.field && !filterDef.min_field) {
+          if (range.min) query = query.gte(filterDef.field, parseFloat(range.min))
+          if (range.max) query = query.lte(filterDef.field, parseFloat(range.max))
+        }
       }
     }
 
     const { data, count } = await query
     setProducts((data || []) as Product[])
     setTotalCount(count || 0)
-    setLoading(false)
-  }, [search, selectedBrand, selectedCategory, selectedSubcategory, selectedSerie, selectedEncastre, weightRange, torqueRange, rpmRange, sortBy])
-
-  // ---------- Effects ----------
-  useEffect(() => {
-    loadFacets()
-  }, [loadFacets])
-
-  useEffect(() => {
-    loadSubcatFacets()
-  }, [loadSubcatFacets])
-
-  useEffect(() => {
-    loadSerieFacets()
-  }, [loadSerieFacets])
-
-  // Debounced product load on filter change
-  useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => {
-      setPage(1)
-      loadProducts(1)
-      syncUrlParams()
-    }, 300)
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current)
-    }
-  }, [search, selectedBrand, selectedCategory, selectedSubcategory, selectedSerie, selectedEncastre, weightRange, torqueRange, largoRange, rpmRange, stockOnly, sortBy])
-
-  // Page change (no debounce)
-  const changePage = useCallback((newPage: number) => {
-    if (newPage < 1 || newPage > totalPages) return
-    setPage(newPage)
-    loadProducts(newPage)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-  }, [totalPages, loadProducts])
-
-  // Clear all filters
-  const clearFilters = useCallback(() => {
-    setSearch('')
-    setSelectedCategory(null)
-    setSelectedSubcategory(null)
-    setSelectedBrand(null)
-    setSelectedSerie(null)
-    setSelectedEncastre(null)
-    setWeightRange({ min: '', max: '' })
-    setTorqueRange({ min: '', max: '' })
-    setLargoRange({ min: '', max: '' })
-    setRpmRange({ min: '', max: '' })
-    setStockOnly(false)
+    setProductsLoading(false)
   }, [])
 
-  // Check if any filter is active
+  // ---------- Select a family ----------
+  const selectFamily = useCallback((family: ProductFamily) => {
+    setSelectedFamily(family)
+    setActiveFilters({})
+    setRangeFilters({})
+    setPage(1)
+    setSortBy('name_asc')
+    loadProducts(family, 1, 'name_asc', {}, {})
+  }, [loadProducts])
+
+  // ---------- Go back to families grid ----------
+  const goBackToFamilies = useCallback(() => {
+    setSelectedFamily(null)
+    setProducts([])
+    setTotalCount(0)
+    setActiveFilters({})
+    setRangeFilters({})
+    setPage(1)
+  }, [])
+
+  // ---------- Filter change (debounced) ----------
+  useEffect(() => {
+    if (!selectedFamily) return
+    if (filterDebounceRef.current) clearTimeout(filterDebounceRef.current)
+    filterDebounceRef.current = setTimeout(() => {
+      setPage(1)
+      loadProducts(selectedFamily, 1, sortBy, activeFilters, rangeFilters)
+    }, 400)
+    return () => {
+      if (filterDebounceRef.current) clearTimeout(filterDebounceRef.current)
+    }
+  }, [activeFilters, rangeFilters, sortBy, selectedFamily, loadProducts])
+
+  // ---------- Pagination ----------
+  const changePage = useCallback((newPage: number) => {
+    if (!selectedFamily || newPage < 1 || newPage > totalPages) return
+    setPage(newPage)
+    loadProducts(selectedFamily, newPage, sortBy, activeFilters, rangeFilters)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [totalPages, selectedFamily, sortBy, activeFilters, rangeFilters, loadProducts])
+
+  // ---------- Navigate to search result product ----------
+  const openSearchProduct = useCallback(async (result: SearchResult) => {
+    setShowSearchDropdown(false)
+    setSearchQuery('')
+    const sb = createClient()
+    const { data } = await sb
+      .from('tt_products')
+      .select('*')
+      .eq('id', result.id)
+      .single()
+    if (data) {
+      setSelectedProduct(data as Product)
+    }
+  }, [])
+
+  // ---------- Get table columns for current family ----------
+  const getColumns = useCallback(() => {
+    if (!selectedFamily) return FAMILY_COLUMNS['default'] || ['image', 'sku', 'name', 'brand', 'category', 'price', 'cotizar']
+    return FAMILY_COLUMNS[selectedFamily.slug] || ['image', 'sku', 'name', 'brand', 'category', 'price', 'cotizar']
+  }, [selectedFamily])
+
+  // ---------- Clear active filters ----------
+  const clearAllFilters = useCallback(() => {
+    setActiveFilters({})
+    setRangeFilters({})
+  }, [])
+
   const hasActiveFilters = useMemo(() => {
-    return !!(
-      search || selectedCategory || selectedSubcategory || selectedBrand ||
-      selectedSerie || selectedEncastre || weightRange.min || weightRange.max ||
-      torqueRange.min || torqueRange.max || largoRange.min || largoRange.max ||
-      rpmRange.min || rpmRange.max || stockOnly
-    )
-  }, [search, selectedCategory, selectedSubcategory, selectedBrand, selectedSerie, selectedEncastre, weightRange, torqueRange, largoRange, rpmRange, stockOnly])
+    return Object.values(activeFilters).some(v => v) ||
+           Object.values(rangeFilters).some(r => r.min || r.max)
+  }, [activeFilters, rangeFilters])
 
-  // ---------- Sidebar content ----------
-  const sidebarContent = (
-    <div className="flex flex-col h-full">
-      <div className="flex-1 overflow-y-auto">
-        {/* CATEGORIA */}
-        <FilterSection title="Categoria" defaultOpen={true}>
-          {facetsLoading ? (
-            <div className="flex justify-center py-3"><Loader2 className="animate-spin text-[#4B5563]" size={16} /></div>
-          ) : (
-            <FacetList
-              items={catFacets}
-              selected={selectedCategory}
-              onSelect={(v) => { setSelectedCategory(v); setSelectedSubcategory(null) }}
-            />
-          )}
-        </FilterSection>
-
-        {/* SUBCATEGORIA */}
-        <FilterSection title="Subcategoria" defaultOpen={!!selectedCategory}>
-          {subcatFacets.length === 0 ? (
-            <p className="text-[10px] text-[#4B5563] italic px-2">
-              {selectedCategory ? 'Sin subcategorias' : 'Selecciona una categoria'}
-            </p>
-          ) : (
-            <FacetList
-              items={subcatFacets}
-              selected={selectedSubcategory}
-              onSelect={setSelectedSubcategory}
-            />
-          )}
-        </FilterSection>
-
-        {/* MARCA */}
-        <FilterSection title="Marca" defaultOpen={true}>
-          {facetsLoading ? (
-            <div className="flex justify-center py-3"><Loader2 className="animate-spin text-[#4B5563]" size={16} /></div>
-          ) : (
-            <FacetList
-              items={brandFacets}
-              selected={selectedBrand}
-              onSelect={(v) => { setSelectedBrand(v); setSelectedSerie(null) }}
-            />
-          )}
-        </FilterSection>
-
-        {/* SERIE */}
-        <FilterSection title="Serie" defaultOpen={!!selectedBrand}>
-          {serieFacets.length === 0 ? (
-            <p className="text-[10px] text-[#4B5563] italic px-2">
-              {selectedBrand ? 'Sin series' : 'Selecciona una marca'}
-            </p>
-          ) : (
-            <FacetList
-              items={serieFacets}
-              selected={selectedSerie}
-              onSelect={setSelectedSerie}
-            />
-          )}
-        </FilterSection>
-
-        {/* ENCASTRE */}
-        <FilterSection title="Encastre" defaultOpen={false}>
-          {facetsLoading ? (
-            <div className="flex justify-center py-3"><Loader2 className="animate-spin text-[#4B5563]" size={16} /></div>
-          ) : (
-            <FacetList
-              items={encastreFacets}
-              selected={selectedEncastre}
-              onSelect={setSelectedEncastre}
-            />
-          )}
-        </FilterSection>
-
-        {/* CARGA (KG) */}
-        <FilterSection title="Carga (kg)" defaultOpen={false}>
-          <RangeInputs value={weightRange} onChange={setWeightRange} placeholderMin="Min kg" placeholderMax="Max kg" />
-        </FilterSection>
-
-        {/* TORQUE (NM) */}
-        <FilterSection title="Torque (Nm)" defaultOpen={false}>
-          <RangeInputs value={torqueRange} onChange={setTorqueRange} placeholderMin="Min Nm" placeholderMax="Max Nm" />
-        </FilterSection>
-
-        {/* LARGO (MM) */}
-        <FilterSection title="Largo (mm)" defaultOpen={false}>
-          <RangeInputs value={largoRange} onChange={setLargoRange} placeholderMin="Min mm" placeholderMax="Max mm" />
-        </FilterSection>
-
-        {/* RPM */}
-        <FilterSection title="RPM" defaultOpen={false}>
-          <RangeInputs value={rpmRange} onChange={setRpmRange} placeholderMin="Min RPM" placeholderMax="Max RPM" />
-        </FilterSection>
-
-        {/* STOCK */}
-        <FilterSection title="Stock" defaultOpen={false}>
-          <label className="flex items-center gap-2 px-2 py-1 cursor-pointer text-xs text-[#9CA3AF] hover:text-[#F0F2F5]">
-            <input
-              type="checkbox"
-              checked={stockOnly}
-              onChange={(e) => setStockOnly(e.target.checked)}
-              className="w-4 h-4 rounded border-[#2A3040] bg-[#1E2330] text-[#FF6600] focus:ring-[#FF6600] focus:ring-offset-0"
-            />
-            Solo con stock
-          </label>
-        </FilterSection>
-      </div>
-
-      {/* LIMPIAR TODOS */}
-      <div className="p-4 border-t border-[#1E2330]">
-        <button
-          onClick={clearFilters}
-          disabled={!hasActiveFilters}
-          className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border-2 text-sm font-bold transition-all ${
-            hasActiveFilters
-              ? 'border-[#FF6600] text-[#FF6600] hover:bg-[#FF6600]/10'
-              : 'border-[#2A3040] text-[#4B5563] cursor-not-allowed'
-          }`}
-        >
-          <RotateCcw size={14} />
-          LIMPIAR TODOS
-        </button>
-      </div>
-    </div>
-  )
-
-  // ---------- Render ----------
+  // ============================================================
+  // RENDER
+  // ============================================================
   return (
-    <div className="flex gap-0 relative min-h-[calc(100vh-200px)]">
-      {/* MOBILE SIDEBAR OVERLAY */}
-      {sidebarOpen && (
-        <div className="fixed inset-0 z-40 lg:hidden">
-          <div className="absolute inset-0 bg-black/60" onClick={() => setSidebarOpen(false)} />
-          <div className="absolute left-0 top-0 bottom-0 w-[300px] bg-[#0F1218] border-r border-[#1E2330] z-50 flex flex-col animate-in slide-in-from-left duration-200">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-[#1E2330]">
-              <span className="text-sm font-bold text-[#FF6600]">FILTROS</span>
-              <button onClick={() => setSidebarOpen(false)} className="p-1 rounded hover:bg-[#1E2330] text-[#6B7280]">
-                <X size={18} />
-              </button>
-            </div>
-            {sidebarContent}
-          </div>
+    <div className="space-y-6">
+
+      {/* ======== SMART SEARCH BAR ======== */}
+      <div ref={searchContainerRef} className="relative">
+        <div className="relative">
+          <Search size={22} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#6B7280] z-10" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onFocus={() => { if (searchResults.length > 0) setShowSearchDropdown(true) }}
+            placeholder="Buscar productos... ej: fein asm, 15C5A90, tohnichi ql"
+            className="w-full h-14 rounded-2xl bg-[#141820] border-2 border-[#1E2330] pl-12 pr-12 text-base text-[#F0F2F5] placeholder:text-[#4B5563] focus:outline-none focus:ring-2 focus:ring-[#FF6600]/50 focus:border-[#FF6600]/50 transition-all shadow-lg shadow-black/20"
+          />
+          {searchLoading && (
+            <Loader2 size={18} className="absolute right-4 top-1/2 -translate-y-1/2 animate-spin text-[#FF6600]" />
+          )}
+          {searchQuery && !searchLoading && (
+            <button
+              onClick={() => { setSearchQuery(''); setSearchResults([]); setShowSearchDropdown(false) }}
+              className="absolute right-4 top-1/2 -translate-y-1/2 text-[#6B7280] hover:text-[#F0F2F5] transition-colors"
+            >
+              <X size={18} />
+            </button>
+          )}
         </div>
+
+        {/* Search results dropdown */}
+        {showSearchDropdown && searchResults.length > 0 && (
+          <div className="absolute z-50 top-full mt-2 left-0 right-0 bg-[#141820] border border-[#1E2330] rounded-xl shadow-2xl shadow-black/40 overflow-hidden max-h-[420px] overflow-y-auto">
+            {searchResults.map((result) => (
+              <button
+                key={result.id}
+                onClick={() => openSearchProduct(result)}
+                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#1A1F2E] transition-colors text-left border-b border-[#1E2330] last:border-b-0"
+              >
+                <div className="w-10 h-10 rounded-lg bg-[#0F1218] border border-[#1E2330] flex items-center justify-center shrink-0 overflow-hidden">
+                  {result.image_url ? (
+                    <img src={result.image_url} alt="" referrerPolicy="no-referrer" className="w-full h-full object-contain p-0.5" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                  ) : (
+                    <Package size={16} className="text-[#2A3040]" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs text-[#FF6600]">{result.sku}</span>
+                    <Badge variant="default" size="sm">{result.brand}</Badge>
+                  </div>
+                  <p className="text-sm text-[#F0F2F5] truncate">{result.name}</p>
+                </div>
+                <span className="text-sm font-bold text-[#FF6600] shrink-0">
+                  {result.price_eur > 0 ? formatCurrency(result.price_eur, 'EUR') : 'Consultar'}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {showSearchDropdown && searchQuery.trim().length >= 2 && !searchLoading && searchResults.length === 0 && (
+          <div className="absolute z-50 top-full mt-2 left-0 right-0 bg-[#141820] border border-[#1E2330] rounded-xl shadow-2xl p-6 text-center">
+            <p className="text-sm text-[#6B7280]">Sin resultados para &quot;{searchQuery}&quot;</p>
+          </div>
+        )}
+      </div>
+
+      {/* ======== FAMILY CARDS (when no family selected) ======== */}
+      {!selectedFamily && (
+        <>
+          {familiesLoading ? (
+            <div className="flex flex-col items-center justify-center py-16">
+              <Loader2 className="animate-spin text-[#FF6600] mb-3" size={32} />
+              <p className="text-sm text-[#4B5563]">Cargando familias de productos...</p>
+            </div>
+          ) : families.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-[#4B5563]">
+              <Package size={48} className="mb-4" />
+              <p className="text-lg font-medium">No hay familias configuradas</p>
+              <p className="text-sm mt-1">Agrega familias de producto en tt_product_families</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+              {families.map((family) => {
+                const emoji = FAMILY_EMOJI[family.slug] || '\uD83D\uDCE6'
+                return (
+                  <button
+                    key={family.id}
+                    onClick={() => selectFamily(family)}
+                    className="group relative rounded-2xl bg-[#141820] border border-[#1E2330] p-6 hover:border-[#FF6600]/40 hover:bg-[#1A1F2E] transition-all duration-300 cursor-pointer text-left flex flex-col items-center gap-3 hover:shadow-lg hover:shadow-[#FF6600]/5 hover:-translate-y-0.5"
+                  >
+                    <span className="text-4xl group-hover:scale-110 transition-transform duration-300">{emoji}</span>
+                    <h3 className="text-sm font-bold text-[#F0F2F5] text-center group-hover:text-[#FF6600] transition-colors">
+                      {family.name}
+                    </h3>
+                    <span className="text-xs text-[#6B7280]">
+                      {family.product_count || 0} productos
+                    </span>
+                    {family.description && (
+                      <p className="text-[10px] text-[#4B5563] text-center line-clamp-2 mt-1">
+                        {family.description}
+                      </p>
+                    )}
+                    {/* Hover accent line */}
+                    <div className="absolute bottom-0 left-4 right-4 h-0.5 bg-[#FF6600] rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </>
       )}
 
-      {/* DESKTOP SIDEBAR */}
-      <div className="hidden lg:flex flex-col w-[280px] shrink-0 bg-[#0F1218] border border-[#1E2330] rounded-xl mr-4 overflow-hidden">
-        <div className="px-4 py-3 border-b border-[#1E2330]">
-          <span className="text-sm font-bold text-[#FF6600]">FILTROS</span>
-        </div>
-        {sidebarContent}
-      </div>
-
-      {/* MAIN AREA */}
-      <div className="flex-1 min-w-0 space-y-4">
-        {/* HEADER BAR */}
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <h2 className="text-lg font-bold text-[#FF6600] tracking-wide">
-              CATALOGO COMPLETO{' '}
-              <span className="text-[#6B7280] font-normal text-sm">
-                &mdash; {loading ? '...' : `${totalCount.toLocaleString('es-AR')} PRODUCTOS`}
-              </span>
-            </h2>
+      {/* ======== FAMILY DETAIL VIEW (when a family is selected) ======== */}
+      {selectedFamily && (
+        <div className="space-y-5">
+          {/* Family header + back button */}
+          <div className="flex items-center gap-4 flex-wrap">
+            <button
+              onClick={goBackToFamilies}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-[#9CA3AF] hover:text-[#F0F2F5] hover:bg-[#1E2330] transition-all"
+            >
+              <ChevronLeft size={18} /> Familias
+            </button>
+            <div className="flex items-center gap-3 flex-1">
+              <span className="text-3xl">{FAMILY_EMOJI[selectedFamily.slug] || '\uD83D\uDCE6'}</span>
+              <div>
+                <h2 className="text-xl font-bold text-[#F0F2F5]">{selectedFamily.name}</h2>
+                <p className="text-xs text-[#6B7280]">
+                  {productsLoading ? 'Cargando...' : `${totalCount} productos`}
+                </p>
+              </div>
+            </div>
             <div className="flex items-center gap-2">
-              {/* Mobile filter toggle */}
-              <Button
-                variant="secondary"
-                size="sm"
-                className="lg:hidden"
-                onClick={() => setSidebarOpen(true)}
-              >
-                <SlidersHorizontal size={14} />
-                Filtros
-              </Button>
+              <Select
+                options={[
+                  { value: 'name_asc', label: 'A \u2192 Z' },
+                  { value: 'name_desc', label: 'Z \u2192 A' },
+                  { value: 'price_asc', label: 'Precio \u2191' },
+                  { value: 'price_desc', label: 'Precio \u2193' },
+                ]}
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as SortOption)}
+                className="w-[140px]"
+              />
               <ExportButton
                 data={products as unknown as Record<string, unknown>[]}
-                filename="productos_torquetools"
+                filename={`productos_${selectedFamily.slug}`}
                 targetTable="tt_products"
                 columns={[
                   { key: 'sku', label: 'SKU' },
                   { key: 'name', label: 'Nombre' },
                   { key: 'brand', label: 'Marca' },
-                  { key: 'category', label: 'Categoria' },
-                  { key: 'subcategory', label: 'Subcategoria' },
-                  { key: 'encastre', label: 'Encastre' },
                   { key: 'price_eur', label: 'Precio EUR' },
-                  { key: 'cost_eur', label: 'Costo EUR' },
                   { key: 'torque_min', label: 'Torque Min' },
                   { key: 'torque_max', label: 'Torque Max' },
                   { key: 'rpm', label: 'RPM' },
-                ]}
-              />
-              <ImportButton
-                targetTable="tt_products"
-                fields={[
-                  { key: 'sku', label: 'SKU', required: true },
-                  { key: 'name', label: 'Nombre', required: true },
-                  { key: 'brand', label: 'Marca' },
-                  { key: 'category', label: 'Categoria' },
-                  { key: 'subcategory', label: 'Subcategoria' },
-                  { key: 'price_eur', label: 'Precio EUR', type: 'number' },
-                  { key: 'cost_eur', label: 'Costo EUR', type: 'number' },
-                  { key: 'price_usd', label: 'Precio USD', type: 'number' },
-                  { key: 'image_url', label: 'URL Imagen' },
-                  { key: 'description', label: 'Descripcion' },
-                  { key: 'origin', label: 'Origen' },
                   { key: 'encastre', label: 'Encastre' },
-                  { key: 'torque_min', label: 'Torque Min', type: 'number' },
-                  { key: 'torque_max', label: 'Torque Max', type: 'number' },
-                  { key: 'rpm', label: 'RPM', type: 'number' },
-                  { key: 'weight_kg', label: 'Peso (kg)', type: 'number' },
+                  { key: 'weight_kg', label: 'Peso (kg)' },
                 ]}
-                permission="edit_products"
               />
             </div>
           </div>
 
-          {/* Search + controls row */}
-          <div className="flex items-center gap-3 flex-wrap">
-            <SearchBar
-              placeholder="Buscar por SKU, nombre, marca, categoria..."
-              value={search}
-              onChange={setSearch}
-              className="flex-1 min-w-[200px]"
-            />
+          {/* Dynamic filters from filter_config */}
+          {selectedFamily.filter_config?.filters && selectedFamily.filter_config.filters.length > 0 && (
+            <div className="rounded-xl bg-[#141820] border border-[#1E2330] p-4">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-bold uppercase tracking-wider text-[#FF6600]">Filtros</span>
+                {hasActiveFilters && (
+                  <button
+                    onClick={clearAllFilters}
+                    className="flex items-center gap-1 text-[10px] text-[#FF6600] hover:text-[#FF8833] font-medium"
+                  >
+                    <RotateCcw size={10} /> Limpiar
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-4 items-end">
+                {selectedFamily.filter_config.filters.map((filterDef) => {
+                  if (filterDef.type === 'icon_select' && filterDef.options) {
+                    const currentVal = activeFilters[filterDef.key] || ''
+                    return (
+                      <div key={filterDef.key} className="space-y-1.5">
+                        <label className="text-[10px] font-semibold uppercase tracking-wider text-[#6B7280]">
+                          {filterDef.label}
+                        </label>
+                        <div className="flex gap-1.5 flex-wrap">
+                          {filterDef.options.map((opt) => (
+                            <button
+                              key={opt.value}
+                              onClick={() => {
+                                setActiveFilters(prev => ({
+                                  ...prev,
+                                  [filterDef.key]: prev[filterDef.key] === opt.value ? '' : opt.value,
+                                }))
+                              }}
+                              className={`px-3 py-2 rounded-lg text-xs font-bold border-2 transition-all duration-200 ${
+                                currentVal === opt.value
+                                  ? 'border-[#FF6600] bg-[#FF6600]/15 text-[#FF6600] shadow-md shadow-[#FF6600]/10'
+                                  : 'border-[#2A3040] bg-[#0F1218] text-[#9CA3AF] hover:border-[#3A4050] hover:text-[#F0F2F5]'
+                              }`}
+                              title={opt.label}
+                            >
+                              {opt.icon ? <span className="mr-1">{opt.icon}</span> : null}
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  }
 
-            {/* View toggle */}
-            <div className="flex items-center bg-[#0F1218] border border-[#1E2330] rounded-lg p-0.5">
-              <button
-                onClick={() => setViewMode('table')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                  viewMode === 'table'
-                    ? 'bg-[#1E2330] text-[#FF6600]'
-                    : 'text-[#6B7280] hover:text-[#9CA3AF]'
-                }`}
-              >
-                <List size={14} /> TABLA
-              </button>
-              <button
-                onClick={() => setViewMode('grid')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                  viewMode === 'grid'
-                    ? 'bg-[#1E2330] text-[#FF6600]'
-                    : 'text-[#6B7280] hover:text-[#9CA3AF]'
-                }`}
-              >
-                <Grid3X3 size={14} /> TARJETAS
-              </button>
+                  if (filterDef.type === 'range') {
+                    const rangeVal = rangeFilters[filterDef.key] || { min: '', max: '' }
+                    return (
+                      <div key={filterDef.key} className="space-y-1.5">
+                        <label className="text-[10px] font-semibold uppercase tracking-wider text-[#6B7280]">
+                          {filterDef.label} {filterDef.unit ? `(${filterDef.unit})` : ''}
+                        </label>
+                        <div className="flex gap-2 items-center">
+                          <input
+                            type="number"
+                            value={rangeVal.min}
+                            onChange={(e) => setRangeFilters(prev => ({
+                              ...prev,
+                              [filterDef.key]: { ...rangeVal, min: e.target.value },
+                            }))}
+                            placeholder="Min"
+                            className="w-20 h-9 rounded-lg bg-[#0F1218] border border-[#2A3040] px-2 text-xs text-[#F0F2F5] placeholder:text-[#4B5563] focus:outline-none focus:ring-1 focus:ring-[#FF6600]/50"
+                          />
+                          <span className="text-[#4B5563] text-xs">-</span>
+                          <input
+                            type="number"
+                            value={rangeVal.max}
+                            onChange={(e) => setRangeFilters(prev => ({
+                              ...prev,
+                              [filterDef.key]: { ...rangeVal, max: e.target.value },
+                            }))}
+                            placeholder="Max"
+                            className="w-20 h-9 rounded-lg bg-[#0F1218] border border-[#2A3040] px-2 text-xs text-[#F0F2F5] placeholder:text-[#4B5563] focus:outline-none focus:ring-1 focus:ring-[#FF6600]/50"
+                          />
+                        </div>
+                      </div>
+                    )
+                  }
+
+                  if (filterDef.type === 'select' && filterDef.options) {
+                    return (
+                      <div key={filterDef.key} className="space-y-1.5">
+                        <label className="text-[10px] font-semibold uppercase tracking-wider text-[#6B7280]">
+                          {filterDef.label}
+                        </label>
+                        <select
+                          value={activeFilters[filterDef.key] || ''}
+                          onChange={(e) => setActiveFilters(prev => ({
+                            ...prev,
+                            [filterDef.key]: e.target.value,
+                          }))}
+                          className="h-9 rounded-lg bg-[#0F1218] border border-[#2A3040] px-2 pr-8 text-xs text-[#F0F2F5] appearance-none focus:outline-none focus:ring-1 focus:ring-[#FF6600]/50 min-w-[140px]"
+                        >
+                          <option value="">Todos</option>
+                          {filterDef.options.map(opt => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )
+                  }
+
+                  if (filterDef.type === 'text') {
+                    return (
+                      <div key={filterDef.key} className="space-y-1.5">
+                        <label className="text-[10px] font-semibold uppercase tracking-wider text-[#6B7280]">
+                          {filterDef.label}
+                        </label>
+                        <input
+                          type="text"
+                          value={activeFilters[filterDef.key] || ''}
+                          onChange={(e) => setActiveFilters(prev => ({
+                            ...prev,
+                            [filterDef.key]: e.target.value,
+                          }))}
+                          placeholder={filterDef.label}
+                          className="w-32 h-9 rounded-lg bg-[#0F1218] border border-[#2A3040] px-2 text-xs text-[#F0F2F5] placeholder:text-[#4B5563] focus:outline-none focus:ring-1 focus:ring-[#FF6600]/50"
+                        />
+                      </div>
+                    )
+                  }
+
+                  return null
+                })}
+              </div>
+
+              {/* Active filter tags */}
+              {hasActiveFilters && (
+                <div className="flex items-center gap-2 flex-wrap mt-3 pt-3 border-t border-[#1E2330]">
+                  <span className="text-[10px] text-[#4B5563] uppercase">Activos:</span>
+                  {Object.entries(activeFilters).filter(([, v]) => v).map(([key, value]) => {
+                    const def = selectedFamily.filter_config?.filters?.find(f => f.key === key)
+                    return (
+                      <span key={key} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#FF6600]/15 text-[#FF6600] text-[10px] font-medium">
+                        {def?.label}: {value}
+                        <button onClick={() => setActiveFilters(prev => ({ ...prev, [key]: '' }))}><X size={10} /></button>
+                      </span>
+                    )
+                  })}
+                  {Object.entries(rangeFilters).filter(([, r]) => r.min || r.max).map(([key, range]) => {
+                    const def = selectedFamily.filter_config?.filters?.find(f => f.key === key)
+                    return (
+                      <span key={key} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#FF6600]/15 text-[#FF6600] text-[10px] font-medium">
+                        {def?.label}: {range.min || '0'}-{range.max || '*'} {def?.unit || ''}
+                        <button onClick={() => setRangeFilters(prev => ({ ...prev, [key]: { min: '', max: '' } }))}><X size={10} /></button>
+                      </span>
+                    )
+                  })}
+                </div>
+              )}
             </div>
+          )}
 
-            {/* Sort */}
-            <Select
-              options={[
-                { value: 'name_asc', label: 'A \u2192 Z' },
-                { value: 'name_desc', label: 'Z \u2192 A' },
-                { value: 'price_asc', label: 'Precio \u2191' },
-                { value: 'price_desc', label: 'Precio \u2193' },
-              ]}
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as SortOption)}
-              className="w-[140px]"
-            />
-          </div>
+          {/* Product table */}
+          {productsLoading ? (
+            <div className="flex flex-col items-center justify-center py-16">
+              <Loader2 className="animate-spin text-[#FF6600] mb-3" size={32} />
+              <p className="text-sm text-[#4B5563]">Cargando productos...</p>
+            </div>
+          ) : products.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-[#4B5563]">
+              <Package size={48} className="mb-4" />
+              <p className="text-lg font-medium">No se encontraron productos</p>
+              <p className="text-sm mt-1">Proba ajustando los filtros</p>
+              {hasActiveFilters && (
+                <Button variant="outline" size="sm" className="mt-4" onClick={clearAllFilters}>
+                  <RotateCcw size={14} /> Limpiar filtros
+                </Button>
+              )}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-[#1E2330] overflow-hidden bg-[#0F1218]">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-[#0A0D12] border-b border-[#1E2330]">
+                    <tr>
+                      {getColumns().map((col) => {
+                        const colDefs: Record<string, { label: string; align: string; sortable?: boolean; sortKey?: SortOption }> = {
+                          image: { label: '', align: 'text-center', },
+                          sku: { label: 'SKU', align: 'text-left' },
+                          name: { label: 'Producto', align: 'text-left', sortable: true, sortKey: 'name_asc' },
+                          brand: { label: 'Marca', align: 'text-left' },
+                          category: { label: 'Categoria', align: 'text-left' },
+                          torque: { label: 'Torque (Nm)', align: 'text-center' },
+                          rpm: { label: 'RPM', align: 'text-center' },
+                          encastre: { label: 'Encastre', align: 'text-center' },
+                          weight: { label: 'Peso (kg)', align: 'text-center' },
+                          drive: { label: 'Drive', align: 'text-center' },
+                          tip_type: { label: 'Tipo Punta', align: 'text-center' },
+                          length: { label: 'Longitud', align: 'text-center' },
+                          price: { label: 'Precio', align: 'text-right', sortable: true, sortKey: 'price_asc' },
+                          cotizar: { label: '', align: 'text-center' },
+                        }
+                        const def = colDefs[col]
+                        if (!def) return null
+                        return (
+                          <th
+                            key={col}
+                            className={`px-3 py-3 text-xs font-semibold text-[#6B7280] uppercase tracking-wider ${def.align} ${
+                              col === 'image' ? 'w-[60px]' : col === 'cotizar' ? 'w-[100px]' : ''
+                            } ${def.sortable ? 'cursor-pointer hover:text-[#FF6600] transition-colors' : ''}`}
+                            onClick={def.sortable ? () => {
+                              if (col === 'name') setSortBy(sortBy === 'name_asc' ? 'name_desc' : 'name_asc')
+                              if (col === 'price') setSortBy(sortBy === 'price_asc' ? 'price_desc' : 'price_asc')
+                            } : undefined}
+                          >
+                            <span className={`flex items-center gap-1 ${def.align === 'text-right' ? 'justify-end' : def.align === 'text-center' ? 'justify-center' : ''}`}>
+                              {def.label}
+                              {def.sortable && <ArrowUpDown size={11} />}
+                            </span>
+                          </th>
+                        )
+                      })}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#1E2330]">
+                    {products.map((product) => (
+                      <tr
+                        key={product.id}
+                        onClick={() => setSelectedProduct(product)}
+                        className="hover:bg-[#1A1F2E] transition-colors cursor-pointer group"
+                      >
+                        {getColumns().map((col) => {
+                          switch (col) {
+                            case 'image':
+                              return (
+                                <td key={col} className="px-3 py-2">
+                                  <div className="w-[46px] h-[46px] rounded-lg bg-[#141820] border border-[#1E2330] flex items-center justify-center overflow-hidden">
+                                    {product.image_url ? (
+                                      <img
+                                        src={product.image_url}
+                                        alt={product.name}
+                                        referrerPolicy="no-referrer"
+                                        className="w-full h-full object-contain p-0.5"
+                                        onError={(e) => {
+                                          (e.target as HTMLImageElement).style.display = 'none';
+                                          (e.target as HTMLImageElement).parentElement!.innerHTML = '<span style="font-size:18px">\uD83D\uDCE6</span>'
+                                        }}
+                                      />
+                                    ) : (
+                                      <Package size={18} className="text-[#2A3040]" />
+                                    )}
+                                  </div>
+                                </td>
+                              )
+                            case 'sku':
+                              return (
+                                <td key={col} className="px-3 py-2">
+                                  <span className="font-mono text-xs text-[#FF6600] group-hover:text-[#FF8833]">{product.sku}</span>
+                                </td>
+                              )
+                            case 'name':
+                              return (
+                                <td key={col} className="px-3 py-2">
+                                  <span className="text-sm text-[#F0F2F5] group-hover:text-white max-w-[280px] truncate block">{product.name}</span>
+                                </td>
+                              )
+                            case 'brand':
+                              return (
+                                <td key={col} className="px-3 py-2">
+                                  <Badge variant="default" size="sm">{product.brand}</Badge>
+                                </td>
+                              )
+                            case 'category':
+                              return (
+                                <td key={col} className="px-3 py-2 text-xs text-[#6B7280]">{product.category || '-'}</td>
+                              )
+                            case 'torque':
+                              return (
+                                <td key={col} className="px-3 py-2 text-center text-xs text-[#9CA3AF]">
+                                  {product.torque_min != null && product.torque_max != null
+                                    ? `${product.torque_min} - ${product.torque_max}`
+                                    : product.torque_max != null
+                                      ? `${product.torque_max}`
+                                      : '-'}
+                                </td>
+                              )
+                            case 'rpm':
+                              return (
+                                <td key={col} className="px-3 py-2 text-center text-xs text-[#9CA3AF]">
+                                  {product.rpm || '-'}
+                                </td>
+                              )
+                            case 'encastre':
+                              return (
+                                <td key={col} className="px-3 py-2 text-center">
+                                  {product.encastre ? (
+                                    <span className="inline-block px-2 py-0.5 rounded bg-[#1E2330] text-[10px] font-bold text-[#9CA3AF]">{product.encastre}</span>
+                                  ) : '-'}
+                                </td>
+                              )
+                            case 'weight':
+                              return (
+                                <td key={col} className="px-3 py-2 text-center text-xs text-[#9CA3AF]">
+                                  {product.weight_kg != null ? `${product.weight_kg}` : '-'}
+                                </td>
+                              )
+                            case 'drive':
+                              return (
+                                <td key={col} className="px-3 py-2 text-center text-xs text-[#9CA3AF]">
+                                  {product.specs?.drive || product.encastre || '-'}
+                                </td>
+                              )
+                            case 'tip_type':
+                              return (
+                                <td key={col} className="px-3 py-2 text-center text-xs text-[#9CA3AF]">
+                                  {product.specs?.tipo_punta || '-'}
+                                </td>
+                              )
+                            case 'length':
+                              return (
+                                <td key={col} className="px-3 py-2 text-center text-xs text-[#9CA3AF]">
+                                  {product.specs?.longitud || '-'}
+                                </td>
+                              )
+                            case 'price':
+                              return (
+                                <td key={col} className="px-3 py-2 text-right whitespace-nowrap">
+                                  <span className="font-bold text-[#FF6600]">
+                                    {product.price_eur > 0 ? formatCurrency(product.price_eur, 'EUR') : 'Consultar'}
+                                  </span>
+                                </td>
+                              )
+                            case 'cotizar':
+                              return (
+                                <td key={col} className="px-3 py-2 text-center">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      router.push(`/cotizador?products=${encodeURIComponent(product.sku)}`)
+                                    }}
+                                    className="px-3 py-1.5 rounded-lg bg-[#FF6600] hover:bg-[#E55A00] text-white text-xs font-bold transition-all shadow-lg shadow-orange-500/20 hover:shadow-orange-500/30 active:scale-95"
+                                  >
+                                    COTIZAR
+                                  </button>
+                                </td>
+                              )
+                            default:
+                              return <td key={col} />
+                          }
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
-          {/* Active filter badges */}
-          {hasActiveFilters && (
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[10px] text-[#4B5563] uppercase">Filtros activos:</span>
-              {selectedCategory && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#FF6600]/15 text-[#FF6600] text-[10px] font-medium">
-                  Cat: {selectedCategory}
-                  <button onClick={() => { setSelectedCategory(null); setSelectedSubcategory(null) }}><X size={10} /></button>
-                </span>
-              )}
-              {selectedSubcategory && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#FF6600]/15 text-[#FF6600] text-[10px] font-medium">
-                  Subcat: {selectedSubcategory}
-                  <button onClick={() => setSelectedSubcategory(null)}><X size={10} /></button>
-                </span>
-              )}
-              {selectedBrand && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#FF6600]/15 text-[#FF6600] text-[10px] font-medium">
-                  Marca: {selectedBrand}
-                  <button onClick={() => { setSelectedBrand(null); setSelectedSerie(null) }}><X size={10} /></button>
-                </span>
-              )}
-              {selectedSerie && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#FF6600]/15 text-[#FF6600] text-[10px] font-medium">
-                  Serie: {selectedSerie}
-                  <button onClick={() => setSelectedSerie(null)}><X size={10} /></button>
-                </span>
-              )}
-              {selectedEncastre && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#FF6600]/15 text-[#FF6600] text-[10px] font-medium">
-                  Encastre: {selectedEncastre}
-                  <button onClick={() => setSelectedEncastre(null)}><X size={10} /></button>
-                </span>
-              )}
-              {(torqueRange.min || torqueRange.max) && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#FF6600]/15 text-[#FF6600] text-[10px] font-medium">
-                  Torque: {torqueRange.min || '0'}-{torqueRange.max || '*'} Nm
-                  <button onClick={() => setTorqueRange({ min: '', max: '' })}><X size={10} /></button>
-                </span>
-              )}
-              {(weightRange.min || weightRange.max) && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#FF6600]/15 text-[#FF6600] text-[10px] font-medium">
-                  Carga: {weightRange.min || '0'}-{weightRange.max || '*'} kg
-                  <button onClick={() => setWeightRange({ min: '', max: '' })}><X size={10} /></button>
-                </span>
-              )}
-              {(rpmRange.min || rpmRange.max) && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#FF6600]/15 text-[#FF6600] text-[10px] font-medium">
-                  RPM: {rpmRange.min || '0'}-{rpmRange.max || '*'}
-                  <button onClick={() => setRpmRange({ min: '', max: '' })}><X size={10} /></button>
-                </span>
-              )}
+          {/* Pagination */}
+          {!productsLoading && totalCount > PAGE_SIZE && (
+            <div className="flex items-center justify-between pt-4 border-t border-[#1E2330]">
               <button
-                onClick={clearFilters}
-                className="text-[10px] text-[#FF6600] hover:text-[#FF8833] font-medium underline ml-1"
+                onClick={() => changePage(page - 1)}
+                disabled={page <= 1}
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                  page <= 1
+                    ? 'text-[#4B5563] cursor-not-allowed'
+                    : 'text-[#F0F2F5] hover:bg-[#1E2330] bg-[#141820] border border-[#2A3040]'
+                }`}
               >
-                Limpiar todos
+                <ChevronLeft size={16} /> Anterior
+              </button>
+
+              <div className="flex items-center gap-2 text-sm text-[#6B7280]">
+                <span>
+                  Pagina <strong className="text-[#F0F2F5]">{page}</strong> de <strong className="text-[#F0F2F5]">{totalPages}</strong>
+                </span>
+                <span className="text-[#4B5563]">&middot;</span>
+                <span>{totalCount.toLocaleString('es-AR')} productos</span>
+              </div>
+
+              <button
+                onClick={() => changePage(page + 1)}
+                disabled={page >= totalPages}
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                  page >= totalPages
+                    ? 'text-[#4B5563] cursor-not-allowed'
+                    : 'text-[#F0F2F5] hover:bg-[#1E2330] bg-[#141820] border border-[#2A3040]'
+                }`}
+              >
+                Siguiente <ChevronRight size={16} />
               </button>
             </div>
           )}
         </div>
+      )}
 
-        {/* LOADING STATE */}
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-20">
-            <Loader2 className="animate-spin text-[#FF6600] mb-3" size={32} />
-            <p className="text-sm text-[#4B5563]">Cargando productos...</p>
-          </div>
-        ) : products.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-[#4B5563]">
-            <Package size={48} className="mb-4" />
-            <p className="text-lg font-medium">No se encontraron productos</p>
-            <p className="text-sm mt-1">Proba ajustando los filtros o la busqueda</p>
-            {hasActiveFilters && (
-              <Button variant="outline" size="sm" className="mt-4" onClick={clearFilters}>
-                <RotateCcw size={14} /> Limpiar filtros
-              </Button>
-            )}
-          </div>
-        ) : viewMode === 'table' ? (
-          /* ============== TABLE VIEW ============== */
-          <div className="rounded-xl border border-[#1E2330] overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-[#0F1218] border-b border-[#1E2330]">
-                  <tr>
-                    <th className="px-3 py-3 text-left text-xs font-semibold text-[#6B7280] uppercase tracking-wider w-[70px]">
-                      Foto
-                    </th>
-                    <th
-                      className="px-3 py-3 text-left text-xs font-semibold text-[#6B7280] uppercase tracking-wider cursor-pointer hover:text-[#FF6600] transition-colors"
-                      onClick={() => setSortBy(sortBy === 'name_asc' ? 'name_desc' : 'name_asc')}
-                    >
-                      <span className="flex items-center gap-1">
-                        Marca <ArrowUpDown size={12} />
-                      </span>
-                    </th>
-                    <th className="px-3 py-3 text-left text-xs font-semibold text-[#6B7280] uppercase tracking-wider">
-                      SKU
-                    </th>
-                    <th
-                      className="px-3 py-3 text-left text-xs font-semibold text-[#6B7280] uppercase tracking-wider cursor-pointer hover:text-[#FF6600] transition-colors"
-                      onClick={() => setSortBy(sortBy === 'name_asc' ? 'name_desc' : 'name_asc')}
-                    >
-                      <span className="flex items-center gap-1">
-                        Nombre <ArrowUpDown size={12} />
-                      </span>
-                    </th>
-                    <th className="px-3 py-3 text-left text-xs font-semibold text-[#6B7280] uppercase tracking-wider">
-                      Subcat
-                    </th>
-                    <th className="px-3 py-3 text-left text-xs font-semibold text-[#6B7280] uppercase tracking-wider">
-                      Encastre
-                    </th>
-                    <th
-                      className="px-3 py-3 text-right text-xs font-semibold text-[#6B7280] uppercase tracking-wider cursor-pointer hover:text-[#FF6600] transition-colors"
-                      onClick={() => setSortBy(sortBy === 'price_asc' ? 'price_desc' : 'price_asc')}
-                    >
-                      <span className="flex items-center justify-end gap-1">
-                        Precio &euro; <ArrowUpDown size={12} />
-                      </span>
-                    </th>
-                    <th className="px-3 py-3 text-center text-xs font-semibold text-[#6B7280] uppercase tracking-wider w-[100px]">
-                      Cotizar
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#1E2330]">
-                  {products.map((product) => (
-                    <tr
-                      key={product.id}
-                      className="hover:bg-[#1A1F2E] transition-colors group"
-                    >
-                      {/* FOTO */}
-                      <td className="px-3 py-2">
-                        <div className="w-[50px] h-[50px] rounded-lg bg-[#0F1218] border border-[#1E2330] flex items-center justify-center overflow-hidden">
-                          {product.image_url ? (
-                            <img
-                              src={product.image_url}
-                              alt={product.name}
-                              referrerPolicy="no-referrer"
-                              className="w-full h-full object-contain p-1"
-                              onError={(e) => {
-                                (e.target as HTMLImageElement).style.display = 'none';
-                                (e.target as HTMLImageElement).parentElement!.innerHTML = '<span style="font-size:20px">&#128230;</span>'
-                              }}
-                            />
-                          ) : (
-                            <span className="text-xl">&#128230;</span>
-                          )}
-                        </div>
-                      </td>
-                      {/* MARCA */}
-                      <td className="px-3 py-2">
-                        <Badge variant="default" size="sm">{product.brand}</Badge>
-                      </td>
-                      {/* SKU */}
-                      <td className="px-3 py-2">
-                        <button
-                          onClick={() => setSelectedProduct(product)}
-                          className="font-mono text-xs text-[#FF6600] hover:text-[#FF8833] hover:underline transition-colors"
-                        >
-                          {product.sku}
-                        </button>
-                      </td>
-                      {/* NOMBRE */}
-                      <td className="px-3 py-2">
-                        <button
-                          onClick={() => setSelectedProduct(product)}
-                          className="text-sm text-[#F0F2F5] hover:text-[#FF6600] transition-colors text-left max-w-[300px] truncate block"
-                        >
-                          {product.name}
-                        </button>
-                      </td>
-                      {/* SUBCAT */}
-                      <td className="px-3 py-2 text-xs text-[#6B7280]">
-                        {product.subcategory || '-'}
-                      </td>
-                      {/* ENCASTRE */}
-                      <td className="px-3 py-2 text-xs text-[#9CA3AF]">
-                        {product.encastre || '-'}
-                      </td>
-                      {/* PRECIO */}
-                      <td className="px-3 py-2 text-right whitespace-nowrap">
-                        <span className="font-bold text-[#FF6600]">
-                          {product.price_eur > 0 ? formatCurrency(product.price_eur, 'EUR') : 'Consultar'}
-                        </span>
-                      </td>
-                      {/* COTIZAR */}
-                      <td className="px-3 py-2 text-center">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setSelectedProduct(product)
-                          }}
-                          className="px-3 py-1.5 rounded-lg bg-[#FF6600] hover:bg-[#E55A00] text-white text-xs font-bold transition-all shadow-lg shadow-orange-500/20"
-                        >
-                          COTIZAR
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        ) : (
-          /* ============== CARD/GRID VIEW ============== */
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
-            {products.map((product) => (
-              <div
-                key={product.id}
-                onClick={() => setSelectedProduct(product)}
-                className="rounded-xl bg-[#141820] border border-[#1E2330] p-4 hover:border-[#2A3040] hover:bg-[#1A1F2E] transition-all duration-200 cursor-pointer flex flex-col"
-              >
-                <div className="aspect-square rounded-lg bg-[#0F1218] border border-[#1E2330] flex items-center justify-center mb-3 overflow-hidden">
-                  {product.image_url ? (
-                    <img
-                      src={product.image_url}
-                      alt={product.name}
-                      referrerPolicy="no-referrer"
-                      className="w-full h-full object-contain p-2"
-                      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-                    />
-                  ) : (
-                    <Package size={40} className="text-[#2A3040]" />
-                  )}
-                </div>
-                <Badge variant="default" className="w-fit mb-2">{product.brand}</Badge>
-                <p className="text-xs font-mono text-[#FF6600] mb-1">{product.sku}</p>
-                <h3 className="text-sm font-medium text-[#F0F2F5] line-clamp-2 flex-1">{product.name}</h3>
-                {product.encastre && <p className="text-[10px] text-[#6B7280] mt-1">Encastre: {product.encastre}</p>}
-                <div className="flex items-center justify-between mt-3">
-                  <p className="text-lg font-bold text-[#FF6600]">
-                    {product.price_eur > 0 ? formatCurrency(product.price_eur, 'EUR') : 'Consultar'}
-                  </p>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setSelectedProduct(product) }}
-                    className="px-3 py-1.5 rounded-lg bg-[#FF6600] hover:bg-[#E55A00] text-white text-xs font-bold transition-all shadow-lg shadow-orange-500/20"
-                  >
-                    COTIZAR
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* PAGINATION */}
-        {!loading && totalCount > 0 && (
-          <div className="flex items-center justify-between pt-4 border-t border-[#1E2330]">
-            <button
-              onClick={() => changePage(page - 1)}
-              disabled={page <= 1}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                page <= 1
-                  ? 'text-[#4B5563] cursor-not-allowed'
-                  : 'text-[#F0F2F5] hover:bg-[#1E2330] bg-[#141820] border border-[#2A3040]'
-              }`}
-            >
-              <ChevronLeft size={16} /> ANTERIOR
-            </button>
-
-            <div className="flex items-center gap-2 text-sm text-[#6B7280]">
-              <span>
-                Pagina <strong className="text-[#F0F2F5]">{page}</strong> de <strong className="text-[#F0F2F5]">{totalPages}</strong>
-              </span>
-              <span className="text-[#4B5563]">&middot;</span>
-              <span>{totalCount.toLocaleString('es-AR')} productos</span>
-            </div>
-
-            <button
-              onClick={() => changePage(page + 1)}
-              disabled={page >= totalPages}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                page >= totalPages
-                  ? 'text-[#4B5563] cursor-not-allowed'
-                  : 'text-[#F0F2F5] hover:bg-[#1E2330] bg-[#141820] border border-[#2A3040]'
-              }`}
-            >
-              SIGUIENTE <ChevronRight size={16} />
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* PRODUCT DETAIL MODAL */}
+      {/* ======== PRODUCT DETAIL MODAL ======== */}
       <Modal isOpen={!!selectedProduct} onClose={() => setSelectedProduct(null)} title={selectedProduct?.name || ''} size="xl">
         {selectedProduct && (
           <div className="space-y-6">
             <div className="flex flex-col sm:flex-row gap-6">
               {/* Image */}
-              <div className="w-full sm:w-64 aspect-square rounded-lg bg-[#0F1218] border border-[#1E2330] flex items-center justify-center shrink-0 overflow-hidden">
+              <div className="w-full sm:w-72 aspect-square rounded-xl bg-[#0A0D12] border border-[#1E2330] flex items-center justify-center shrink-0 overflow-hidden">
                 {selectedProduct.image_url ? (
                   <img
                     src={selectedProduct.image_url}
                     alt={selectedProduct.name}
                     referrerPolicy="no-referrer"
-                    className="w-full h-full object-contain p-4"
+                    className="w-full h-full object-contain p-6"
                     onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
                   />
                 ) : (
-                  <Package size={64} className="text-[#2A3040]" />
+                  <Package size={72} className="text-[#2A3040]" />
                 )}
               </div>
 
@@ -1074,13 +1002,28 @@ function ProductosTab() {
                 <p className="text-sm font-mono text-[#6B7280]">SKU: {selectedProduct.sku}</p>
                 {selectedProduct.modelo && <p className="text-sm text-[#9CA3AF]">Modelo: {selectedProduct.modelo}</p>}
                 {selectedProduct.serie && <p className="text-sm text-[#9CA3AF]">Serie: {selectedProduct.serie}</p>}
-                {selectedProduct.description && <p className="text-sm text-[#D1D5DB] mt-2">{selectedProduct.description}</p>}
-                <p className="text-3xl font-bold text-[#FF6600] mt-4">
-                  {selectedProduct.price_eur > 0 ? formatCurrency(selectedProduct.price_eur, 'EUR') : 'Consultar precio'}
-                </p>
-                {selectedProduct.price_usd && selectedProduct.price_usd > 0 && (
-                  <p className="text-sm text-[#6B7280]">USD {formatCurrency(selectedProduct.price_usd, 'USD')}</p>
+                {selectedProduct.description && (
+                  <p className="text-sm text-[#D1D5DB] mt-2 leading-relaxed">{selectedProduct.description}</p>
                 )}
+
+                <div className="pt-3 border-t border-[#1E2330] mt-4">
+                  <p className="text-3xl font-bold text-[#FF6600]">
+                    {selectedProduct.price_eur > 0 ? formatCurrency(selectedProduct.price_eur, 'EUR') : 'Consultar precio'}
+                  </p>
+                  <div className="flex items-center gap-4 mt-1">
+                    {selectedProduct.cost_eur > 0 && (
+                      <p className="text-xs text-[#4B5563]">Costo: {formatCurrency(selectedProduct.cost_eur, 'EUR')}</p>
+                    )}
+                    {selectedProduct.price_usd != null && selectedProduct.price_usd > 0 && (
+                      <p className="text-xs text-[#6B7280]">USD {formatCurrency(selectedProduct.price_usd, 'USD')}</p>
+                    )}
+                    {selectedProduct.cost_eur > 0 && selectedProduct.price_eur > 0 && (
+                      <p className="text-xs text-emerald-400">
+                        Margen: {((1 - selectedProduct.cost_eur / selectedProduct.price_eur) * 100).toFixed(1)}%
+                      </p>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -1089,37 +1032,37 @@ function ProductosTab() {
               <h4 className="text-sm font-semibold text-[#F0F2F5] mb-3">Especificaciones Tecnicas</h4>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {selectedProduct.torque_min != null && (
-                  <div className="flex justify-between p-2.5 rounded-lg bg-[#0F1218] border border-[#1E2330]">
+                  <div className="flex justify-between p-2.5 rounded-lg bg-[#0A0D12] border border-[#1E2330]">
                     <span className="text-xs text-[#6B7280]">Torque Min</span>
                     <span className="text-xs font-medium text-[#F0F2F5]">{selectedProduct.torque_min} Nm</span>
                   </div>
                 )}
                 {selectedProduct.torque_max != null && (
-                  <div className="flex justify-between p-2.5 rounded-lg bg-[#0F1218] border border-[#1E2330]">
+                  <div className="flex justify-between p-2.5 rounded-lg bg-[#0A0D12] border border-[#1E2330]">
                     <span className="text-xs text-[#6B7280]">Torque Max</span>
                     <span className="text-xs font-medium text-[#F0F2F5]">{selectedProduct.torque_max} Nm</span>
                   </div>
                 )}
                 {selectedProduct.rpm != null && (
-                  <div className="flex justify-between p-2.5 rounded-lg bg-[#0F1218] border border-[#1E2330]">
+                  <div className="flex justify-between p-2.5 rounded-lg bg-[#0A0D12] border border-[#1E2330]">
                     <span className="text-xs text-[#6B7280]">RPM</span>
                     <span className="text-xs font-medium text-[#F0F2F5]">{selectedProduct.rpm}</span>
                   </div>
                 )}
                 {selectedProduct.encastre && (
-                  <div className="flex justify-between p-2.5 rounded-lg bg-[#0F1218] border border-[#1E2330]">
+                  <div className="flex justify-between p-2.5 rounded-lg bg-[#0A0D12] border border-[#1E2330]">
                     <span className="text-xs text-[#6B7280]">Encastre</span>
                     <span className="text-xs font-medium text-[#F0F2F5]">{selectedProduct.encastre}</span>
                   </div>
                 )}
                 {selectedProduct.weight_kg != null && (
-                  <div className="flex justify-between p-2.5 rounded-lg bg-[#0F1218] border border-[#1E2330]">
+                  <div className="flex justify-between p-2.5 rounded-lg bg-[#0A0D12] border border-[#1E2330]">
                     <span className="text-xs text-[#6B7280]">Peso</span>
                     <span className="text-xs font-medium text-[#F0F2F5]">{selectedProduct.weight_kg} kg</span>
                   </div>
                 )}
                 {selectedProduct.origin && (
-                  <div className="flex justify-between p-2.5 rounded-lg bg-[#0F1218] border border-[#1E2330]">
+                  <div className="flex justify-between p-2.5 rounded-lg bg-[#0A0D12] border border-[#1E2330]">
                     <span className="text-xs text-[#6B7280]">Origen</span>
                     <span className="text-xs font-medium text-[#F0F2F5]">{selectedProduct.origin}</span>
                   </div>
@@ -1133,7 +1076,7 @@ function ProductosTab() {
                 <h4 className="text-sm font-semibold text-[#F0F2F5] mb-3">Especificaciones Adicionales</h4>
                 <div className="grid grid-cols-2 gap-2">
                   {Object.entries(selectedProduct.specs).map(([key, value]) => (
-                    <div key={key} className="flex justify-between p-2.5 rounded-lg bg-[#0F1218] border border-[#1E2330]">
+                    <div key={key} className="flex justify-between p-2.5 rounded-lg bg-[#0A0D12] border border-[#1E2330]">
                       <span className="text-xs text-[#6B7280]">{key}</span>
                       <span className="text-xs font-medium text-[#F0F2F5]">{String(value)}</span>
                     </div>
@@ -1142,10 +1085,16 @@ function ProductosTab() {
               </div>
             )}
 
-            {/* Action */}
+            {/* Actions */}
             <div className="flex gap-3 pt-2">
-              <Button variant="primary" className="flex-1 gap-2">
-                <ShoppingCart size={16} /> Agregar a cotizacion
+              <Button
+                variant="primary"
+                className="flex-1 gap-2"
+                onClick={() => {
+                  router.push(`/cotizador?products=${encodeURIComponent(selectedProduct.sku)}`)
+                }}
+              >
+                <ShoppingCart size={16} /> Cotizar este producto
               </Button>
             </div>
           </div>
