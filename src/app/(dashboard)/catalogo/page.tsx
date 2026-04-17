@@ -824,25 +824,63 @@ function ProductosTab() {
         >
           <Upload size={14} /> Importar WooCommerce
         </Button>
-        <ExportButton
-          data={products as unknown as Record<string, unknown>[]}
-          filename="productos_catalogo"
-          targetTable="tt_products"
-          columns={[
-            { key: 'sku', label: 'SKU' },
-            { key: 'name', label: 'Nombre' },
-            { key: 'brand', label: 'Marca' },
-            { key: 'category', label: 'Categoria' },
-            { key: 'price_eur', label: 'Precio EUR' },
-            { key: 'cost_eur', label: 'Costo EUR' },
-            { key: 'price_usd', label: 'Precio USD' },
-            { key: 'torque_min', label: 'Torque Min' },
-            { key: 'torque_max', label: 'Torque Max' },
-            { key: 'rpm', label: 'RPM' },
-            { key: 'encastre', label: 'Encastre' },
-            { key: 'weight_kg', label: 'Peso (kg)' },
-          ]}
-        />
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={async () => {
+            const sb = createClient()
+            const { addToast: t } = { addToast }
+            addToast({ type: 'info', title: 'Descargando todos los productos...' })
+            // Fetch ALL products (no limit)
+            let allProds: Record<string, unknown>[] = []
+            let page = 0
+            const PAGE = 1000
+            while (true) {
+              const { data } = await sb.from('tt_products')
+                .select('sku, name, description, brand, category, subcategory, price_eur, cost_eur, price_usd, price_ars, price_min, encastre, torque_min, torque_max, rpm, weight_kg, modelo, serie, origin, image_url, product_type, active, specs')
+                .eq('active', true)
+                .range(page * PAGE, (page + 1) * PAGE - 1)
+                .order('sku')
+              if (!data || data.length === 0) break
+              allProds = allProds.concat(data as Record<string, unknown>[])
+              page++
+              if (data.length < PAGE) break
+            }
+            // Convert specs JSONB to flat columns
+            const specKeys = new Set<string>()
+            allProds.forEach(p => {
+              if (p.specs && typeof p.specs === 'object') {
+                Object.keys(p.specs as Record<string, unknown>).forEach(k => specKeys.add(k))
+              }
+            })
+            const rows = allProds.map(p => {
+              const row: Record<string, unknown> = { ...p }
+              delete row.specs
+              const specs = (p.specs || {}) as Record<string, unknown>
+              for (const k of specKeys) { row['spec_' + k] = specs[k] || '' }
+              return row
+            })
+            // Generate CSV
+            if (rows.length === 0) { addToast({ type: 'warning', title: 'No hay productos para exportar' }); return }
+            const headers = Object.keys(rows[0])
+            const csv = [headers.join(','), ...rows.map(r => headers.map(h => {
+              const v = r[h]
+              if (v == null) return ''
+              const s = String(v)
+              return s.includes(',') || s.includes('"') || s.includes('\n') ? '"' + s.replace(/"/g, '""') + '"' : s
+            }).join(','))].join('\n')
+            const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
+            const url2 = URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url2
+            a.download = `productos_mocciaro_soft_${new Date().toISOString().split('T')[0]}.csv`
+            a.click()
+            URL.revokeObjectURL(url2)
+            addToast({ type: 'success', title: `${allProds.length} productos exportados` })
+          }}
+        >
+          <FileSpreadsheet size={14} /> Exportar TODO ({totalProductCount.toLocaleString('es-AR')})
+        </Button>
       </div>
 
       {/* ======== SMART SEARCH BAR ======== */}
