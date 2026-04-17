@@ -60,41 +60,13 @@ interface Product {
   search_text: string | null
 }
 
-interface ProductFamily {
-  id: string
-  name: string
-  slug: string
-  description: string | null
-  icon_url: string | null
-  icon_svg: string | null
-  parent_id: string | null
-  sort_order: number
-  filter_config: FilterConfig | null
-  active: boolean
-  product_count?: number
+interface CategoryCard {
+  name: string        // category value (e.g. "PUNTAS Y TUBOS")
+  product_count: number
+  subcategories: string[]  // distinct subcategory values for this category
 }
 
-interface FilterConfig {
-  filters: FilterDef[]
-}
-
-interface FilterDef {
-  key: string
-  label: string
-  type: 'icon_select' | 'range' | 'select' | 'text'
-  field: string
-  unit?: string
-  options?: FilterOption[]
-  min_field?: string
-  max_field?: string
-  spec_key?: string
-}
-
-interface FilterOption {
-  value: string
-  label: string
-  icon?: string
-}
+/* Legacy types removed: ProductFamily, FilterConfig — cards now driven by tt_products.category */
 
 interface SearchResult {
   id: string
@@ -106,32 +78,36 @@ interface SearchResult {
   relevance: number
 }
 
-interface RangeFilter {
-  min: string
-  max: string
-}
-
 type SortOption = 'name_asc' | 'name_desc' | 'price_asc' | 'price_desc'
 
 // -------------------------------------------------------
-// Family emoji map
+// Category emoji map (matched by lowercased category)
 // -------------------------------------------------------
-const FAMILY_EMOJI: Record<string, string> = {
+const CATEGORY_EMOJI: Record<string, string> = {
   'atornilladores': '\uD83D\uDD27',
-  'llaves-de-torque': '\uD83D\uDD29',
+  'llaves de torque': '\uD83D\uDD29',
   'equilibradoras': '\u2696\uFE0F',
-  'bits-y-puntas': '\uD83D\uDD28',
+  'balanceadores': '\u2696\uFE0F',
+  'puntas y tubos': '\uD83D\uDD28',
+  'bits y puntas': '\uD83D\uDD28',
   'soldadura': '\u26A1',
   'epp': '\uD83E\uDDBA',
   'accesorios': '\uD83D\uDD17',
   'repuestos': '\uD83D\uDEE0\uFE0F',
+  'otros': '\uD83D\uDCE6',
+  '__todos__': '\uD83D\uDCE6',
 }
 
-const FAMILY_COLUMNS: Record<string, string[]> = {
+const getCategoryEmoji = (cat: string): string => {
+  return CATEGORY_EMOJI[cat.toLowerCase()] || '\uD83D\uDCCB'
+}
+
+const CATEGORY_COLUMNS: Record<string, string[]> = {
   'atornilladores': ['image', 'sku', 'name', 'torque', 'rpm', 'encastre', 'weight', 'price', 'cotizar'],
-  'llaves-de-torque': ['image', 'sku', 'name', 'torque', 'encastre', 'brand', 'price', 'cotizar'],
+  'llaves de torque': ['image', 'sku', 'name', 'torque', 'encastre', 'brand', 'price', 'cotizar'],
   'equilibradoras': ['image', 'sku', 'name', 'weight', 'brand', 'price', 'cotizar'],
-  'bits-y-puntas': ['image', 'sku', 'name', 'drive', 'tip_type', 'length', 'price', 'cotizar'],
+  'balanceadores': ['image', 'sku', 'name', 'weight', 'brand', 'price', 'cotizar'],
+  'puntas y tubos': ['image', 'sku', 'name', 'brand', 'category', 'subcategory', 'price', 'cotizar'],
 }
 
 const catalogoTabs = [
@@ -149,9 +125,12 @@ function ProductosTab() {
   const { addToast } = useToast()
 
   // ---------- Core State ----------
-  const [families, setFamilies] = useState<ProductFamily[]>([])
-  const [familiesLoading, setFamiliesLoading] = useState(true)
-  const [selectedFamily, setSelectedFamily] = useState<ProductFamily | null>(null)
+  const [categories, setCategories] = useState<CategoryCard[]>([])
+  const [categoriesLoading, setCategoriesLoading] = useState(true)
+  const [totalProductCount, setTotalProductCount] = useState(0)
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null) // null = grid, '__todos__' = all, or category name
+  const [selectedSubcategory, setSelectedSubcategory] = useState<string | null>(null)
+  const [currentSubcategories, setCurrentSubcategories] = useState<string[]>([])
 
   // Search
   const [searchQuery, setSearchQuery] = useState('')
@@ -168,9 +147,7 @@ function ProductosTab() {
   const [page, setPage] = useState(1)
   const [sortBy, setSortBy] = useState<SortOption>('name_asc')
 
-  // Dynamic filters from filter_config
-  const [activeFilters, setActiveFilters] = useState<Record<string, string>>({})
-  const [rangeFilters, setRangeFilters] = useState<Record<string, RangeFilter>>({})
+  // Debounce ref for sort/filter changes
   const filterDebounceRef = useRef<NodeJS.Timeout | null>(null)
 
   // Product detail modal
@@ -204,49 +181,57 @@ function ProductosTab() {
 
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
 
-  // ---------- Load families on mount ----------
-  const loadFamilies = useCallback(async () => {
-    setFamiliesLoading(true)
+  // ---------- Load dynamic categories from tt_products on mount ----------
+  const loadCategories = useCallback(async () => {
+    setCategoriesLoading(true)
     const sb = createClient()
 
-    const { data: familyData } = await sb
-      .from('tt_product_families')
-      .select('*')
+    // Get total active count
+    const sb2 = createClient()
+    const { count: allCount } = await sb2
+      .from('tt_products')
+      .select('*', { count: 'exact', head: true })
       .eq('active', true)
-      .order('sort_order', { ascending: true })
+    setTotalProductCount(allCount || 0)
 
-    if (familyData && familyData.length > 0) {
-      // Get exact product counts per family using individual count queries
-      const countPromises = (familyData as ProductFamily[]).map(async (f) => {
-        const sb2 = createClient()
-        const { count } = await sb2
-          .from('tt_products')
-          .select('*', { count: 'exact', head: true })
-          .eq('family_id', f.id)
-          .eq('active', true)
-        return { id: f.id, count: count || 0 }
-      })
+    // Get distinct categories with counts and subcategories
+    const { data: catData } = await sb
+      .from('tt_products')
+      .select('category, subcategory')
+      .eq('active', true)
+      .not('category', 'is', null)
 
-      const counts = await Promise.all(countPromises)
-      const countMap = new Map<string, number>()
-      for (const c of counts) {
-        countMap.set(c.id, c.count)
+    if (catData && catData.length > 0) {
+      const catMap = new Map<string, { count: number; subcats: Set<string> }>()
+      for (const row of catData) {
+        const cat = (row.category as string).trim()
+        if (!cat) continue
+        const entry = catMap.get(cat) || { count: 0, subcats: new Set<string>() }
+        entry.count++
+        if (row.subcategory) {
+          entry.subcats.add((row.subcategory as string).trim())
+        }
+        catMap.set(cat, entry)
       }
 
-      const fams = (familyData as ProductFamily[]).map(f => ({
-        ...f,
-        product_count: countMap.get(f.id) || 0,
-      }))
-      setFamilies(fams)
+      const cards: CategoryCard[] = Array.from(catMap.entries())
+        .map(([name, info]) => ({
+          name,
+          product_count: info.count,
+          subcategories: Array.from(info.subcats).sort(),
+        }))
+        .sort((a, b) => b.product_count - a.product_count)
+
+      setCategories(cards)
     } else {
-      setFamilies([])
+      setCategories([])
     }
-    setFamiliesLoading(false)
+    setCategoriesLoading(false)
   }, [])
 
   useEffect(() => {
-    loadFamilies()
-  }, [loadFamilies])
+    loadCategories()
+  }, [loadCategories])
 
   // ---------- Fuzzy search via RPC ----------
   const performSearch = useCallback(async (query: string) => {
@@ -308,8 +293,8 @@ function ProductosTab() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  // ---------- Load products for selected family ----------
-  const loadProducts = useCallback(async (family: ProductFamily | null, pageNum: number, sort: SortOption, filters: Record<string, string>, ranges: Record<string, RangeFilter>) => {
+  // ---------- Load products for selected category ----------
+  const loadProducts = useCallback(async (categoryName: string | null, subcat: string | null, pageNum: number, sort: SortOption) => {
     setProductsLoading(true)
     const sb = createClient()
     const fromOffset = (pageNum - 1) * PAGE_SIZE
@@ -327,41 +312,14 @@ function ProductosTab() {
       .order(orderCol, { ascending: orderAsc })
       .range(fromOffset, fromOffset + PAGE_SIZE - 1)
 
-    if (family) {
-      query = query.eq('family_id', family.id)
+    // Filter by category (skip for '__todos__' which shows everything)
+    if (categoryName && categoryName !== '__todos__') {
+      query = query.eq('category', categoryName)
     }
 
-    // Apply dynamic filters from filter_config
-    for (const [key, value] of Object.entries(filters)) {
-      if (!value) continue
-      // Determine the actual DB field from filter_config
-      const filterDef = family?.filter_config?.filters?.find(f => f.key === key)
-      if (filterDef) {
-        if (filterDef.spec_key) {
-          // Filter on specs JSONB: specs->>key = value
-          query = query.eq(`specs->${filterDef.spec_key}` as string, value)
-        } else {
-          query = query.eq(filterDef.field, value)
-        }
-      }
-    }
-
-    // Apply range filters
-    for (const [key, range] of Object.entries(ranges)) {
-      if (!range.min && !range.max) continue
-      const filterDef = family?.filter_config?.filters?.find(f => f.key === key)
-      if (filterDef) {
-        if (filterDef.min_field && range.min) {
-          query = query.gte(filterDef.min_field, parseFloat(range.min))
-        }
-        if (filterDef.max_field && range.max) {
-          query = query.lte(filterDef.max_field, parseFloat(range.max))
-        }
-        if (filterDef.field && !filterDef.min_field) {
-          if (range.min) query = query.gte(filterDef.field, parseFloat(range.min))
-          if (range.max) query = query.lte(filterDef.field, parseFloat(range.max))
-        }
-      }
+    // Filter by subcategory if selected
+    if (subcat) {
+      query = query.eq('subcategory', subcat)
     }
 
     const { data, count } = await query
@@ -370,46 +328,52 @@ function ProductosTab() {
     setProductsLoading(false)
   }, [])
 
-  // ---------- Select a family ----------
-  const selectFamily = useCallback((family: ProductFamily) => {
-    setSelectedFamily(family)
-    setActiveFilters({})
-    setRangeFilters({})
+  // ---------- Select a category ----------
+  const selectCategory = useCallback((categoryName: string) => {
+    setSelectedCategory(categoryName)
+    setSelectedSubcategory(null)
+    // Load subcategories for this category
+    if (categoryName !== '__todos__') {
+      const card = categories.find(c => c.name === categoryName)
+      setCurrentSubcategories(card?.subcategories || [])
+    } else {
+      setCurrentSubcategories([])
+    }
     setPage(1)
     setSortBy('name_asc')
-    loadProducts(family, 1, 'name_asc', {}, {})
-  }, [loadProducts])
+    loadProducts(categoryName, null, 1, 'name_asc')
+  }, [loadProducts, categories])
 
-  // ---------- Go back to families grid ----------
-  const goBackToFamilies = useCallback(() => {
-    setSelectedFamily(null)
+  // ---------- Go back to categories grid ----------
+  const goBackToCategories = useCallback(() => {
+    setSelectedCategory(null)
+    setSelectedSubcategory(null)
+    setCurrentSubcategories([])
     setProducts([])
     setTotalCount(0)
-    setActiveFilters({})
-    setRangeFilters({})
     setPage(1)
   }, [])
 
-  // ---------- Filter change (debounced) ----------
+  // ---------- Sort / subcategory change ----------
   useEffect(() => {
-    if (!selectedFamily) return
+    if (!selectedCategory) return
     if (filterDebounceRef.current) clearTimeout(filterDebounceRef.current)
     filterDebounceRef.current = setTimeout(() => {
       setPage(1)
-      loadProducts(selectedFamily, 1, sortBy, activeFilters, rangeFilters)
+      loadProducts(selectedCategory, selectedSubcategory, 1, sortBy)
     }, 400)
     return () => {
       if (filterDebounceRef.current) clearTimeout(filterDebounceRef.current)
     }
-  }, [activeFilters, rangeFilters, sortBy, selectedFamily, loadProducts])
+  }, [sortBy, selectedCategory, selectedSubcategory, loadProducts])
 
   // ---------- Pagination ----------
   const changePage = useCallback((newPage: number) => {
-    if (!selectedFamily || newPage < 1 || newPage > totalPages) return
+    if (!selectedCategory || newPage < 1 || newPage > totalPages) return
     setPage(newPage)
-    loadProducts(selectedFamily, newPage, sortBy, activeFilters, rangeFilters)
+    loadProducts(selectedCategory, selectedSubcategory, newPage, sortBy)
     window.scrollTo({ top: 0, behavior: 'smooth' })
-  }, [totalPages, selectedFamily, sortBy, activeFilters, rangeFilters, loadProducts])
+  }, [totalPages, selectedCategory, selectedSubcategory, sortBy, loadProducts])
 
   // ---------- Navigate to search result product ----------
   const openSearchProduct = useCallback(async (result: SearchResult) => {
@@ -435,9 +399,9 @@ function ProductosTab() {
       description: '',
       brand: '',
       product_type: 'product',
-      family_id: selectedFamily?.id || null,
-      category: '',
-      subcategory: '',
+      family_id: null,
+      category: (selectedCategory && selectedCategory !== '__todos__') ? selectedCategory : '',
+      subcategory: selectedSubcategory || '',
       active: true,
       price_eur: 0,
       price_usd: null,
@@ -458,7 +422,7 @@ function ProductosTab() {
     setSpecRows([])
     setProductFormTab('general')
     setShowProductForm(true)
-  }, [selectedFamily])
+  }, [selectedCategory, selectedSubcategory])
 
   // ---------- Open product form (edit) ----------
   const openEditProduct = useCallback((product: Product) => {
@@ -572,11 +536,11 @@ function ProductosTab() {
     setEditingProduct(null)
 
     // Reload
-    if (selectedFamily) {
-      loadProducts(selectedFamily, page, sortBy, activeFilters, rangeFilters)
+    if (selectedCategory) {
+      loadProducts(selectedCategory, selectedSubcategory, page, sortBy)
     }
-    loadFamilies()
-  }, [productForm, specRows, editingProduct, selectedFamily, page, sortBy, activeFilters, rangeFilters, addToast, loadProducts, loadFamilies])
+    loadCategories()
+  }, [productForm, specRows, editingProduct, selectedCategory, selectedSubcategory, page, sortBy, addToast, loadProducts, loadCategories])
 
   // ---------- Soft delete product ----------
   const softDeleteProduct = useCallback(async (product: Product) => {
@@ -598,11 +562,11 @@ function ProductosTab() {
     addToast({ type: 'success', title: 'Producto desactivado', message: product.sku })
     setSelectedProduct(null)
 
-    if (selectedFamily) {
-      loadProducts(selectedFamily, page, sortBy, activeFilters, rangeFilters)
+    if (selectedCategory) {
+      loadProducts(selectedCategory, selectedSubcategory, page, sortBy)
     }
-    loadFamilies()
-  }, [selectedFamily, page, sortBy, activeFilters, rangeFilters, addToast, loadProducts, loadFamilies])
+    loadCategories()
+  }, [selectedCategory, selectedSubcategory, page, sortBy, addToast, loadProducts, loadCategories])
 
   // ---------- WooCommerce CSV Parse ----------
   const parseWooCSV = useCallback(async (file: File) => {
@@ -673,26 +637,8 @@ function ProductosTab() {
     setWooProgress('Preparando importacion...')
 
     try {
-      const sb = createClient()
-
-      // Load existing families to map category -> family_id
-      const sb2 = createClient()
-      const { data: existingFamilies } = await sb2
-        .from('tt_product_families')
-        .select('id, name, slug')
-        .eq('active', true)
-
-      const familyMap = new Map<string, string>()
-      if (existingFamilies) {
-        for (const f of existingFamilies) {
-          familyMap.set((f.name as string).toLowerCase(), f.id as string)
-          familyMap.set((f.slug as string).toLowerCase(), f.id as string)
-        }
-      }
-
-      // Process rows into product payloads
-      const products: Array<Record<string, unknown>> = []
-      const newFamilyNames = new Set<string>()
+      // Process rows into product payloads (no family_id mapping needed)
+      const productPayloads: Array<Record<string, unknown>> = []
 
       for (const row of wooParsedRows) {
         const sku = (row['SKU'] || '').trim()
@@ -707,26 +653,16 @@ function ProductosTab() {
         const imagesStr = row['Imágenes'] || row['Imagenes'] || row['Images'] || ''
         const image_url = imagesStr.split(',')[0]?.trim() || null
 
-        // Parse categories
+        // Parse categories directly into category/subcategory fields
         const catStr = row['Categorías'] || row['Categorias'] || row['Categories'] || ''
         let category: string | null = null
         let subcategory: string | null = null
-        let family_id: string | null = null
 
         if (catStr) {
           const firstCatPath = catStr.split(',')[0]?.trim() || ''
           const catParts = firstCatPath.split('>').map(p => p.trim())
           category = catParts[0] || null
           subcategory = catParts[1] || null
-
-          if (category) {
-            const catLower = category.toLowerCase()
-            if (familyMap.has(catLower)) {
-              family_id = familyMap.get(catLower)!
-            } else {
-              newFamilyNames.add(category)
-            }
-          }
         }
 
         // Brand
@@ -757,7 +693,7 @@ function ProductosTab() {
           specs['tags'] = tags
         }
 
-        products.push({
+        productPayloads.push({
           sku,
           name,
           description: description || null,
@@ -767,44 +703,10 @@ function ProductosTab() {
           image_url,
           category,
           subcategory,
-          family_id,
           specs: Object.keys(specs).length > 0 ? specs : null,
           active: true,
           product_type: 'product',
         })
-      }
-
-      // Auto-create new families if needed
-      if (newFamilyNames.size > 0) {
-        setWooProgress(`Creando ${newFamilyNames.size} familias nuevas...`)
-        const sb3 = createClient()
-        const newFamilies = Array.from(newFamilyNames).map((name, idx) => ({
-          name,
-          slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
-          active: true,
-          sort_order: 100 + idx,
-        }))
-
-        const { data: insertedFamilies, error: famError } = await sb3
-          .from('tt_product_families')
-          .upsert(newFamilies, { onConflict: 'slug' })
-          .select('id, name, slug')
-
-        if (!famError && insertedFamilies) {
-          for (const f of insertedFamilies) {
-            familyMap.set((f.name as string).toLowerCase(), f.id as string)
-            familyMap.set((f.slug as string).toLowerCase(), f.id as string)
-          }
-          // Re-map family_id for products that needed new families
-          for (const prod of products) {
-            if (!prod.family_id && prod.category) {
-              const catLower = (prod.category as string).toLowerCase()
-              if (familyMap.has(catLower)) {
-                prod.family_id = familyMap.get(catLower)!
-              }
-            }
-          }
-        }
       }
 
       // Upsert products in batches of 100
@@ -812,9 +714,9 @@ function ProductosTab() {
       let inserted = 0
       let errors = 0
 
-      for (let i = 0; i < products.length; i += BATCH_SIZE) {
-        const batch = products.slice(i, i + BATCH_SIZE)
-        setWooProgress(`Importando ${i + 1}-${Math.min(i + BATCH_SIZE, products.length)} de ${products.length}...`)
+      for (let i = 0; i < productPayloads.length; i += BATCH_SIZE) {
+        const batch = productPayloads.slice(i, i + BATCH_SIZE)
+        setWooProgress(`Importando ${i + 1}-${Math.min(i + BATCH_SIZE, productPayloads.length)} de ${productPayloads.length}...`)
 
         const sb4 = createClient()
         const { error } = await sb4
@@ -843,33 +745,32 @@ function ProductosTab() {
       })
 
       // Reload everything
-      loadFamilies()
-      if (selectedFamily) {
-        loadProducts(selectedFamily, page, sortBy, activeFilters, rangeFilters)
+      loadCategories()
+      if (selectedCategory) {
+        loadProducts(selectedCategory, selectedSubcategory, page, sortBy)
       }
     } catch (err) {
       setWooImporting(false)
       setWooProgress('')
       addToast({ type: 'error', title: 'Error en importacion', message: String(err) })
     }
-  }, [wooParsedRows, addToast, loadFamilies, selectedFamily, page, sortBy, activeFilters, rangeFilters, loadProducts])
+  }, [wooParsedRows, addToast, loadCategories, selectedCategory, selectedSubcategory, page, sortBy, loadProducts])
 
-  // ---------- Get table columns for current family ----------
+  // ---------- Get table columns for current category ----------
   const getColumns = useCallback(() => {
-    if (!selectedFamily) return FAMILY_COLUMNS['default'] || ['image', 'sku', 'name', 'brand', 'category', 'price', 'cotizar']
-    return FAMILY_COLUMNS[selectedFamily.slug] || ['image', 'sku', 'name', 'brand', 'category', 'price', 'cotizar']
-  }, [selectedFamily])
+    const defaultCols = ['image', 'sku', 'name', 'brand', 'category', 'price', 'cotizar']
+    if (!selectedCategory || selectedCategory === '__todos__') return defaultCols
+    return CATEGORY_COLUMNS[selectedCategory.toLowerCase()] || defaultCols
+  }, [selectedCategory])
 
-  // ---------- Clear active filters ----------
-  const clearAllFilters = useCallback(() => {
-    setActiveFilters({})
-    setRangeFilters({})
+  // ---------- Clear subcategory filter ----------
+  const clearSubcategoryFilter = useCallback(() => {
+    setSelectedSubcategory(null)
   }, [])
 
   const hasActiveFilters = useMemo(() => {
-    return Object.values(activeFilters).some(v => v) ||
-           Object.values(rangeFilters).some(r => r.min || r.max)
-  }, [activeFilters, rangeFilters])
+    return !!selectedSubcategory
+  }, [selectedSubcategory])
 
   // ============================================================
   // RENDER
@@ -909,10 +810,10 @@ function ProductosTab() {
             { key: 'active', label: 'Activo', type: 'boolean' },
           ]}
           onComplete={() => {
-            if (selectedFamily) {
-              loadProducts(selectedFamily, page, sortBy, activeFilters, rangeFilters)
+            if (selectedCategory) {
+              loadProducts(selectedCategory, selectedSubcategory, page, sortBy)
             }
-            loadFamilies()
+            loadCategories()
           }}
           label="Importar"
         />
@@ -1007,67 +908,75 @@ function ProductosTab() {
         )}
       </div>
 
-      {/* ======== FAMILY CARDS (when no family selected) ======== */}
-      {!selectedFamily && (
+      {/* ======== CATEGORY CARDS (when no category selected) ======== */}
+      {!selectedCategory && (
         <>
-          {familiesLoading ? (
+          {categoriesLoading ? (
             <div className="flex flex-col items-center justify-center py-16">
               <Loader2 className="animate-spin text-[#FF6600] mb-3" size={32} />
-              <p className="text-sm text-[#4B5563]">Cargando familias de productos...</p>
-            </div>
-          ) : families.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-[#4B5563]">
-              <Package size={48} className="mb-4" />
-              <p className="text-lg font-medium">No hay familias configuradas</p>
-              <p className="text-sm mt-1">Agrega familias de producto en tt_product_families</p>
+              <p className="text-sm text-[#4B5563]">Cargando categorias de productos...</p>
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-              {families.map((family) => {
-                const emoji = FAMILY_EMOJI[family.slug] || '\uD83D\uDCE6'
-                return (
-                  <button
-                    key={family.id}
-                    onClick={() => selectFamily(family)}
-                    className="group relative rounded-2xl bg-[#141820] border border-[#1E2330] p-6 hover:border-[#FF6600]/40 hover:bg-[#1A1F2E] transition-all duration-300 cursor-pointer text-left flex flex-col items-center gap-3 hover:shadow-lg hover:shadow-[#FF6600]/5 hover:-translate-y-0.5"
-                  >
-                    <span className="text-4xl group-hover:scale-110 transition-transform duration-300">{emoji}</span>
-                    <h3 className="text-sm font-bold text-[#F0F2F5] text-center group-hover:text-[#FF6600] transition-colors">
-                      {family.name}
-                    </h3>
-                    <span className="text-xs text-[#6B7280]">
-                      {(family.product_count || 0).toLocaleString('es-AR')} productos
-                    </span>
-                    {family.description && (
-                      <p className="text-[10px] text-[#4B5563] text-center line-clamp-2 mt-1">
-                        {family.description}
-                      </p>
-                    )}
-                    {/* Hover accent line */}
-                    <div className="absolute bottom-0 left-4 right-4 h-0.5 bg-[#FF6600] rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-                  </button>
-                )
-              })}
+              {/* "Todos los productos" card */}
+              <button
+                onClick={() => selectCategory('__todos__')}
+                className="group relative rounded-2xl bg-[#141820] border border-[#FF6600]/30 p-6 hover:border-[#FF6600]/60 hover:bg-[#1A1F2E] transition-all duration-300 cursor-pointer text-left flex flex-col items-center gap-3 hover:shadow-lg hover:shadow-[#FF6600]/10 hover:-translate-y-0.5"
+              >
+                <span className="text-4xl group-hover:scale-110 transition-transform duration-300">{getCategoryEmoji('__todos__')}</span>
+                <h3 className="text-sm font-bold text-[#FF6600] text-center">
+                  Todos los productos
+                </h3>
+                <span className="text-xs text-[#6B7280]">
+                  {totalProductCount.toLocaleString('es-AR')} productos
+                </span>
+                <div className="absolute bottom-0 left-4 right-4 h-0.5 bg-[#FF6600] rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+              </button>
+
+              {/* Dynamic category cards */}
+              {categories.map((cat) => (
+                <button
+                  key={cat.name}
+                  onClick={() => selectCategory(cat.name)}
+                  className="group relative rounded-2xl bg-[#141820] border border-[#1E2330] p-6 hover:border-[#FF6600]/40 hover:bg-[#1A1F2E] transition-all duration-300 cursor-pointer text-left flex flex-col items-center gap-3 hover:shadow-lg hover:shadow-[#FF6600]/5 hover:-translate-y-0.5"
+                >
+                  <span className="text-4xl group-hover:scale-110 transition-transform duration-300">{getCategoryEmoji(cat.name)}</span>
+                  <h3 className="text-sm font-bold text-[#F0F2F5] text-center group-hover:text-[#FF6600] transition-colors">
+                    {cat.name}
+                  </h3>
+                  <span className="text-xs text-[#6B7280]">
+                    {cat.product_count.toLocaleString('es-AR')} productos
+                  </span>
+                  {cat.subcategories.length > 0 && (
+                    <p className="text-[10px] text-[#4B5563] text-center line-clamp-2 mt-1">
+                      {cat.subcategories.slice(0, 4).join(', ')}{cat.subcategories.length > 4 ? ` +${cat.subcategories.length - 4}` : ''}
+                    </p>
+                  )}
+                  <div className="absolute bottom-0 left-4 right-4 h-0.5 bg-[#FF6600] rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                </button>
+              ))}
             </div>
           )}
         </>
       )}
 
-      {/* ======== FAMILY DETAIL VIEW (when a family is selected) ======== */}
-      {selectedFamily && (
+      {/* ======== CATEGORY DETAIL VIEW (when a category is selected) ======== */}
+      {selectedCategory && (
         <div className="space-y-5">
-          {/* Family header + back button */}
+          {/* Category header + back button */}
           <div className="flex items-center gap-4 flex-wrap">
             <button
-              onClick={goBackToFamilies}
+              onClick={goBackToCategories}
               className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-[#9CA3AF] hover:text-[#F0F2F5] hover:bg-[#1E2330] transition-all"
             >
-              <ChevronLeft size={18} /> Familias
+              <ChevronLeft size={18} /> Categorias
             </button>
             <div className="flex items-center gap-3 flex-1">
-              <span className="text-3xl">{FAMILY_EMOJI[selectedFamily.slug] || '\uD83D\uDCE6'}</span>
+              <span className="text-3xl">{getCategoryEmoji(selectedCategory)}</span>
               <div>
-                <h2 className="text-xl font-bold text-[#F0F2F5]">{selectedFamily.name}</h2>
+                <h2 className="text-xl font-bold text-[#F0F2F5]">
+                  {selectedCategory === '__todos__' ? 'Todos los productos' : selectedCategory}
+                </h2>
                 <p className="text-xs text-[#6B7280]">
                   {productsLoading ? 'Cargando...' : `${totalCount.toLocaleString('es-AR')} productos`}
                 </p>
@@ -1087,12 +996,14 @@ function ProductosTab() {
               />
               <ExportButton
                 data={products as unknown as Record<string, unknown>[]}
-                filename={`productos_${selectedFamily.slug}`}
+                filename={`productos_${(selectedCategory === '__todos__' ? 'todos' : selectedCategory).toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
                 targetTable="tt_products"
                 columns={[
                   { key: 'sku', label: 'SKU' },
                   { key: 'name', label: 'Nombre' },
                   { key: 'brand', label: 'Marca' },
+                  { key: 'category', label: 'Categoria' },
+                  { key: 'subcategory', label: 'Subcategoria' },
                   { key: 'price_eur', label: 'Precio EUR' },
                   { key: 'torque_min', label: 'Torque Min' },
                   { key: 'torque_max', label: 'Torque Max' },
@@ -1104,158 +1015,44 @@ function ProductosTab() {
             </div>
           </div>
 
-          {/* Dynamic filters from filter_config */}
-          {selectedFamily.filter_config?.filters && selectedFamily.filter_config.filters.length > 0 && (
+          {/* Subcategory chips as secondary filter */}
+          {currentSubcategories.length > 0 && (
             <div className="rounded-xl bg-[#141820] border border-[#1E2330] p-4">
               <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-bold uppercase tracking-wider text-[#FF6600]">Filtros</span>
-                {hasActiveFilters && (
+                <span className="text-xs font-bold uppercase tracking-wider text-[#FF6600]">Subcategorias</span>
+                {selectedSubcategory && (
                   <button
-                    onClick={clearAllFilters}
+                    onClick={clearSubcategoryFilter}
                     className="flex items-center gap-1 text-[10px] text-[#FF6600] hover:text-[#FF8833] font-medium"
                   >
-                    <RotateCcw size={10} /> Limpiar
+                    <RotateCcw size={10} /> Mostrar todas
                   </button>
                 )}
               </div>
-              <div className="flex flex-wrap gap-4 items-end">
-                {selectedFamily.filter_config.filters.map((filterDef) => {
-                  if (filterDef.type === 'icon_select' && filterDef.options) {
-                    const currentVal = activeFilters[filterDef.key] || ''
-                    return (
-                      <div key={filterDef.key} className="space-y-1.5">
-                        <label className="text-[10px] font-semibold uppercase tracking-wider text-[#6B7280]">
-                          {filterDef.label}
-                        </label>
-                        <div className="flex gap-1.5 flex-wrap">
-                          {filterDef.options.map((opt) => (
-                            <button
-                              key={opt.value}
-                              onClick={() => {
-                                setActiveFilters(prev => ({
-                                  ...prev,
-                                  [filterDef.key]: prev[filterDef.key] === opt.value ? '' : opt.value,
-                                }))
-                              }}
-                              className={`px-3 py-2 rounded-lg text-xs font-bold border-2 transition-all duration-200 ${
-                                currentVal === opt.value
-                                  ? 'border-[#FF6600] bg-[#FF6600]/15 text-[#FF6600] shadow-md shadow-[#FF6600]/10'
-                                  : 'border-[#2A3040] bg-[#0F1218] text-[#9CA3AF] hover:border-[#3A4050] hover:text-[#F0F2F5]'
-                              }`}
-                              title={opt.label}
-                            >
-                              {opt.icon ? <span className="mr-1">{opt.icon}</span> : null}
-                              {opt.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )
-                  }
-
-                  if (filterDef.type === 'range') {
-                    const rangeVal = rangeFilters[filterDef.key] || { min: '', max: '' }
-                    return (
-                      <div key={filterDef.key} className="space-y-1.5">
-                        <label className="text-[10px] font-semibold uppercase tracking-wider text-[#6B7280]">
-                          {filterDef.label} {filterDef.unit ? `(${filterDef.unit})` : ''}
-                        </label>
-                        <div className="flex gap-2 items-center">
-                          <input
-                            type="number"
-                            value={rangeVal.min}
-                            onChange={(e) => setRangeFilters(prev => ({
-                              ...prev,
-                              [filterDef.key]: { ...rangeVal, min: e.target.value },
-                            }))}
-                            placeholder="Min"
-                            className="w-20 h-9 rounded-lg bg-[#0F1218] border border-[#2A3040] px-2 text-xs text-[#F0F2F5] placeholder:text-[#4B5563] focus:outline-none focus:ring-1 focus:ring-[#FF6600]/50"
-                          />
-                          <span className="text-[#4B5563] text-xs">-</span>
-                          <input
-                            type="number"
-                            value={rangeVal.max}
-                            onChange={(e) => setRangeFilters(prev => ({
-                              ...prev,
-                              [filterDef.key]: { ...rangeVal, max: e.target.value },
-                            }))}
-                            placeholder="Max"
-                            className="w-20 h-9 rounded-lg bg-[#0F1218] border border-[#2A3040] px-2 text-xs text-[#F0F2F5] placeholder:text-[#4B5563] focus:outline-none focus:ring-1 focus:ring-[#FF6600]/50"
-                          />
-                        </div>
-                      </div>
-                    )
-                  }
-
-                  if (filterDef.type === 'select' && filterDef.options) {
-                    return (
-                      <div key={filterDef.key} className="space-y-1.5">
-                        <label className="text-[10px] font-semibold uppercase tracking-wider text-[#6B7280]">
-                          {filterDef.label}
-                        </label>
-                        <select
-                          value={activeFilters[filterDef.key] || ''}
-                          onChange={(e) => setActiveFilters(prev => ({
-                            ...prev,
-                            [filterDef.key]: e.target.value,
-                          }))}
-                          className="h-9 rounded-lg bg-[#0F1218] border border-[#2A3040] px-2 pr-8 text-xs text-[#F0F2F5] appearance-none focus:outline-none focus:ring-1 focus:ring-[#FF6600]/50 min-w-[140px]"
-                        >
-                          <option value="">Todos</option>
-                          {filterDef.options.map(opt => (
-                            <option key={opt.value} value={opt.value}>{opt.label}</option>
-                          ))}
-                        </select>
-                      </div>
-                    )
-                  }
-
-                  if (filterDef.type === 'text') {
-                    return (
-                      <div key={filterDef.key} className="space-y-1.5">
-                        <label className="text-[10px] font-semibold uppercase tracking-wider text-[#6B7280]">
-                          {filterDef.label}
-                        </label>
-                        <input
-                          type="text"
-                          value={activeFilters[filterDef.key] || ''}
-                          onChange={(e) => setActiveFilters(prev => ({
-                            ...prev,
-                            [filterDef.key]: e.target.value,
-                          }))}
-                          placeholder={filterDef.label}
-                          className="w-32 h-9 rounded-lg bg-[#0F1218] border border-[#2A3040] px-2 text-xs text-[#F0F2F5] placeholder:text-[#4B5563] focus:outline-none focus:ring-1 focus:ring-[#FF6600]/50"
-                        />
-                      </div>
-                    )
-                  }
-
-                  return null
-                })}
+              <div className="flex flex-wrap gap-2">
+                {currentSubcategories.map((subcat) => (
+                  <button
+                    key={subcat}
+                    onClick={() => setSelectedSubcategory(prev => prev === subcat ? null : subcat)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold border-2 transition-all duration-200 ${
+                      selectedSubcategory === subcat
+                        ? 'border-[#FF6600] bg-[#FF6600]/15 text-[#FF6600] shadow-md shadow-[#FF6600]/10'
+                        : 'border-[#2A3040] bg-[#0F1218] text-[#9CA3AF] hover:border-[#3A4050] hover:text-[#F0F2F5]'
+                    }`}
+                  >
+                    {subcat}
+                  </button>
+                ))}
               </div>
 
-              {/* Active filter tags */}
-              {hasActiveFilters && (
+              {/* Active subcategory tag */}
+              {selectedSubcategory && (
                 <div className="flex items-center gap-2 flex-wrap mt-3 pt-3 border-t border-[#1E2330]">
-                  <span className="text-[10px] text-[#4B5563] uppercase">Activos:</span>
-                  {Object.entries(activeFilters).filter(([, v]) => v).map(([key, value]) => {
-                    const def = selectedFamily.filter_config?.filters?.find(f => f.key === key)
-                    return (
-                      <span key={key} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#FF6600]/15 text-[#FF6600] text-[10px] font-medium">
-                        {def?.label}: {value}
-                        <button onClick={() => setActiveFilters(prev => ({ ...prev, [key]: '' }))}><X size={10} /></button>
-                      </span>
-                    )
-                  })}
-                  {Object.entries(rangeFilters).filter(([, r]) => r.min || r.max).map(([key, range]) => {
-                    const def = selectedFamily.filter_config?.filters?.find(f => f.key === key)
-                    return (
-                      <span key={key} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#FF6600]/15 text-[#FF6600] text-[10px] font-medium">
-                        {def?.label}: {range.min || '0'}-{range.max || '*'} {def?.unit || ''}
-                        <button onClick={() => setRangeFilters(prev => ({ ...prev, [key]: { min: '', max: '' } }))}><X size={10} /></button>
-                      </span>
-                    )
-                  })}
+                  <span className="text-[10px] text-[#4B5563] uppercase">Filtro activo:</span>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#FF6600]/15 text-[#FF6600] text-[10px] font-medium">
+                    Subcategoria: {selectedSubcategory}
+                    <button onClick={() => setSelectedSubcategory(null)}><X size={10} /></button>
+                  </span>
                 </div>
               )}
             </div>
@@ -1273,7 +1070,7 @@ function ProductosTab() {
               <p className="text-lg font-medium">No se encontraron productos</p>
               <p className="text-sm mt-1">Proba ajustando los filtros</p>
               {hasActiveFilters && (
-                <Button variant="outline" size="sm" className="mt-4" onClick={clearAllFilters}>
+                <Button variant="outline" size="sm" className="mt-4" onClick={clearSubcategoryFilter}>
                   <RotateCcw size={14} /> Limpiar filtros
                 </Button>
               )}
@@ -1291,6 +1088,7 @@ function ProductosTab() {
                           name: { label: 'Producto', align: 'text-left', sortable: true, sortKey: 'name_asc' },
                           brand: { label: 'Marca', align: 'text-left' },
                           category: { label: 'Categoria', align: 'text-left' },
+                          subcategory: { label: 'Subcategoria', align: 'text-left' },
                           torque: { label: 'Torque (Nm)', align: 'text-center' },
                           rpm: { label: 'RPM', align: 'text-center' },
                           encastre: { label: 'Encastre', align: 'text-center' },
@@ -1374,6 +1172,10 @@ function ProductosTab() {
                             case 'category':
                               return (
                                 <td key={col} className="px-3 py-2 text-xs text-[#6B7280]">{product.category || '-'}</td>
+                              )
+                            case 'subcategory':
+                              return (
+                                <td key={col} className="px-3 py-2 text-xs text-[#6B7280]">{product.subcategory || '-'}</td>
                               )
                             case 'torque':
                               return (
@@ -1765,31 +1567,25 @@ function ProductosTab() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="w-full">
-                  <label className="block text-sm font-medium text-[#9CA3AF] mb-1.5">Familia</label>
+                  <label className="block text-sm font-medium text-[#9CA3AF] mb-1.5">Categoria</label>
                   <select
-                    value={productForm.family_id || ''}
-                    onChange={(e) => updateProductField('family_id', e.target.value || null)}
+                    value={productForm.category || ''}
+                    onChange={(e) => updateProductField('category', e.target.value || null)}
                     className="w-full h-10 rounded-lg bg-[#1E2330] border border-[#2A3040] px-3 text-sm text-[#F0F2F5] focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 transition-all appearance-none"
                   >
-                    <option value="">Sin familia</option>
-                    {families.map(f => (
-                      <option key={f.id} value={f.id}>{f.name}</option>
+                    <option value="">Sin categoria</option>
+                    {categories.map(c => (
+                      <option key={c.name} value={c.name}>{c.name}</option>
                     ))}
                   </select>
                 </div>
                 <Input
-                  label="Categoria"
-                  value={productForm.category || ''}
-                  onChange={(e) => updateProductField('category', e.target.value)}
-                  placeholder="Ej: Herramienta electrica"
-                />
-                <Input
                   label="Subcategoria"
                   value={productForm.subcategory || ''}
                   onChange={(e) => updateProductField('subcategory', e.target.value)}
-                  placeholder="Ej: Atornilladores"
+                  placeholder="Ej: EMBOCADURA, ALLEM, TORX"
                 />
               </div>
 
