@@ -11,7 +11,25 @@ import { DailySummaryCard } from '@/components/ai/daily-summary-card'
 import {
   TrendingUp, TrendingDown, DollarSign, FileText, Target, Sparkles,
   AlertTriangle, CheckCircle2, Clock, Users, RefreshCw, BarChart3,
+  Mail, Paperclip, ExternalLink,
 } from 'lucide-react'
+import { formatRelative } from '@/lib/utils'
+
+interface EmailItem {
+  id: string
+  from: { name: string; email: string }
+  subject: string
+  snippet: string
+  date: string
+  isRead: boolean
+  hasAttachments: boolean
+}
+
+interface EmailsData {
+  connected: boolean
+  emails: EmailItem[]
+  unreadCount: number
+}
 
 interface Stats {
   leadsTotal: number
@@ -35,6 +53,25 @@ export default function DashboardEjecutivoPage() {
   const supabase = createClient()
   const [stats, setStats] = useState<Stats | null>(null)
   const [loading, setLoading] = useState(true)
+  const [emailsData, setEmailsData] = useState<EmailsData>({ connected: true, emails: [], unreadCount: 0 })
+  const [emailsLoading, setEmailsLoading] = useState(true)
+
+  const loadEmails = useCallback(async () => {
+    setEmailsLoading(true)
+    try {
+      const res = await fetch('/api/emails/recent')
+      if (res.ok) {
+        const data = await res.json()
+        setEmailsData(data)
+      }
+    } catch {
+      // silently fail — widget just shows empty
+    } finally {
+      setEmailsLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { void loadEmails() }, [loadEmails])
 
   const load = useCallback(async () => {
     if (activeCompanyIds.length === 0) return
@@ -246,6 +283,123 @@ export default function DashboardEjecutivoPage() {
               <Arrow />
               <FlowStep label="Cobradas mes" value={stats.invoicesCollectedMonth} href="/cobros" color="#10b981" />
             </div>
+          </Card>
+
+          {/* Emails de clientes */}
+          <Card className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Mail className="w-5 h-5" style={{ color: '#FF6600' }} />
+                <strong>Emails de clientes</strong>
+                {emailsData.unreadCount > 0 && (
+                  <Badge className="text-xs bg-[#FF6600] text-white hover:bg-[#FF6600]/90 border-0">
+                    {emailsData.unreadCount} nuevos
+                  </Badge>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {emailsData.connected && (
+                  <Button variant="ghost" size="sm" onClick={loadEmails} disabled={emailsLoading}>
+                    <RefreshCw className={`w-3.5 h-3.5 ${emailsLoading ? 'animate-spin' : ''}`} />
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            {!emailsData.connected ? (
+              <div className="flex flex-col items-center justify-center py-8 gap-3">
+                <Mail className="w-10 h-10 opacity-30" />
+                <p className="text-sm opacity-60">Gmail no conectado</p>
+                <Link href="/api/auth/google">
+                  <Button variant="secondary" size="sm" style={{ borderColor: '#FF6600', color: '#FF6600' }}>
+                    <ExternalLink className="w-3.5 h-3.5 mr-1" /> Conectar Gmail
+                  </Button>
+                </Link>
+              </div>
+            ) : emailsLoading ? (
+              <div className="space-y-3">
+                {[1, 2, 3, 4].map((i) => (
+                  <div key={i} className="h-16 rounded-lg animate-pulse" style={{ background: '#1E2330' }} />
+                ))}
+              </div>
+            ) : emailsData.emails.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-8">
+                <Mail className="w-10 h-10 opacity-20" />
+                <p className="text-sm opacity-60 mt-2">Sin emails recientes</p>
+              </div>
+            ) : (
+              <div className="overflow-y-auto space-y-1" style={{ maxHeight: 400 }}>
+                {emailsData.emails.map((email) => (
+                  <a
+                    key={email.id}
+                    href={`https://mail.google.com/mail/u/0/#inbox/${email.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-start gap-3 p-2.5 rounded-lg hover:bg-[#1E2330] transition-colors group cursor-pointer"
+                    style={{ background: email.isRead ? 'transparent' : '#1E233050' }}
+                  >
+                    {/* Unread indicator */}
+                    <div className="pt-1.5 shrink-0">
+                      {!email.isRead ? (
+                        <div className="w-2.5 h-2.5 rounded-full" style={{ background: '#3b82f6' }} />
+                      ) : (
+                        <div className="w-2.5 h-2.5 rounded-full" style={{ background: '#2A3040' }} />
+                      )}
+                    </div>
+
+                    {/* Content */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span
+                            className="text-sm truncate"
+                            style={{
+                              color: '#F0F2F5',
+                              fontWeight: email.isRead ? 400 : 600,
+                            }}
+                          >
+                            {email.from.name || email.from.email}
+                          </span>
+                          {email.from.name && (
+                            <span className="text-xs truncate opacity-40 hidden sm:inline">
+                              {email.from.email}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {email.hasAttachments && (
+                            <Paperclip className="w-3.5 h-3.5 opacity-40" />
+                          )}
+                          <span className="text-[11px] opacity-50 whitespace-nowrap">
+                            {formatRelative(email.date)}
+                          </span>
+                        </div>
+                      </div>
+                      <div
+                        className="text-sm truncate mt-0.5"
+                        style={{
+                          color: email.isRead ? '#F0F2F580' : '#F0F2F5CC',
+                          fontWeight: email.isRead ? 400 : 500,
+                        }}
+                      >
+                        {email.subject}
+                      </div>
+                      <div
+                        className="text-xs mt-0.5 line-clamp-2"
+                        style={{ color: '#F0F2F550' }}
+                      >
+                        {email.snippet}
+                      </div>
+                    </div>
+
+                    {/* Open arrow */}
+                    <ExternalLink
+                      className="w-3.5 h-3.5 opacity-0 group-hover:opacity-40 transition-opacity shrink-0 mt-1"
+                    />
+                  </a>
+                ))}
+              </div>
+            )}
           </Card>
 
           {/* Resumen ejecutivo IA */}
