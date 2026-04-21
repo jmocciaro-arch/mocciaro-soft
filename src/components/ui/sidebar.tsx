@@ -10,7 +10,7 @@ import {
   Truck, CreditCard, Building2, BarChart3,
   Cpu, Box, Layers, BookOpen, Pause, History,
   Banknote, Sparkles, TrendingUp, GitBranch, FormInput, Bot,
-  RefreshCw, Zap, Globe,
+  RefreshCw, Zap, Globe, MessageCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
@@ -72,6 +72,7 @@ const navItems: NavItem[] = [
   { label: 'Informes', href: '/informes', icon: BarChart3, requiredPermissions: ['view_sales_reports', 'view_financials'] },
   { label: 'Admin', href: '/admin', icon: Settings, requiredPermissions: ['admin_users'] },
   { label: 'Automatizaciones', href: '/admin/automatizaciones', icon: Zap, requiredPermissions: ['admin_users'] },
+  { label: 'WhatsApp', href: '/admin/whatsapp', icon: MessageCircle, requiredPermissions: ['admin_users'] },
 ]
 
 function useBadgeCounts() {
@@ -361,6 +362,7 @@ function getModuleTitle(pathname: string): { section: string; title: string } {
     [/^\/gastos/, 'Administración', 'Gastos'],
     [/^\/informes/, 'Administración', 'Informes'],
     [/^\/admin\/automatizaciones/, 'Administración', 'Automatizaciones'],
+    [/^\/admin\/whatsapp/, 'Administración', 'WhatsApp Business'],
     [/^\/admin/, 'Administración', 'Admin'],
     [/^\/calendario/, 'SAT', 'Calendario'],
     [/^\/mail/, 'CRM', 'Mail'],
