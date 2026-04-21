@@ -157,7 +157,7 @@ export function Sidebar() {
       <aside
         className={cn(
           'fixed top-0 left-0 z-50 h-full bg-[#0A0D12] border-r border-[#1E2330] flex flex-col transition-all duration-300 print:hidden',
-          collapsed ? 'w-[72px]' : 'w-[260px]',
+          collapsed ? 'w-[72px]' : 'w-[224px]',
           // Mobile
           'lg:translate-x-0',
           mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
@@ -196,21 +196,21 @@ export function Sidebar() {
                   href={item.href}
                   onClick={() => setMobileOpen(false)}
                   className={cn(
-                    'flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group relative',
+                    'flex items-center gap-3 px-3 py-3 rounded-lg transition-all duration-200 group relative',
                     active
-                      ? 'bg-[#FF6600]/10 text-[#FF6600]'
-                      : 'text-[#6B7280] hover:text-[#D1D5DB] hover:bg-[#141820]'
+                      ? 'bg-[#FF6600]/15 text-[#FF6600] font-semibold'
+                      : 'text-[#9CA3AF] hover:text-[#F0F2F5] hover:bg-[#141820]'
                   )}
                 >
                   {active && (
-                    <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-6 bg-[#FF6600] rounded-r-full" />
+                    <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[4px] h-7 bg-[#FF6600] rounded-r-full" />
                   )}
-                  <Icon size={20} className="shrink-0" />
+                  <Icon size={22} className="shrink-0" />
                   {!collapsed && (
-                    <span className="text-sm font-medium truncate flex-1">{item.label}</span>
+                    <span className="text-sm truncate flex-1">{item.label}</span>
                   )}
                   {!collapsed && (item as { badgeKey?: string }).badgeKey && badges[(item as { badgeKey?: string }).badgeKey!] > 0 && (
-                    <span className="ml-auto px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-[#FF6600] text-white min-w-[20px] text-center">
+                    <span className="ml-auto px-2 py-0.5 text-[11px] font-bold rounded-full bg-[#FF6600] text-white min-w-[22px] text-center">
                       {badges[(item as { badgeKey?: string }).badgeKey!]}
                     </span>
                   )}
@@ -242,13 +242,13 @@ export function Sidebar() {
                           href={sub.href}
                           onClick={() => setMobileOpen(false)}
                           className={cn(
-                            'flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors',
+                            'flex items-center gap-2.5 px-2.5 py-2 rounded text-xs transition-colors',
                             subActive
                               ? 'bg-[#FF6600]/10 text-[#FF6600] font-semibold'
-                              : 'text-[#6B7280] hover:text-[#D1D5DB] hover:bg-[#141820]'
+                              : 'text-[#9CA3AF] hover:text-[#F0F2F5] hover:bg-[#141820]'
                           )}
                         >
-                          <SubIcon size={14} className="shrink-0" />
+                          <SubIcon size={18} className="shrink-0" />
                           <span className="truncate">{sub.label}</span>
                         </Link>
                       )
@@ -264,9 +264,9 @@ export function Sidebar() {
         <div className="hidden lg:block px-2 py-3 border-t border-[#1E2330]">
           <button
             onClick={() => setCollapsed(!collapsed)}
-            className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-[#6B7280] hover:text-[#D1D5DB] hover:bg-[#141820] transition-all w-full"
+            className="flex items-center gap-3 px-3 py-3 rounded-lg text-[#9CA3AF] hover:text-[#F0F2F5] hover:bg-[#141820] transition-all w-full"
           >
-            {collapsed ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
+            {collapsed ? <ChevronRight size={22} /> : <ChevronLeft size={22} />}
             {!collapsed && <span className="text-sm">Contraer</span>}
           </button>
         </div>
@@ -275,9 +275,17 @@ export function Sidebar() {
   )
 }
 
+// Items fijos para bottom nav mobile — 4 principales + "Más" que abre el drawer completo
+const mobileBottomItems: Array<{ label: string; shortLabel: string; href: string; icon: typeof LayoutDashboard }> = [
+  { label: 'Dashboard', shortLabel: 'Inicio', href: '/dashboard', icon: LayoutDashboard },
+  { label: 'Cotizador', shortLabel: 'Ventas', href: '/cotizador', icon: FileText },
+  { label: 'Compras', shortLabel: 'Compras', href: '/compras?tab=pedidos', icon: ShoppingCart },
+  { label: 'SAT', shortLabel: 'SAT', href: '/sat', icon: Wrench },
+]
+
 export function MobileNav() {
   const pathname = usePathname()
-  const mobileItems = navItems.slice(0, 5)
+  const { setMobileOpen, mobileOpen } = useSidebar()
 
   const isActive = (href: string) => {
     const basePath = href.split('?')[0]
@@ -293,8 +301,8 @@ export function MobileNav() {
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-40 bg-[#0A0D12] border-t border-[#1E2330] lg:hidden safe-area-pb print:hidden">
-      <div className="flex items-center justify-around px-2 py-1">
-        {mobileItems.map((item) => {
+      <div className="flex items-stretch justify-around px-2 pt-2 pb-1">
+        {mobileBottomItems.map((item) => {
           const Icon = item.icon
           const active = isActive(item.href)
           return (
@@ -302,32 +310,99 @@ export function MobileNav() {
               key={item.label}
               href={item.href}
               className={cn(
-                'flex flex-col items-center gap-0.5 px-3 py-2 rounded-lg transition-colors min-w-[60px]',
-                active ? 'text-[#FF6600]' : 'text-[#6B7280]'
+                'flex flex-col items-center justify-center gap-1 px-3 py-1 rounded-lg transition-colors min-w-[64px]',
+                active ? 'text-[#FF6600]' : 'text-[#9CA3AF]'
               )}
             >
-              <Icon size={20} />
-              <span className="text-[10px] font-medium">{item.label}</span>
+              <Icon size={24} strokeWidth={active ? 2.4 : 2} />
+              <span className="text-[11px] font-medium leading-tight">{item.shortLabel}</span>
             </Link>
           )
         })}
+        {/* Botón "Más" — abre el sidebar completo como drawer */}
+        <button
+          type="button"
+          onClick={() => setMobileOpen(!mobileOpen)}
+          className={cn(
+            'flex flex-col items-center justify-center gap-1 px-3 py-1 rounded-lg transition-colors min-w-[64px]',
+            mobileOpen ? 'text-[#FF6600]' : 'text-[#9CA3AF]'
+          )}
+          aria-label="Abrir menú completo"
+        >
+          <Menu size={24} strokeWidth={mobileOpen ? 2.4 : 2} />
+          <span className="text-[11px] font-medium leading-tight">Más</span>
+        </button>
       </div>
     </nav>
   )
 }
 
+// Mapeo pathname -> título de módulo (StelOrder-style breadcrumb)
+function getModuleTitle(pathname: string): { section: string; title: string } {
+  const map: Array<[RegExp | string, string, string]> = [
+    [/^\/dashboard\/ejecutivo/, 'Dashboard', 'Dashboard ejecutivo'],
+    [/^\/dashboard$/, 'Inicio', 'Mi Escritorio'],
+    [/^\/ai-hub/, 'IA', 'Hub IA'],
+    [/^\/crm/, 'Comercial', 'CRM'],
+    [/^\/cotizador/, 'Ventas', 'Cotizador'],
+    [/^\/ventas\/importar-oc/, 'Ventas', 'Importar OC'],
+    [/^\/ventas\/recurrentes/, 'Ventas', 'Facturas recurrentes'],
+    [/^\/ventas/, 'Ventas', 'Ventas'],
+    [/^\/cobros/, 'Ventas', 'Cobros'],
+    [/^\/finanzas/, 'Administración', 'Finanzas'],
+    [/^\/compras/, 'Compras', 'Compras'],
+    [/^\/stock/, 'Almacén', 'Stock'],
+    [/^\/clientes/, 'Contactos', 'Clientes'],
+    [/^\/catalogo/, 'Catálogo', 'Productos'],
+    [/^\/buscador-clientes/, 'Contactos', 'Buscador web'],
+    [/^\/buscador/, 'Catálogo', 'Buscador'],
+    [/^\/sat\/([a-z]+)/, 'SAT', ''],
+    [/^\/sat/, 'SAT', 'Servicio técnico'],
+    [/^\/gastos/, 'Administración', 'Gastos'],
+    [/^\/informes/, 'Administración', 'Informes'],
+    [/^\/admin\/automatizaciones/, 'Administración', 'Automatizaciones'],
+    [/^\/admin/, 'Administración', 'Admin'],
+    [/^\/calendario/, 'SAT', 'Calendario'],
+    [/^\/mail/, 'CRM', 'Mail'],
+    [/^\/documentos/, 'Ventas', 'Documento'],
+  ]
+  for (const [pattern, section, title] of map) {
+    if (pattern instanceof RegExp ? pattern.test(pathname) : pathname === pattern) {
+      // Sub-rutas SAT: extraer el nombre de la sub-sección
+      if (pattern instanceof RegExp && pattern.source.includes('sat\\/([a-z]+)') && !title) {
+        const m = pathname.match(pattern)
+        const sub = (m?.[1] || '').replace(/^./, c => c.toUpperCase())
+        return { section, title: sub || 'Servicio técnico' }
+      }
+      return { section, title }
+    }
+  }
+  return { section: 'Inicio', title: 'Mocciaro Soft' }
+}
+
 export function TopBar({ userName }: { userName?: string }) {
   const { setMobileOpen } = useSidebar()
+  const pathname = usePathname()
+  const { section, title } = getModuleTitle(pathname || '/')
 
   return (
-    <header className="h-16 bg-[#0A0D12]/80 backdrop-blur-xl border-b border-[#1E2330] flex items-center justify-between px-4 lg:px-6 sticky top-0 z-30 print:hidden">
-      <div className="flex items-center gap-3">
+    <header className="h-[72px] bg-[#0A0D12]/80 backdrop-blur-xl border-b border-[#1E2330] flex items-center justify-between px-4 lg:px-6 sticky top-0 z-30 print:hidden">
+      <div className="flex items-center gap-3 min-w-0 flex-1">
         <button
           onClick={() => setMobileOpen(true)}
-          className="p-2 rounded-lg hover:bg-[#1E2330] text-[#6B7280] lg:hidden"
+          className="p-2 rounded-lg hover:bg-[#1E2330] text-[#9CA3AF] lg:hidden"
         >
-          <Menu size={20} />
+          <Menu size={22} />
         </button>
+        {/* Breadcrumb + título del módulo */}
+        <div className="min-w-0">
+          <div className="text-[11px] text-[#6B7280] leading-tight truncate">
+            {section}
+          </div>
+          <h1 className="text-lg font-bold text-[#F0F2F5] leading-tight truncate">
+            {title}
+          </h1>
+        </div>
       </div>
 
       <div className="flex items-center gap-3">

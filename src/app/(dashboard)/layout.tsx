@@ -16,11 +16,11 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
       <div
         className={cn(
           'transition-all duration-300',
-          collapsed ? 'lg:ml-[72px]' : 'lg:ml-[260px]'
+          collapsed ? 'lg:ml-[72px]' : 'lg:ml-[224px]'
         )}
       >
         <TopBar userName="Juan" />
-        <main className="p-4 lg:p-6 pb-24 lg:pb-6">
+        <main className="p-4 lg:p-6 pb-28 lg:pb-6">
           {children}
         </main>
       </div>
