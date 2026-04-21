@@ -10,7 +10,7 @@ import {
   Truck, CreditCard, Building2, BarChart3,
   Cpu, Box, Layers, BookOpen, Pause, History,
   Banknote, Sparkles, TrendingUp, GitBranch, FormInput, Bot,
-  RefreshCw, Zap,
+  RefreshCw, Zap, Globe,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
@@ -65,6 +65,7 @@ const navItems: NavItem[] = [
   { label: 'Proveedores', href: '/compras?tab=proveedores', icon: Building2, requiredPermissions: ['view_suppliers'] },
   { label: 'Clientes', href: '/clientes', icon: Users, requiredPermissions: ['view_clients'] },
   { label: 'Catalogo', href: '/catalogo', icon: Package, requiredPermissions: ['view_catalog'] },
+  { label: 'Buscador Web', href: '/buscador-clientes', icon: Globe, requiredPermissions: ['admin_users'] },
   { label: 'SAT', href: '/sat', icon: Wrench, badgeKey: 'sat_open', requiredPermissions: ['view_sat'] },
   { label: 'Gastos', href: '/gastos', icon: Receipt, requiredPermissions: ['view_financials'] },
   { label: 'Agente IA', href: '/dashboard/ejecutivo', icon: Bot },
