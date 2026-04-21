@@ -1,6 +1,7 @@
 'use client'
 
 import dynamic from 'next/dynamic'
+import { DashboardMobile } from '@/components/dashboard/dashboard-mobile'
 
 // Dynamic import para evitar SSR issues con react-grid-layout (usa window)
 const DashboardGrid = dynamic(
@@ -29,5 +30,16 @@ const DashboardGrid = dynamic(
 )
 
 export default function DashboardPage() {
-  return <DashboardGrid />
+  return (
+    <>
+      {/* Mobile: vista simplificada lineal, sin react-grid-layout */}
+      <div className="lg:hidden">
+        <DashboardMobile />
+      </div>
+      {/* Desktop/tablet grande: grid completo con widgets arrastrables */}
+      <div className="hidden lg:block">
+        <DashboardGrid />
+      </div>
+    </>
+  )
 }
