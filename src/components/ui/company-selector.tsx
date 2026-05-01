@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { useCompanyContext } from '@/lib/company-context'
 import { cn } from '@/lib/utils'
 import {
@@ -120,12 +121,37 @@ export function CompanySelector() {
   } = useCompanyContext()
 
   const [open, setOpen] = useState(false)
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null)
+  const [mounted, setMounted] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
 
-  // Close on click outside
+  // Portal target only on client
+  useEffect(() => { setMounted(true) }, [])
+
+  // Recalcular posición al abrir (y en resize/scroll)
+  useEffect(() => {
+    if (!open || !triggerRef.current) return
+    const update = () => {
+      const r = triggerRef.current!.getBoundingClientRect()
+      setMenuPos({ top: r.bottom + 8, right: window.innerWidth - r.right })
+    }
+    update()
+    window.addEventListener('scroll', update, true)
+    window.addEventListener('resize', update)
+    return () => {
+      window.removeEventListener('scroll', update, true)
+      window.removeEventListener('resize', update)
+    }
+  }, [open])
+
+  // Close on click outside (considerando que el dropdown está en portal)
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
+      const target = e.target as Node
+      const clickedTrigger = triggerRef.current?.contains(target)
+      const clickedMenu = ref.current?.contains(target)
+      if (!clickedTrigger && !clickedMenu) {
         setOpen(false)
       }
     }
@@ -176,9 +202,10 @@ export function CompanySelector() {
   const multiCount = isMultiMode ? activeCompanyIds.length : 0
 
   return (
-    <div ref={ref} className="relative">
+    <div className="relative">
       {/* Trigger button */}
       <button
+        ref={triggerRef}
         onClick={() => setOpen(!open)}
         className={cn(
           'flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all',
@@ -220,9 +247,12 @@ export function CompanySelector() {
         />
       </button>
 
-      {/* Dropdown */}
-      {open && (
-        <div className="absolute right-0 top-full mt-2 w-[320px] bg-[#0F1218] border border-[#1E2330] rounded-xl shadow-2xl shadow-black/40 z-50 overflow-hidden">
+      {/* Dropdown — renderizado en portal para no quedar atrapado por stacking contexts/overflow */}
+      {open && mounted && menuPos && createPortal(
+        <div
+          ref={ref}
+          style={{ position: 'fixed', top: menuPos.top, right: menuPos.right, zIndex: 9999 }}
+          className="w-[320px] bg-[#0F1218] border border-[#1E2330] rounded-xl shadow-2xl shadow-black/40 overflow-hidden">
           {/* Header */}
           <div className="px-4 py-3 border-b border-[#1E2330]">
             <div className="flex items-center justify-between">
@@ -318,7 +348,8 @@ export function CompanySelector() {
               }
             </p>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )

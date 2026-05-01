@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo, Suspense, type ReactNode } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, Suspense, type ReactNode } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -34,7 +34,8 @@ import {
   Layers, ArrowRightLeft, Grid3X3, List,
   Brain, Sparkles, Activity, ExternalLink, Copy, RefreshCw,
   MessageCircle, PhoneCall, Video, ThumbsDown, Wrench,
-  TrendingUp, ShieldCheck, BarChart2, Link
+  TrendingUp, TrendingDown, ShieldCheck, BarChart2, Link,
+  Upload, FileSpreadsheet, AlertCircle
 } from 'lucide-react'
 
 type Row = Record<string, unknown>
@@ -105,6 +106,7 @@ const comprasTabs = [
   { id: 'proveedores', label: 'Proveedores', icon: <Users size={16} /> },
   { id: 'pedidos', label: 'Pedidos', icon: <ShoppingCart size={16} /> },
   { id: 'recepciones', label: 'Recepciones', icon: <Truck size={16} /> },
+  { id: 'ofertas', label: 'Ofertas proveedor', icon: <FileText size={16} /> },
   { id: 'facturas', label: 'Facturas compra', icon: <FileCheck size={16} /> },
   { id: 'abonos', label: 'Abonos', icon: <Receipt size={16} /> },
   { id: 'pagos', label: 'Pagos', icon: <CreditCard size={16} /> },
@@ -3774,6 +3776,703 @@ function IntercompanyTab() {
 }
 
 // ===============================================================
+// OFERTAS PROVEEDOR TAB
+// ===============================================================
+type SupplierOffer = {
+  id: string
+  number: string
+  supplier_id: string | null
+  supplier_name?: string
+  offer_date: string | null
+  valid_until: string | null
+  total: number | null
+  currency: string | null
+  status: string
+  items_count?: number
+  new_products_count?: number
+  pdf_url?: string | null
+  notes?: string | null
+  created_at: string
+  supplier?: { id: string; name: string; legal_name: string | null } | null
+}
+
+type ParsedOfferItem = {
+  sku?: string
+  name: string
+  brand?: string
+  qty?: number
+  unit_price: number
+  currency?: string
+  // populated by matching
+  product_id?: string | null
+  matched_sku?: string | null
+  matched_name?: string | null
+  current_cost?: number | null
+  variation_pct?: number | null
+  is_new?: boolean
+  // user choices
+  update_cost?: boolean
+}
+
+type ParsedOfferPreview = {
+  supplier_name?: string
+  supplier_id?: string | null
+  offer_number?: string
+  offer_date?: string
+  valid_until?: string
+  currency?: string
+  total?: number
+  notes?: string
+  items: ParsedOfferItem[]
+}
+
+type ExcelPreview = {
+  detected_columns: { sku?: string; name?: string; price?: string; cost?: string; currency?: string }
+  rows_count: number
+  sample: Record<string, unknown>[]
+  raw_rows?: Record<string, unknown>[]
+}
+
+const OFFER_STATUS: Record<string, { label: string; variant: 'default' | 'success' | 'warning' | 'danger' | 'info' | 'orange' }> = {
+  pending: { label: 'Pendiente revision', variant: 'warning' },
+  reviewing: { label: 'En revision', variant: 'info' },
+  accepted: { label: 'Aceptada', variant: 'success' },
+  rejected: { label: 'Rechazada', variant: 'danger' },
+  expired: { label: 'Expirada', variant: 'default' },
+  draft: { label: 'Borrador', variant: 'default' },
+}
+
+function variationColor(pct: number | null | undefined): string {
+  if (pct == null || isNaN(pct)) return '#9CA3AF'
+  const abs = Math.abs(pct)
+  if (abs > 10) return '#EF4444'
+  if (abs >= 5) return '#F59E0B'
+  return '#10B981'
+}
+
+function variationBgClass(pct: number | null | undefined): string {
+  if (pct == null || isNaN(pct)) return 'bg-[#0F1218]'
+  const abs = Math.abs(pct)
+  if (abs > 10) return 'bg-red-500/10 border-red-500/20'
+  if (abs >= 5) return 'bg-amber-500/10 border-amber-500/20'
+  return 'bg-[#0F1218]'
+}
+
+function OfertasTab() {
+  const [offers, setOffers] = useState<SupplierOffer[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showPdfModal, setShowPdfModal] = useState(false)
+  const [showExcelModal, setShowExcelModal] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    const sb = createClient()
+    const { data, error } = await sb
+      .from('tt_supplier_offers')
+      .select('*, supplier:tt_suppliers(id, name, legal_name)')
+      .order('created_at', { ascending: false })
+      .limit(200)
+    if (error) {
+      // Tabla puede no existir aun; no romper UI
+      setOffers([])
+    } else {
+      setOffers((data || []) as SupplierOffer[])
+    }
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  // KPIs
+  const pendingReview = useMemo(() => offers.filter(o => o.status === 'pending' || o.status === 'reviewing').length, [offers])
+  const accepted = useMemo(() => offers.filter(o => o.status === 'accepted').length, [offers])
+  const newProductsPending = useMemo(
+    () => offers.reduce((s, o) => s + ((o.status === 'pending' || o.status === 'reviewing') ? (o.new_products_count || 0) : 0), 0),
+    [offers]
+  )
+
+  const tableRows = useMemo(() => offers.map(o => {
+    const sName = o.supplier?.legal_name || o.supplier?.name || o.supplier_name || 'Sin proveedor'
+    return {
+      id: o.id,
+      numero: o.number || '-',
+      proveedor: sName,
+      fecha: o.offer_date || o.created_at,
+      valido_hasta: o.valid_until || '',
+      total: o.total || 0,
+      moneda: o.currency || 'EUR',
+      estado: OFFER_STATUS[o.status]?.label || o.status,
+      _raw: o,
+    } as Record<string, unknown>
+  }), [offers])
+
+  const cols: DataTableColumn[] = [
+    { key: 'numero', label: 'Numero', sortable: true, searchable: true, width: '140px' },
+    { key: 'proveedor', label: 'Proveedor', sortable: true, searchable: true },
+    { key: 'fecha', label: 'Fecha', sortable: true, type: 'date', width: '110px' },
+    { key: 'valido_hasta', label: 'Valido hasta', sortable: true, type: 'date', width: '120px' },
+    { key: 'total', label: 'Total', sortable: true, type: 'currency', width: '130px' },
+    { key: 'estado', label: 'Estado', sortable: true, type: 'status', width: '150px' },
+  ]
+
+  return (
+    <div className="space-y-4">
+      {/* KPIs */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <KPICard
+          label="Pendientes de revisar"
+          value={pendingReview}
+          icon={<Clock size={22} />}
+          color="#F59E0B"
+        />
+        <KPICard
+          label="Ofertas aceptadas"
+          value={accepted}
+          icon={<CheckCircle size={22} />}
+          color="#10B981"
+        />
+        <KPICard
+          label="Productos nuevos a aprobar"
+          value={newProductsPending}
+          icon={<Package size={22} />}
+          color="#FF6600"
+        />
+      </div>
+
+      {/* Toolbar */}
+      <div className="flex flex-wrap gap-2 justify-end">
+        <Button variant="secondary" onClick={() => setShowExcelModal(true)}>
+          <FileSpreadsheet size={14} /> Actualizar precios Excel
+        </Button>
+        <Button variant="primary" onClick={() => setShowPdfModal(true)}>
+          <Upload size={14} /> Subir oferta PDF
+        </Button>
+      </div>
+
+      {/* Table */}
+      <DataTable
+        data={tableRows}
+        columns={cols}
+        loading={loading}
+        totalLabel="ofertas"
+        showTotals
+        exportFilename="ofertas_proveedor"
+        pageSize={25}
+      />
+
+      {/* Modals */}
+      <SubirOfertaPdfModal isOpen={showPdfModal} onClose={() => { setShowPdfModal(false); load() }} />
+      <ActualizarPreciosExcelModal isOpen={showExcelModal} onClose={() => { setShowExcelModal(false); load() }} />
+    </div>
+  )
+}
+
+// ===============================================================
+// MODAL: Subir Oferta PDF
+// ===============================================================
+function SubirOfertaPdfModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+  const { addToast } = useToast()
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [parsing, setParsing] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [preview, setPreview] = useState<ParsedOfferPreview | null>(null)
+  const [statusMsg, setStatusMsg] = useState('')
+  const [pdfFile, setPdfFile] = useState<File | null>(null)
+
+  function reset() {
+    setPreview(null)
+    setPdfFile(null)
+    setStatusMsg('')
+    setParsing(false)
+    setSaving(false)
+  }
+
+  function handleClose() {
+    reset()
+    onClose()
+  }
+
+  async function handleFile(file: File) {
+    if (file.type !== 'application/pdf') {
+      addToast({ type: 'error', title: 'Solo PDF', message: 'Tenes que subir un archivo PDF.' })
+      return
+    }
+    setPdfFile(file)
+    setParsing(true)
+    setStatusMsg('Analizando PDF con IA...')
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch('/api/supplier-offers/parse-pdf', { method: 'POST', body: fd })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Error parseando PDF')
+      const items: ParsedOfferItem[] = (json.items || []).map((it: ParsedOfferItem) => ({
+        ...it,
+        update_cost: !it.is_new, // por defecto checked si esta matcheado
+      }))
+      setPreview({
+        supplier_name: json.supplier_name,
+        supplier_id: json.supplier_id || null,
+        offer_number: json.offer_number,
+        offer_date: json.offer_date,
+        valid_until: json.valid_until,
+        currency: json.currency || 'EUR',
+        total: json.total || items.reduce((s, i) => s + (i.unit_price * (i.qty || 1)), 0),
+        notes: json.notes,
+        items,
+      })
+      setStatusMsg(`Oferta parseada: ${items.length} items detectados`)
+    } catch (err) {
+      setStatusMsg('Error: ' + (err as Error).message)
+      addToast({ type: 'error', title: 'Error parseando', message: (err as Error).message })
+    } finally {
+      setParsing(false)
+    }
+  }
+
+  function toggleUpdateCost(idx: number) {
+    setPreview(prev => {
+      if (!prev) return prev
+      const items = prev.items.slice()
+      items[idx] = { ...items[idx], update_cost: !items[idx].update_cost }
+      return { ...prev, items }
+    })
+  }
+
+  async function handleSave() {
+    if (!preview) return
+    setSaving(true)
+    try {
+      const fd = new FormData()
+      if (pdfFile) fd.append('file', pdfFile)
+      fd.append('payload', JSON.stringify(preview))
+      const res = await fetch('/api/supplier-offers/save', { method: 'POST', body: fd })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Error guardando')
+      addToast({
+        type: 'success',
+        title: 'Oferta guardada',
+        message: `${json.items_saved || preview.items.length} items procesados${json.costs_updated ? `, ${json.costs_updated} costos actualizados` : ''}`,
+      })
+      handleClose()
+    } catch (err) {
+      addToast({ type: 'error', title: 'Error', message: (err as Error).message })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const matchedCount = preview?.items.filter(i => !i.is_new).length || 0
+  const newCount = preview?.items.filter(i => i.is_new).length || 0
+  const significantChanges = preview?.items.filter(i => Math.abs(i.variation_pct || 0) > 10).length || 0
+
+  return (
+    <Modal isOpen={isOpen} onClose={handleClose} title="Subir oferta PDF" size="full">
+      <div className="space-y-4">
+        <input
+          ref={fileRef}
+          type="file"
+          accept="application/pdf"
+          className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f) }}
+        />
+
+        {!preview && (
+          <>
+            <div
+              className="border-2 border-dashed rounded-xl p-10 text-center cursor-pointer hover:bg-[#1E2330] transition-colors"
+              style={{ borderColor: '#2A3040' }}
+              onClick={() => !parsing && fileRef.current?.click()}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault()
+                if (parsing) return
+                const f = e.dataTransfer.files?.[0]
+                if (f) void handleFile(f)
+              }}
+            >
+              {parsing ? (
+                <Loader2 size={48} className="mx-auto mb-3 text-[#FF6600] animate-spin" />
+              ) : (
+                <FileText size={48} className="mx-auto mb-3 text-[#FF6600]" />
+              )}
+              <div className="text-base font-semibold text-[#F0F2F5] mb-2">
+                {parsing ? 'Analizando oferta...' : 'Arrastra el PDF de la oferta o cliquea aca'}
+              </div>
+              <div className="text-xs text-[#6B7280]">
+                La IA extrae proveedor, items, cantidades y precios y los compara contra el catalogo
+              </div>
+            </div>
+            {statusMsg && (
+              <div className="text-xs text-center text-[#9CA3AF]">{statusMsg}</div>
+            )}
+          </>
+        )}
+
+        {preview && (
+          <div className="space-y-4">
+            {/* Header info */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="p-3 rounded-lg bg-[#0F1218] border border-[#1E2330]">
+                <p className="text-[10px] uppercase text-[#6B7280] mb-1">Proveedor</p>
+                <p className="text-sm font-semibold text-[#F0F2F5] truncate">{preview.supplier_name || '-'}</p>
+              </div>
+              <div className="p-3 rounded-lg bg-[#0F1218] border border-[#1E2330]">
+                <p className="text-[10px] uppercase text-[#6B7280] mb-1">N de oferta</p>
+                <p className="text-sm font-semibold text-[#F0F2F5]">{preview.offer_number || '-'}</p>
+              </div>
+              <div className="p-3 rounded-lg bg-[#0F1218] border border-[#1E2330]">
+                <p className="text-[10px] uppercase text-[#6B7280] mb-1">Valido hasta</p>
+                <p className="text-sm font-semibold text-[#F0F2F5]">{preview.valid_until || '-'}</p>
+              </div>
+              <div className="p-3 rounded-lg bg-[#0F1218] border border-[#1E2330]">
+                <p className="text-[10px] uppercase text-[#6B7280] mb-1">Total</p>
+                <p className="text-sm font-bold text-[#FF6600]">{formatCurrency(preview.total || 0, (preview.currency || 'EUR') as 'EUR' | 'USD' | 'ARS')}</p>
+              </div>
+            </div>
+
+            {/* Summary chips */}
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <Badge variant="info" size="md">{preview.items.length} items</Badge>
+              <Badge variant="success" size="md">{matchedCount} matcheados</Badge>
+              {newCount > 0 && <Badge variant="orange" size="md"><Plus size={10} className="mr-1 inline" />{newCount} nuevos</Badge>}
+              {significantChanges > 0 && (
+                <Badge variant="danger" size="md"><AlertCircle size={10} className="mr-1 inline" />{significantChanges} con variacion {'>'}10%</Badge>
+              )}
+            </div>
+
+            {/* Items table */}
+            <div className="border border-[#1E2330] rounded-xl overflow-hidden">
+              <div className="overflow-x-auto max-h-[55vh] overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-[#0A0D12] sticky top-0">
+                    <tr className="text-left text-[#6B7280] uppercase">
+                      <th className="px-3 py-2 font-semibold">SKU</th>
+                      <th className="px-3 py-2 font-semibold">Producto</th>
+                      <th className="px-3 py-2 font-semibold text-right">Cant.</th>
+                      <th className="px-3 py-2 font-semibold text-right">Costo actual</th>
+                      <th className="px-3 py-2 font-semibold text-right">Precio oferta</th>
+                      <th className="px-3 py-2 font-semibold text-right">Variacion</th>
+                      <th className="px-3 py-2 font-semibold text-center">Estado</th>
+                      <th className="px-3 py-2 font-semibold text-center">Actualizar costo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {preview.items.map((it, idx) => {
+                      const rowBg = variationBgClass(it.variation_pct)
+                      return (
+                        <tr key={idx} className={`border-t border-[#1E2330] ${rowBg}`}>
+                          <td className="px-3 py-2 font-mono text-[#9CA3AF]">{it.sku || it.matched_sku || '-'}</td>
+                          <td className="px-3 py-2">
+                            <div className="text-[#F0F2F5]">{it.name}</div>
+                            {it.matched_name && it.matched_name !== it.name && (
+                              <div className="text-[10px] text-[#6B7280]">Match: {it.matched_name}</div>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-right text-[#F0F2F5]">{it.qty ?? 1}</td>
+                          <td className="px-3 py-2 text-right text-[#9CA3AF]">
+                            {it.current_cost != null ? formatCurrency(it.current_cost, (preview.currency || 'EUR') as 'EUR' | 'USD' | 'ARS') : '-'}
+                          </td>
+                          <td className="px-3 py-2 text-right text-[#F0F2F5] font-semibold">
+                            {formatCurrency(it.unit_price, (preview.currency || 'EUR') as 'EUR' | 'USD' | 'ARS')}
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            {it.variation_pct != null && !isNaN(it.variation_pct) ? (
+                              <span style={{ color: variationColor(it.variation_pct) }} className="font-semibold inline-flex items-center gap-1">
+                                {it.variation_pct >= 0 ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
+                                {it.variation_pct >= 0 ? '+' : ''}{it.variation_pct.toFixed(1)}%
+                              </span>
+                            ) : (
+                              <span className="text-[#4B5563]">-</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            {it.is_new ? (
+                              <Badge variant="orange" size="sm">Nuevo</Badge>
+                            ) : (
+                              <Badge variant="success" size="sm">Match</Badge>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            <input
+                              type="checkbox"
+                              checked={!!it.update_cost}
+                              disabled={it.is_new}
+                              onChange={() => toggleUpdateCost(idx)}
+                              className="w-4 h-4 rounded border-[#2A3040] bg-[#0F1218] text-[#FF6600] focus:ring-[#FF6600] focus:ring-offset-0 cursor-pointer"
+                              title={it.is_new ? 'Producto nuevo: se creara' : 'Marcar para actualizar el costo del producto'}
+                            />
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-4 border-t border-[#1E2330]">
+              <Button variant="secondary" onClick={() => reset()}>
+                Otra oferta
+              </Button>
+              <Button variant="primary" onClick={handleSave} loading={saving}>
+                <Save size={14} /> Confirmar y guardar
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </Modal>
+  )
+}
+
+// ===============================================================
+// MODAL: Actualizar precios Excel
+// ===============================================================
+function ActualizarPreciosExcelModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+  const { addToast } = useToast()
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [parsing, setParsing] = useState(false)
+  const [applying, setApplying] = useState(false)
+  const [preview, setPreview] = useState<ExcelPreview | null>(null)
+  const [excelFile, setExcelFile] = useState<File | null>(null)
+  const [suppliers, setSuppliers] = useState<Supplier[]>([])
+  const [supplierId, setSupplierId] = useState('')
+  const [result, setResult] = useState<{ updated: number; created: number; significant: number } | null>(null)
+
+  const loadSuppliers = useCallback(async () => {
+    const sb = createClient()
+    const { data } = await sb.from('tt_suppliers').select('id, name, legal_name').eq('active', true).order('name')
+    setSuppliers((data || []) as Supplier[])
+  }, [])
+
+  useEffect(() => {
+    if (isOpen) loadSuppliers()
+  }, [isOpen, loadSuppliers])
+
+  function reset() {
+    setPreview(null)
+    setExcelFile(null)
+    setSupplierId('')
+    setResult(null)
+    setParsing(false)
+    setApplying(false)
+  }
+
+  function handleClose() {
+    reset()
+    onClose()
+  }
+
+  async function handleFile(file: File) {
+    const validTypes = [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-excel',
+      'text/csv',
+    ]
+    const validExt = /\.(xlsx|xls|csv)$/i.test(file.name)
+    if (!validTypes.includes(file.type) && !validExt) {
+      addToast({ type: 'error', title: 'Archivo invalido', message: 'Subi un .xlsx, .xls o .csv' })
+      return
+    }
+    setExcelFile(file)
+    setParsing(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch('/api/supplier-offers/parse-excel', { method: 'POST', body: fd })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Error parseando Excel')
+      setPreview({
+        detected_columns: json.detected_columns || {},
+        rows_count: json.rows_count || 0,
+        sample: json.sample || [],
+        raw_rows: json.rows || [],
+      })
+    } catch (err) {
+      addToast({ type: 'error', title: 'Error', message: (err as Error).message })
+    } finally {
+      setParsing(false)
+    }
+  }
+
+  async function handleApply() {
+    if (!preview) return
+    if (!supplierId) {
+      addToast({ type: 'error', title: 'Seleccionar proveedor' })
+      return
+    }
+    setApplying(true)
+    try {
+      const fd = new FormData()
+      if (excelFile) fd.append('file', excelFile)
+      fd.append('supplier_id', supplierId)
+      fd.append('payload', JSON.stringify({ rows: preview.raw_rows, detected_columns: preview.detected_columns }))
+      const res = await fetch('/api/supplier-offers/apply-excel-update', { method: 'POST', body: fd })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Error aplicando')
+      setResult({
+        updated: json.updated || 0,
+        created: json.created || 0,
+        significant: json.significant_changes || 0,
+      })
+      addToast({
+        type: 'success',
+        title: 'Actualizacion aplicada',
+        message: `${json.updated || 0} productos actualizados, ${json.created || 0} nuevos`,
+      })
+    } catch (err) {
+      addToast({ type: 'error', title: 'Error', message: (err as Error).message })
+    } finally {
+      setApplying(false)
+    }
+  }
+
+  return (
+    <Modal isOpen={isOpen} onClose={handleClose} title="Actualizar precios desde Excel" size="xl">
+      <div className="space-y-4">
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
+          className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f) }}
+        />
+
+        {!preview && !result && (
+          <div
+            className="border-2 border-dashed rounded-xl p-10 text-center cursor-pointer hover:bg-[#1E2330] transition-colors"
+            style={{ borderColor: '#2A3040' }}
+            onClick={() => !parsing && fileRef.current?.click()}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault()
+              if (parsing) return
+              const f = e.dataTransfer.files?.[0]
+              if (f) void handleFile(f)
+            }}
+          >
+            {parsing ? (
+              <Loader2 size={48} className="mx-auto mb-3 text-[#FF6600] animate-spin" />
+            ) : (
+              <FileSpreadsheet size={48} className="mx-auto mb-3 text-emerald-400" />
+            )}
+            <div className="text-base font-semibold text-[#F0F2F5] mb-2">
+              {parsing ? 'Procesando Excel...' : 'Arrastra el archivo Excel o cliquea aca'}
+            </div>
+            <div className="text-xs text-[#6B7280]">
+              Formato: .xlsx, .xls o .csv. Detectamos columnas SKU, nombre, precio y costo automaticamente.
+            </div>
+          </div>
+        )}
+
+        {preview && !result && (
+          <div className="space-y-4">
+            {/* Detected columns */}
+            <Card>
+              <h3 className="text-sm font-semibold text-[#F0F2F5] mb-3">Columnas detectadas</h3>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                <div className="p-2 rounded bg-[#0F1218] border border-[#1E2330]">
+                  <span className="text-[#6B7280]">SKU: </span>
+                  <span className="text-[#F0F2F5] font-mono">{preview.detected_columns.sku || 'No detectada'}</span>
+                </div>
+                <div className="p-2 rounded bg-[#0F1218] border border-[#1E2330]">
+                  <span className="text-[#6B7280]">Nombre: </span>
+                  <span className="text-[#F0F2F5] font-mono">{preview.detected_columns.name || 'No detectada'}</span>
+                </div>
+                <div className="p-2 rounded bg-[#0F1218] border border-[#1E2330]">
+                  <span className="text-[#6B7280]">Precio: </span>
+                  <span className="text-[#F0F2F5] font-mono">{preview.detected_columns.price || 'No detectada'}</span>
+                </div>
+                <div className="p-2 rounded bg-[#0F1218] border border-[#1E2330]">
+                  <span className="text-[#6B7280]">Costo: </span>
+                  <span className="text-[#F0F2F5] font-mono">{preview.detected_columns.cost || 'No detectada'}</span>
+                </div>
+              </div>
+              <div className="mt-3 text-xs text-[#9CA3AF]">
+                Filas detectadas: <strong className="text-[#F0F2F5]">{preview.rows_count}</strong>
+              </div>
+            </Card>
+
+            {/* Supplier select */}
+            <Select
+              label="Proveedor *"
+              value={supplierId}
+              onChange={(e) => setSupplierId(e.target.value)}
+              options={[
+                { value: '', label: 'Seleccionar proveedor...' },
+                ...suppliers.map(s => ({ value: s.id, label: s.legal_name || s.name })),
+              ]}
+            />
+
+            {/* Sample rows */}
+            <Card>
+              <h3 className="text-sm font-semibold text-[#F0F2F5] mb-3">Muestra (primeras filas)</h3>
+              <div className="overflow-x-auto max-h-64 overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-[#0A0D12] sticky top-0">
+                    <tr className="text-left text-[#6B7280]">
+                      {Object.keys(preview.sample[0] || {}).map(k => (
+                        <th key={k} className="px-2 py-1.5 font-semibold uppercase">{k}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {preview.sample.slice(0, 10).map((row, idx) => (
+                      <tr key={idx} className="border-t border-[#1E2330]">
+                        {Object.values(row).map((v, i) => (
+                          <td key={i} className="px-2 py-1.5 text-[#F0F2F5]">{String(v ?? '')}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+
+            <div className="flex justify-end gap-3 pt-4 border-t border-[#1E2330]">
+              <Button variant="secondary" onClick={() => reset()}>Otro archivo</Button>
+              <Button variant="primary" onClick={handleApply} loading={applying}>
+                <CheckCircle size={14} /> Aplicar actualizaciones
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {result && (
+          <div className="space-y-4">
+            <div className="p-6 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-center">
+              <CheckCircle size={48} className="mx-auto mb-3 text-emerald-400" />
+              <h3 className="text-lg font-bold text-[#F0F2F5] mb-2">Actualizacion completada</h3>
+              <p className="text-sm text-[#9CA3AF]">El historial de precios fue registrado en tt_price_history</p>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              <div className="p-4 rounded-xl bg-[#0F1218] border border-[#1E2330] text-center">
+                <p className="text-3xl font-bold text-[#FF6600]">{result.updated}</p>
+                <p className="text-xs text-[#6B7280] mt-1">Productos actualizados</p>
+              </div>
+              <div className="p-4 rounded-xl bg-[#0F1218] border border-[#1E2330] text-center">
+                <p className="text-3xl font-bold text-emerald-400">{result.created}</p>
+                <p className="text-xs text-[#6B7280] mt-1">Productos nuevos</p>
+              </div>
+              <div className="p-4 rounded-xl bg-[#0F1218] border border-[#1E2330] text-center">
+                <p className="text-3xl font-bold text-amber-400">{result.significant}</p>
+                <p className="text-xs text-[#6B7280] mt-1">Variacion {'>'}10%</p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-4 border-t border-[#1E2330]">
+              <Button variant="primary" onClick={handleClose}>Listo</Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </Modal>
+  )
+}
+
+// ===============================================================
 // MAIN PAGE
 // ===============================================================
 export default function ComprasPage() {
@@ -3790,6 +4489,7 @@ export default function ComprasPage() {
               {activeTab === 'proveedores' && <ProveedoresTab />}
               {activeTab === 'pedidos' && <PedidosCompraTab />}
               {activeTab === 'recepciones' && <RecepcionesTab />}
+              {activeTab === 'ofertas' && <OfertasTab />}
               {activeTab === 'facturas' && <FacturasCompraTab />}
               {activeTab === 'abonos' && <AbonosTab />}
               {activeTab === 'pagos' && <PagosTab />}

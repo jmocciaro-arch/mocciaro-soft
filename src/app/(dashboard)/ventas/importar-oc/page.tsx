@@ -7,6 +7,7 @@ import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { OCParserModal } from '@/components/ai/oc-parser-modal'
+import { OCDetailModal } from '@/components/ai/oc-detail-modal'
 import { DocumentProcessBar } from '@/components/workflow/document-process-bar'
 import { buildSteps } from '@/lib/workflow-definitions'
 import { Upload, FileText, Sparkles, RefreshCw } from 'lucide-react'
@@ -22,6 +23,8 @@ interface OC {
   ai_provider?: string
   ai_discrepancies?: Array<{ severity: 'low' | 'medium' | 'high'; detail: string }>
   matched_quote_id?: string
+  deletion_status?: 'active' | 'deletion_requested' | 'deleted'
+  deletion_reason?: string | null
   document?: { legal_number?: string; total?: number; client_id?: string }
 }
 
@@ -40,6 +43,7 @@ export default function ImportarOCPage() {
   const [quotes, setQuotes] = useState<Quote[]>([])
   const [selectedQuoteId, setSelectedQuoteId] = useState<string>('')
   const [parserOpen, setParserOpen] = useState(false)
+  const [detailOcId, setDetailOcId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
@@ -54,10 +58,11 @@ export default function ImportarOCPage() {
     const { data: qs } = await filterByCompany(qQ)
     setQuotes((qs as Quote[]) || [])
 
-    // OCs parseadas recientes
+    // OCs parseadas recientes (excluimos las eliminadas; las con solicitud pendiente sí se muestran)
     const { data: ocData } = await supabase
       .from('tt_oc_parsed')
       .select(`*, document:tt_documents!tt_oc_parsed_document_id_fkey ( legal_number, total, client_id )`)
+      .neq('deletion_status', 'deleted')
       .order('created_at', { ascending: false })
       .limit(30)
     setOcs((ocData as OC[]) || [])
@@ -164,7 +169,12 @@ export default function ImportarOCPage() {
             {ocs.map((oc) => {
               const highDisc = (oc.ai_discrepancies || []).filter((d) => d.severity === 'high').length
               return (
-                <div key={oc.id} className="p-3">
+                <div
+                  key={oc.id}
+                  className="p-3 cursor-pointer hover:bg-[#1A1F2E] transition-colors"
+                  onClick={() => setDetailOcId(oc.id)}
+                  title="Click para ver detalle de la OC"
+                >
                   <div className="flex items-start gap-3">
                     <FileText className="w-5 h-5 opacity-60 mt-1" />
                     <div className="flex-1 min-w-0">
@@ -183,6 +193,9 @@ export default function ImportarOCPage() {
                           <Badge variant="danger">🔴 {highDisc} discrepancias</Badge>
                         )}
                         {oc.status && <Badge>{oc.status}</Badge>}
+                        {oc.deletion_status === 'deletion_requested' && (
+                          <Badge variant="warning">⚠️ Eliminación solicitada</Badge>
+                        )}
                       </div>
                       <div className="text-xs opacity-60 mt-1">
                         {oc.parsed_at ? new Date(oc.parsed_at).toLocaleString('es-AR') : '—'}
@@ -219,6 +232,13 @@ export default function ImportarOCPage() {
           onParsed={() => { setParserOpen(false); void load() }}
         />
       )}
+
+      {/* Modal de detalle/conciliación de OC */}
+      <OCDetailModal
+        ocId={detailOcId}
+        onClose={() => setDetailOcId(null)}
+        onUpdated={() => void load()}
+      />
       </div>
     </div>
   )

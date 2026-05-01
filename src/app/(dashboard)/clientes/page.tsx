@@ -30,6 +30,10 @@ import { ClientMerge } from '@/components/clients/client-merge'
 import { RelatedCompanies } from '@/components/clients/related-companies'
 import { SyncContactsButton } from '@/components/clients/sync-contacts-button'
 import { ContactCard } from '@/components/clients/contact-card'
+import { ClientDetailModal } from '@/components/clientes/client-detail-modal'
+import { BulkImportClientsModal } from '@/components/clientes/bulk-import-modal'
+import { BulkActionsBar, BulkCheckbox, COMMON_BULK_ACTIONS } from '@/components/ui/bulk-actions-bar'
+import { SavedViews } from '@/components/ui/saved-views'
 
 // ═══════════════════════════════════════════════════════
 // CONSTANTS
@@ -771,6 +775,9 @@ function ClientesTab() {
   const [countries, setCountries] = useState<string[]>([])
   const debounceRef = useRef<NodeJS.Timeout | null>(null)
   const [selectedCompany, setSelectedCompany] = useState<GroupedCompany | null>(null)
+  const [advancedClient, setAdvancedClient] = useState<Client | null>(null)
+  const [showBulkImport, setShowBulkImport] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [showNew, setShowNew] = useState(false)
   const [newClient, setNewClient] = useState({ legal_name: '', tax_id: '', category: '' as string, country: 'ES', city: '', email: '', phone: '', address: '', contact_name: '', contact_position: '', contact_email: '', contact_phone: '' })
   const [savingNew, setSavingNew] = useState(false)
@@ -1111,7 +1118,22 @@ function ClientesTab() {
           ]}
           permission="edit_clients"
         />
+        <Button variant="secondary" onClick={() => setShowBulkImport(true)}>
+          <Plus size={14} /> Importar CSV
+        </Button>
         <Button variant="primary" onClick={() => setShowNew(true)}><Plus size={16} /> Nueva Empresa</Button>
+      </div>
+      {/* Saved Views (vistas guardadas) */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <SavedViews
+          entityType="clients"
+          currentFilters={{ search, country: filterCountry }}
+          onApplyView={(filters) => {
+            const f = filters as { search?: string; country?: string }
+            if (f.search !== undefined) setSearch(f.search)
+            if (f.country !== undefined) setFilterCountry(f.country)
+          }}
+        />
       </div>
 
       {/* Search & Filters */}
@@ -1166,6 +1188,16 @@ function ClientesTab() {
               <Card key={company.id} hover onClick={() => setSelectedCompany(company)}>
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <BulkCheckbox
+                      checked={selectedIds.has(company.id)}
+                      onChange={(c) => {
+                        setSelectedIds(prev => {
+                          const next = new Set(prev)
+                          if (c) next.add(company.id); else next.delete(company.id)
+                          return next
+                        })
+                      }}
+                    />
                     <div className="w-11 h-11 rounded-xl bg-[#FF6600]/15 flex items-center justify-center text-sm font-bold text-[#FF6600] shrink-0">
                       {getInitials(company.legal_name)}
                     </div>
@@ -1175,6 +1207,13 @@ function ClientesTab() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setAdvancedClient(company.records[0] as Client) }}
+                      className="p-1 rounded hover:bg-[#FF6600]/10 transition"
+                      title="Vista profesional 360°"
+                    >
+                      <span className="text-[10px] text-[#FF6600] font-semibold">360°</span>
+                    </button>
                     <button onClick={(e) => { e.stopPropagation(); const rec = company.records[0] as unknown as Record<string, unknown>; toggleFavorite(company.id, !rec?.is_favorite) }} className="p-1 hover:scale-110 transition-transform" title="Favorito">
                       <Star size={16} className={(company.records[0] as unknown as Record<string, unknown>)?.is_favorite ? 'text-yellow-400 fill-yellow-400' : 'text-[#4B5563]'} />
                     </button>
@@ -1276,6 +1315,49 @@ function ClientesTab() {
           </div>
         </div>
       </Modal>
+
+      {/* Vista 360° profesional (estilo Salesforce) */}
+      <ClientDetailModal
+        open={!!advancedClient}
+        onClose={() => setAdvancedClient(null)}
+        client={advancedClient as Parameters<typeof ClientDetailModal>[0]['client']}
+        onSaved={() => { void loadClients(); setAdvancedClient(null) }}
+      />
+
+      {/* Bulk import desde CSV */}
+      <BulkImportClientsModal
+        open={showBulkImport}
+        onClose={() => setShowBulkImport(false)}
+        onImported={() => { void loadClients(); addToast({ type: 'success', title: 'Clientes importados' }) }}
+      />
+
+      {/* Bulk actions bar (flotante abajo) */}
+      <BulkActionsBar
+        selectedCount={selectedIds.size}
+        totalCount={visibleCompanies.length}
+        onClear={() => setSelectedIds(new Set())}
+        onSelectAll={() => setSelectedIds(new Set(visibleCompanies.map(c => c.id)))}
+        actions={[
+          COMMON_BULK_ACTIONS.export(() => {
+            const ids = Array.from(selectedIds)
+            const rows = visibleCompanies.filter(c => ids.includes(c.id))
+            const csv = ['Razón social,CUIT/CIF,País,Email,Teléfono'].concat(
+              rows.map(c => {
+                const r = c.records[0] as unknown as Record<string, unknown>
+                return `"${(r.legal_name as string) || ''}","${(r.tax_id as string) || ''}","${(r.country as string) || ''}","${(r.email as string) || ''}","${(r.phone as string) || ''}"`
+              })
+            ).join('\n')
+            const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            a.download = `clientes_export_${new Date().toISOString().split('T')[0]}.csv`
+            a.click()
+            URL.revokeObjectURL(url)
+            addToast({ type: 'success', title: `${selectedIds.size} clientes exportados` })
+          }),
+        ]}
+      />
     </div>
   )
 }

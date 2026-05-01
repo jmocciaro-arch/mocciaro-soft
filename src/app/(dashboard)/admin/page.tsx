@@ -16,6 +16,7 @@ import { useToast } from '@/components/ui/toast'
 import { formatDate, formatDateTime, formatRelative, getInitials } from '@/lib/utils'
 import { ExportButton } from '@/components/ui/export-button'
 import { CompanyLogosPanel } from '@/components/admin/companies/company-logos-panel'
+import { CompanyConfigModal } from '@/components/admin/companies/company-config-modal'
 import {
   Settings, Users, Building2, Sliders, Warehouse, Activity,
   Save, Plus, Loader2, ChevronLeft, ChevronRight, Edit, Shield,
@@ -935,21 +936,21 @@ export default function AdminPage() {
 
   const openEditCompany = (c: Row) => {
     setEditCompany(c)
-    setCompanyForm({
-      name: (c.name as string) || '',
-      tax_id: (c.tax_id as string) || '',
-      country: (c.country as string) || '',
-      address: (c.address as string) || '',
-      iban: (c.iban as string) || '',
-      default_tax_rate: String((c.default_tax_rate as number) || 0),
-      default_margin: String((c.default_margin as number) || 0),
-    })
+    // Cargar TODOS los campos de la empresa (estructurados + legacy)
+    // para que el modal pueda detectar legacy y editar campos estructurados
+    const all: Record<string, string> = {}
+    for (const [k, v] of Object.entries(c)) {
+      if (v == null) continue
+      all[k] = typeof v === 'object' ? JSON.stringify(v) : String(v)
+    }
+    setCompanyForm(all)
   }
 
   const saveCompany = async () => {
     if (!editCompany) return
     await supabase.from('tt_companies').update({
       name: companyForm.name,
+      trade_name: companyForm.trade_name || null,
       tax_id: companyForm.tax_id,
       country: companyForm.country,
       address: companyForm.address,
@@ -1871,33 +1872,13 @@ export default function AdminPage() {
         )}
       </Modal>
 
-      {/* ─── EDIT COMPANY ─── */}
-      <Modal isOpen={!!editCompany} onClose={() => setEditCompany(null)} title="Configurar empresa" size="lg">
-        {editCompany && (
-          <div className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Input label="Nombre" value={companyForm.name || ''} onChange={(e) => setCompanyForm({ ...companyForm, name: e.target.value })} />
-              <Input label="CIF / CUIT" value={companyForm.tax_id || ''} onChange={(e) => setCompanyForm({ ...companyForm, tax_id: e.target.value })} />
-              <Input label="Pais" value={companyForm.country || ''} onChange={(e) => setCompanyForm({ ...companyForm, country: e.target.value })} />
-              <Input label="Tasa IVA (%)" type="number" value={companyForm.default_tax_rate || ''} onChange={(e) => setCompanyForm({ ...companyForm, default_tax_rate: e.target.value })} />
-              <Input label="Margen por defecto (%)" type="number" value={companyForm.default_margin || ''} onChange={(e) => setCompanyForm({ ...companyForm, default_margin: e.target.value })} />
-            </div>
-            <Input label="Direccion" value={companyForm.address || ''} onChange={(e) => setCompanyForm({ ...companyForm, address: e.target.value })} />
-            <div>
-              <label className="block text-sm font-medium text-[#9CA3AF] mb-1.5">IBAN</label>
-              <textarea
-                value={companyForm.iban || ''}
-                onChange={(e) => setCompanyForm({ ...companyForm, iban: e.target.value })}
-                className="w-full h-20 rounded-lg bg-[#1E2330] border border-[#2A3040] px-3 py-2 text-sm text-[#F0F2F5] focus:outline-none focus:ring-2 focus:ring-orange-500/50 resize-none"
-              />
-            </div>
-            <div className="flex justify-end gap-3 pt-4 border-t border-[#1E2330]">
-              <Button variant="secondary" onClick={() => setEditCompany(null)}>Cancelar</Button>
-              <Button onClick={saveCompany}><Save size={14} /> Guardar</Button>
-            </div>
-          </div>
-        )}
-      </Modal>
+      {/* ─── EDIT COMPANY (modal nuevo profesional) ─── */}
+      <CompanyConfigModal
+        open={!!editCompany}
+        onClose={() => setEditCompany(null)}
+        company={editCompany ? { id: editCompany.id, ...companyForm } as Parameters<typeof CompanyConfigModal>[0]['company'] : null}
+        onSaved={() => { void loadCompanies?.(); }}
+      />
 
       {/* ─── ADD WAREHOUSE ─── */}
       <Modal isOpen={showAddWarehouse} onClose={() => setShowAddWarehouse(false)} title="Nuevo almacen" size="sm">
