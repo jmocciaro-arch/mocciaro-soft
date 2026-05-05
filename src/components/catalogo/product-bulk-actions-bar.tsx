@@ -79,7 +79,7 @@ export function ProductBulkActionsBar({
     : []
 
   return (
-    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-bottom-2 duration-200">
+    <div className="fixed bottom-2 left-2 right-2 sm:bottom-4 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 z-50 animate-in fade-in slide-in-from-bottom-2 duration-200 max-w-[calc(100vw-1rem)] sm:max-w-none overflow-x-auto">
       <div className="relative">
         {/* Popover container (above the bar) */}
         {popover && (
