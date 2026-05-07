@@ -1,0 +1,48 @@
+name: Build Check
+
+# Valida en cada PR / push que la app compile correctamente:
+#   - tsc --noEmit (sin errores de tipos).
+#   - npm run build (Next.js production build).
+#
+# No corre lint para no bloquear PRs por warnings de eslint legacy.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: TypeScript + Next build
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install deps
+        run: npm ci
+
+      - name: TypeScript type check
+        run: npx tsc --noEmit
+
+      - name: Next.js production build
+        run: npm run build
+        env:
+          # Vars dummy para que el build no falle en CI (no se usan
+          # realmente porque CI no hace queries a Supabase).
+          NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: dummy-anon-key
+          SUPABASE_SERVICE_ROLE_KEY: dummy-service-key
