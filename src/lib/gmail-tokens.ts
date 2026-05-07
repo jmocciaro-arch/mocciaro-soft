@@ -38,7 +38,19 @@ export async function getGmailTokens(): Promise<GmailTokens | null> {
       .eq('key', KEY)
       .maybeSingle()
     if (error || !data) return null
-    return (data.value as GmailTokens) || null
+    // tt_system_params.value es columna text → siempre llega como string.
+    // Parseamos a objeto. Defensivo: si por algún motivo ya viene como
+    // objeto (jsonb), lo devolvemos tal cual.
+    const v = data.value
+    if (!v) return null
+    if (typeof v === 'string') {
+      try {
+        return JSON.parse(v) as GmailTokens
+      } catch {
+        return null
+      }
+    }
+    return v as GmailTokens
   } catch {
     return null
   }
@@ -46,12 +58,14 @@ export async function getGmailTokens(): Promise<GmailTokens | null> {
 
 export async function setGmailTokens(tokens: GmailTokens): Promise<void> {
   const supabase = getServiceClient()
+  // value es columna text → serializamos explícitamente para que el
+  // round-trip sea consistente con getGmailTokens().
   const { error } = await supabase
     .from('tt_system_params')
     .upsert(
       {
         key: KEY,
-        value: tokens,
+        value: JSON.stringify(tokens),
         description: 'Tokens OAuth de Gmail (gmail.readonly + gmail.send)',
         updated_at: new Date().toISOString(),
       },
