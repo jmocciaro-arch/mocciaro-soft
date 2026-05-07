@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { aiQuery } from '@/lib/ai'
 import { google } from 'googleapis'
-import * as fs from 'fs'
-import * as path from 'path'
+import { getGmailTokens, setGmailTokens } from '@/lib/gmail-tokens'
 
 export const runtime = 'nodejs'
 
@@ -28,21 +27,24 @@ interface GmailAnalysis {
   is_oc: boolean
 }
 
-function getOAuth2Client() {
+async function getOAuth2Client() {
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
     process.env.GOOGLE_REDIRECT_URI
   )
-  const tokenPath = path.join(process.cwd(), '.gmail-tokens.json')
-  if (!fs.existsSync(tokenPath)) {
+  const tokens = await getGmailTokens()
+  if (!tokens) {
     throw new Error('Gmail no conectado. Visitar /api/auth/google para autorizar.')
   }
-  const tokens = JSON.parse(fs.readFileSync(tokenPath, 'utf-8'))
   oauth2Client.setCredentials(tokens)
   oauth2Client.on('tokens', (newTokens) => {
-    const existing = JSON.parse(fs.readFileSync(tokenPath, 'utf-8'))
-    fs.writeFileSync(tokenPath, JSON.stringify({ ...existing, ...newTokens }, null, 2))
+    void (async () => {
+      try {
+        const existing = (await getGmailTokens()) || {}
+        await setGmailTokens({ ...existing, ...newTokens })
+      } catch { /* non-blocking */ }
+    })()
   })
   return oauth2Client
 }
@@ -119,7 +121,7 @@ export async function POST(req: NextRequest) {
     let isOC = false
 
     try {
-      const auth = getOAuth2Client()
+      const auth = await getOAuth2Client()
       const gmail = google.gmail({ version: 'v1', auth })
 
       const { data: msg } = await gmail.users.messages.get({

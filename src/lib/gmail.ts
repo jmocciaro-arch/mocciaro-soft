@@ -1,14 +1,13 @@
 /**
  * GMAIL SERVICE — Search emails, extract contacts + signature data
  *
- * Uses Google OAuth2 tokens stored locally.
+ * Uses Google OAuth2 tokens persisted in Supabase (tt_system_params).
  * Searches by domain, extracts contacts from From/To/CC headers,
  * then reads email bodies to extract signature data (position, phone, whatsapp).
  */
 
 import { google } from 'googleapis'
-import * as fs from 'fs'
-import * as path from 'path'
+import { getGmailTokens, setGmailTokens } from '@/lib/gmail-tokens'
 
 export interface GmailContact {
   name: string
@@ -19,40 +18,45 @@ export interface GmailContact {
   raw_signature: string
 }
 
-function getOAuth2Client() {
+async function getOAuth2Client() {
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
     process.env.GOOGLE_REDIRECT_URI
   )
 
-  const tokenPath = path.join(process.cwd(), '.gmail-tokens.json')
-  if (!fs.existsSync(tokenPath)) {
+  const tokens = await getGmailTokens()
+  if (!tokens) {
     throw new Error('Gmail not connected. Visit /api/auth/google to authorize.')
   }
 
-  const tokens = JSON.parse(fs.readFileSync(tokenPath, 'utf-8'))
   oauth2Client.setCredentials(tokens)
 
+  // googleapis emite 'tokens' al refrescar — hay que persistir el merge.
   oauth2Client.on('tokens', (newTokens) => {
-    const existing = JSON.parse(fs.readFileSync(tokenPath, 'utf-8'))
-    const merged = { ...existing, ...newTokens }
-    fs.writeFileSync(tokenPath, JSON.stringify(merged, null, 2))
+    void (async () => {
+      try {
+        const existing = (await getGmailTokens()) || {}
+        await setGmailTokens({ ...existing, ...newTokens })
+      } catch (err) {
+        console.warn('[gmail] no se pudo persistir refresh tokens:', (err as Error).message)
+      }
+    })()
   })
 
   return oauth2Client
 }
 
-export function isGmailConnected(): boolean {
-  const tokenPath = path.join(process.cwd(), '.gmail-tokens.json')
-  return fs.existsSync(tokenPath)
+export async function isGmailConnected(): Promise<boolean> {
+  const tokens = await getGmailTokens()
+  return !!tokens && (!!tokens.access_token || !!tokens.refresh_token)
 }
 
 /**
  * Search Gmail and extract contacts with full signature data
  */
 export async function searchContactsByDomain(domain: string): Promise<GmailContact[]> {
-  const auth = getOAuth2Client()
+  const auth = await getOAuth2Client()
   const gmail = google.gmail({ version: 'v1', auth })
 
   const query = `from:@${domain} OR to:@${domain} OR cc:@${domain}`

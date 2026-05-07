@@ -71,7 +71,7 @@ async function syncContacts(params: Record<string, unknown>, provider: AIProvide
   let gmailContacts: Array<{ name: string; email: string; position: string }> = []
   let source = 'ai'
 
-  if (isGmailConnected()) {
+  if (await isGmailConnected()) {
     try {
       gmailContacts = await searchContactsByDomain(domain)
       source = 'gmail'

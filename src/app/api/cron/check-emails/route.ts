@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { google } from 'googleapis'
-import * as fs from 'fs'
-import * as path from 'path'
+import { getGmailTokens, setGmailTokens } from '@/lib/gmail-tokens'
 
 export const runtime = 'nodejs'
 
@@ -13,21 +12,24 @@ export const runtime = 'nodejs'
  * y los manda al webhook /api/webhooks/gmail para procesarlos.
  */
 
-function getOAuth2Client() {
+async function getOAuth2Client() {
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
     process.env.GOOGLE_REDIRECT_URI
   )
-  const tokenPath = path.join(process.cwd(), '.gmail-tokens.json')
-  if (!fs.existsSync(tokenPath)) {
+  const tokens = await getGmailTokens()
+  if (!tokens) {
     throw new Error('Gmail no conectado.')
   }
-  const tokens = JSON.parse(fs.readFileSync(tokenPath, 'utf-8'))
   oauth2Client.setCredentials(tokens)
   oauth2Client.on('tokens', (newTokens) => {
-    const existing = JSON.parse(fs.readFileSync(tokenPath, 'utf-8'))
-    fs.writeFileSync(tokenPath, JSON.stringify({ ...existing, ...newTokens }, null, 2))
+    void (async () => {
+      try {
+        const existing = (await getGmailTokens()) || {}
+        await setGmailTokens({ ...existing, ...newTokens })
+      } catch { /* non-blocking */ }
+    })()
   })
   return oauth2Client
 }
@@ -82,7 +84,7 @@ export async function GET(req: NextRequest) {
     // Buscar emails recientes en Gmail
     let auth
     try {
-      auth = getOAuth2Client()
+      auth = await getOAuth2Client()
     } catch {
       return NextResponse.json({
         ...results,

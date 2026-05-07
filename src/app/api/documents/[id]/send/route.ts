@@ -228,17 +228,15 @@ export async function POST(
         // ── Enviar via Gmail API ──────────────────────────────────────────────
         try {
           const { google } = await import('googleapis')
-          const fs = await import('fs')
-          const path = await import('path')
+          const { getGmailTokens } = await import('@/lib/gmail-tokens')
 
-          const tokenPath = path.join(process.cwd(), '.gmail-tokens.json')
-          if (fs.existsSync(tokenPath)) {
+          const gmailTokens = await getGmailTokens()
+          if (gmailTokens) {
             const oauth2Client = new google.auth.OAuth2(
               getEnv('GOOGLE_CLIENT_ID'),
               getEnv('GOOGLE_CLIENT_SECRET'),
               getEnv('GOOGLE_REDIRECT_URI')
             )
-            const gmailTokens = JSON.parse(fs.readFileSync(tokenPath, 'utf-8'))
             oauth2Client.setCredentials(gmailTokens)
 
             const gmail = google.gmail({ version: 'v1', auth: oauth2Client })

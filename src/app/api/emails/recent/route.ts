@@ -1,35 +1,34 @@
 import { NextResponse } from 'next/server'
 import { google } from 'googleapis'
-import * as fs from 'fs'
-import * as path from 'path'
+import { getGmailTokens, setGmailTokens } from '@/lib/gmail-tokens'
 
-function getOAuth2Client() {
+export const runtime = 'nodejs'
+
+async function getOAuth2Client() {
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
     process.env.GOOGLE_REDIRECT_URI
   )
 
-  const tokenPath = path.join(process.cwd(), '.gmail-tokens.json')
-  if (!fs.existsSync(tokenPath)) {
-    throw new Error('Gmail not connected')
-  }
+  const tokens = await getGmailTokens()
+  if (!tokens) throw new Error('Gmail not connected')
 
-  const tokens = JSON.parse(fs.readFileSync(tokenPath, 'utf-8'))
   oauth2Client.setCredentials(tokens)
-
   oauth2Client.on('tokens', (newTokens) => {
-    const existing = JSON.parse(fs.readFileSync(tokenPath, 'utf-8'))
-    const merged = { ...existing, ...newTokens }
-    fs.writeFileSync(tokenPath, JSON.stringify(merged, null, 2))
+    void (async () => {
+      try {
+        const existing = (await getGmailTokens()) || {}
+        await setGmailTokens({ ...existing, ...newTokens })
+      } catch { /* non-blocking */ }
+    })()
   })
-
   return oauth2Client
 }
 
-function isGmailConnected(): boolean {
-  const tokenPath = path.join(process.cwd(), '.gmail-tokens.json')
-  return fs.existsSync(tokenPath)
+async function isGmailConnected(): Promise<boolean> {
+  const t = await getGmailTokens()
+  return !!t && (!!t.access_token || !!t.refresh_token)
 }
 
 interface EmailItem {
@@ -59,7 +58,7 @@ function parseFromHeader(header: string): { name: string; email: string } {
 
 export async function GET() {
   try {
-    if (!isGmailConnected()) {
+    if (!(await isGmailConnected())) {
       return NextResponse.json({
         connected: false,
         emails: [],
@@ -67,7 +66,7 @@ export async function GET() {
       })
     }
 
-    const auth = getOAuth2Client()
+    const auth = await getOAuth2Client()
     const gmail = google.gmail({ version: 'v1', auth })
 
     const query =
