@@ -18,6 +18,7 @@ import { usePermissions } from '@/hooks/use-permissions'
 import { CompanySelector } from '@/components/ui/company-selector'
 import { AlertsBell } from '@/components/alerts/alerts-bell'
 import { SyncStatus } from '@/components/pwa/sync-status'
+import { ThemeToggle } from '@/components/theme/theme-toggle'
 
 interface SidebarContextType {
   collapsed: boolean
@@ -425,6 +426,9 @@ export function TopBar({ userName }: { userName?: string }) {
           <span>Buscar</span>
           <kbd className="text-[10px] border px-1 rounded" style={{ borderColor: '#2A3040' }}>⌘K</kbd>
         </button>
+
+        {/* Toggle tema oscuro / gris */}
+        <ThemeToggle compact />
 
         {/* Alertas */}
         <AlertsBell />
