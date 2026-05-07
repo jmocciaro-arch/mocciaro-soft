@@ -26,6 +26,7 @@ import {
 } from 'lucide-react'
 import { DocLink } from '@/components/ui/doc-link'
 import { DocumentChain } from './document-chain'
+import { StockReservationsPanel } from './stock-reservations-panel'
 
 type Row = Record<string, unknown>
 
@@ -2295,7 +2296,14 @@ export function DocumentForm({
 
         {/* ====== TAB: LINEAS ====== */}
         {activeTab === 'lineas' && (
-          <div className="bg-[#141820] rounded-xl border border-[#2A3040] overflow-hidden">
+          <>
+            {/* Stock reservations panel — solo para pedidos en tt_documents */}
+            {(documentType === 'pedido') && source === 'tt_documents' && doc?.id && (
+              <div className="mb-4">
+                <StockReservationsPanel documentId={doc.id} documentType={documentType} />
+              </div>
+            )}
+            <div className="bg-[#141820] rounded-xl border border-[#2A3040] overflow-hidden">
             {/* Items table */}
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -2501,6 +2509,7 @@ export function DocumentForm({
               </div>
             </div>
           </div>
+          </>
         )}
 
         {/* ====== TAB: RENTABILIDAD ====== */}
