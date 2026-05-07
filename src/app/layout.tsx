@@ -52,12 +52,19 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="es" className={inter.variable}>
+    <html lang="es" className={inter.variable} suppressHydrationWarning>
       <head>
         {/* Splash screens iOS */}
         <link
           rel="apple-touch-startup-image"
           href="/icons/icon-512.png"
+        />
+        {/* Theme bootstrap — evita FOUC al alternar tema oscuro / gris.
+            Lee localStorage.theme y aplica data-theme al <html> antes del paint. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem('theme');if(t!=='light'&&t!=='dark')t='dark';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();`,
+          }}
         />
       </head>
       <body className="min-h-screen bg-[#0B0E13] text-[#F0F2F5] antialiased">

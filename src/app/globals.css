@@ -248,3 +248,88 @@ body {
     padding: 6px 8px !important;
   }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   THEME: GRIS MEDIO (light)
+   El tema "light" es en realidad un gris medio (no blanco) — texto
+   claro sobre fondos grises medios, manteniendo contraste y la
+   identidad naranja de la marca.
+   Estos overrides funcionan sobre clases Tailwind arbitrary value
+   (`bg-[#0B0E13]`) sin necesidad de tocar miles de archivos.
+   ════════════════════════════════════════════════════════════════════ */
+html[data-theme="light"] {
+  color-scheme: light;
+}
+
+html[data-theme="light"] body {
+  background-color: #2E3138;
+  color: #F0F2F5;
+}
+
+/* Backgrounds (oscuros → grises medios) */
+html[data-theme="light"] .bg-\[\#0B0E13\]    { background-color: #2E3138 !important; }
+html[data-theme="light"] .bg-\[\#0F1218\]    { background-color: #34373E !important; }
+html[data-theme="light"] .bg-\[\#0A0D12\]    { background-color: #2A2D33 !important; }
+html[data-theme="light"] .bg-\[\#141820\]    { background-color: #3C3F46 !important; }
+html[data-theme="light"] .bg-\[\#151821\]    { background-color: #383B42 !important; }
+html[data-theme="light"] .bg-\[\#1A1F2E\]    { background-color: #444751 !important; }
+html[data-theme="light"] .bg-\[\#1C2230\]    { background-color: #464951 !important; }
+html[data-theme="light"] .bg-\[\#1E2330\]    { background-color: #4F525A !important; }
+html[data-theme="light"] .bg-\[\#2A3040\]    { background-color: #5C5F67 !important; }
+html[data-theme="light"] .bg-\[\#3A4050\]    { background-color: #6C6F77 !important; }
+html[data-theme="light"] .bg-\[\#111827\]    { background-color: #34373E !important; }
+
+/* Backgrounds with alpha (rgba/transparente) — translucidos comunes */
+html[data-theme="light"] .bg-\[\#0B0E13\]\/95 { background-color: rgba(46, 49, 56, 0.95) !important; }
+html[data-theme="light"] .bg-\[\#0B0E13\]\/90 { background-color: rgba(46, 49, 56, 0.90) !important; }
+html[data-theme="light"] .bg-\[\#0B0E13\]\/80 { background-color: rgba(46, 49, 56, 0.80) !important; }
+
+/* Hover variants */
+html[data-theme="light"] .hover\:bg-\[\#1A1F2E\]:hover { background-color: #4D505A !important; }
+html[data-theme="light"] .hover\:bg-\[\#1E2330\]:hover { background-color: #585B62 !important; }
+html[data-theme="light"] .hover\:bg-\[\#2A3040\]:hover { background-color: #65686F !important; }
+html[data-theme="light"] .hover\:bg-\[\#1C2230\]:hover { background-color: #4F525A !important; }
+html[data-theme="light"] .hover\:bg-\[\#141820\]:hover { background-color: #44474E !important; }
+
+/* Borders */
+html[data-theme="light"] .border-\[\#1E2330\]    { border-color: #4F525A !important; }
+html[data-theme="light"] .border-\[\#2A3040\]    { border-color: #5C5F67 !important; }
+html[data-theme="light"] .border-\[\#3A4050\]    { border-color: #6C6F77 !important; }
+html[data-theme="light"] .border-\[\#141820\]    { border-color: #3C3F46 !important; }
+html[data-theme="light"] .border-\[\#1C2230\]    { border-color: #464951 !important; }
+html[data-theme="light"] .border-\[\#0F1218\]    { border-color: #34373E !important; }
+html[data-theme="light"] .border-t-\[\#2A3040\]  { border-top-color: #5C5F67 !important; }
+html[data-theme="light"] .border-b-\[\#2A3040\]  { border-bottom-color: #5C5F67 !important; }
+
+html[data-theme="light"] .hover\:border-\[\#FF6600\]\/40:hover { border-color: rgba(255, 102, 0, 0.4) !important; }
+html[data-theme="light"] .border-\[\#1E2330\]\/50 { border-color: rgba(79, 82, 90, 0.5) !important; }
+
+/* Divides */
+html[data-theme="light"] .divide-\[\#1E2330\] > * + * { border-color: #4F525A !important; }
+html[data-theme="light"] .divide-\[\#2A3040\] > * + * { border-color: #5C5F67 !important; }
+
+/* Texts (mantenemos claros para contraste sobre gris medio) */
+html[data-theme="light"] .text-\[\#F0F2F5\]  { color: #F5F6F8 !important; }
+html[data-theme="light"] .text-\[\#D1D5DB\]  { color: #DCDFE4 !important; }
+html[data-theme="light"] .text-\[\#9CA3AF\]  { color: #C8CCD2 !important; }
+html[data-theme="light"] .text-\[\#6B7280\]  { color: #A8ACB4 !important; }
+html[data-theme="light"] .text-\[\#4B5563\]  { color: #888C94 !important; }
+html[data-theme="light"] .text-\[\#374151\]  { color: #6E7178 !important; }
+html[data-theme="light"] .text-\[\#3A4050\]  { color: #6C6F77 !important; }
+
+/* Placeholders */
+html[data-theme="light"] .placeholder\:text-\[\#4B5563\]::placeholder { color: #888C94 !important; }
+html[data-theme="light"] .placeholder\:text-\[\#6B7280\]::placeholder { color: #A8ACB4 !important; }
+
+/* Scrollbar para tema claro */
+html[data-theme="light"] ::-webkit-scrollbar-thumb { background: #5C5F67; }
+html[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: #6C6F77; }
+
+/* Gradient base classes — usadas en cards con gradients */
+html[data-theme="light"] .from-\[\#0F1218\]    { --tw-gradient-from: #34373E var(--tw-gradient-from-position) !important; }
+html[data-theme="light"] .to-\[\#0F1218\]      { --tw-gradient-to: #34373E var(--tw-gradient-to-position) !important; }
+html[data-theme="light"] .from-\[\#141820\]    { --tw-gradient-from: #3C3F46 var(--tw-gradient-from-position) !important; }
+html[data-theme="light"] .to-\[\#141820\]      { --tw-gradient-to: #3C3F46 var(--tw-gradient-to-position) !important; }
+html[data-theme="light"] .from-\[\#0B0E13\]    { --tw-gradient-from: #2E3138 var(--tw-gradient-from-position) !important; }
+html[data-theme="light"] .to-\[\#0B0E13\]      { --tw-gradient-to: #2E3138 var(--tw-gradient-to-position) !important; }
+
