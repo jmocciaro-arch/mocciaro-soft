@@ -62,6 +62,18 @@ function getClientName(doc: Row): string {
   return (doc.client_name as string) || 'Sin proveedor'
 }
 
+// Resuelve nombre de proveedor para una purchase order. Prefiere el JOIN
+// real a tt_suppliers; cae a supplier_name (text libre) solo si la PO se
+// creó sin vincular a un supplier formal (legacy).
+function getSupplierName(po: Row): string {
+  const supplier = po.supplier as Record<string, unknown> | undefined
+  if (supplier) {
+    const joined = (supplier.legal_name as string) || (supplier.name as string)
+    if (joined) return joined
+  }
+  return (po.supplier_name as string) || 'Sin proveedor'
+}
+
 function getDocRef(doc: Row): string {
   return (doc.display_ref as string) || (doc.metadata as Record<string, unknown>)?.stelorder_reference as string || (doc.system_code as string) || '-'
 }
@@ -1797,8 +1809,11 @@ function PedidosCompraTab() {
     if (search) qDoc = qDoc.or(`display_ref.ilike.%${search}%,system_code.ilike.%${search}%`)
     const { data: docData } = await qDoc
 
-    // Also load from tt_purchase_orders (locally created)
-    let qLocal = sb.from('tt_purchase_orders').select('*').order('created_at', { ascending: false })
+    // Also load from tt_purchase_orders (locally created). JOIN a tt_suppliers
+    // para mostrar el nombre real cuando supplier_id está vinculado.
+    let qLocal = sb.from('tt_purchase_orders')
+      .select('*, supplier:tt_suppliers(id, name, legal_name)')
+      .order('created_at', { ascending: false })
     qLocal = filterByCompany(qLocal)
     if (statusFilter) qLocal = qLocal.eq('status', statusFilter)
     if (search) qLocal = qLocal.ilike('supplier_name', `%${search}%`)
@@ -1806,7 +1821,7 @@ function PedidosCompraTab() {
 
     const localMapped = (localData || []).map((o: Row) => ({
       ...o, _source: 'local' as const,
-      supplier_name: (o.supplier_name as string) || 'Sin proveedor',
+      supplier_name: getSupplierName(o),
     }))
     const docMapped = (docData || []).map((d: Row) => ({
       ...d, _source: 'tt_documents' as const,
@@ -2070,8 +2085,16 @@ function FacturasCompraTab() {
   }
 
   const loadPOs = async () => {
-    const { data } = await supabase.from('tt_purchase_orders').select('id, supplier_name, total, status').order('created_at', { ascending: false }).limit(50)
-    setPurchaseOrders(data || [])
+    // JOIN a tt_suppliers para que el dropdown "OC vinculada" muestre el
+    // nombre correcto en lugar de "Sin proveedor".
+    const { data } = await supabase.from('tt_purchase_orders')
+      .select('id, supplier_name, total, status, supplier:tt_suppliers(id, name, legal_name)')
+      .order('created_at', { ascending: false })
+      .limit(50)
+    setPurchaseOrders((data || []).map((po) => ({
+      ...po,
+      supplier_name: getSupplierName(po as Row),
+    })))
   }
 
   const filtered = useMemo(() => {
@@ -2646,13 +2669,33 @@ function CalendarioPagosTab() {
     return days
   }, [invoices])
 
+  // BUG6 fix: las facturas pueden estar en distintas monedas (EUR, USD, ARS).
+  // Antes se sumaban todas con reduce → resultado mezclado o 0 EUR.
+  // Ahora agrupamos por currency y formateamos como "EUR 1.234 · USD 567".
+  type ByCurrency = Record<string, number>
+  const sumByCurrency = (list: PurchaseInvoice[]): ByCurrency => {
+    const out: ByCurrency = {}
+    for (const inv of list) {
+      const c = ((inv as PurchaseInvoice & { currency?: string }).currency || 'EUR').toUpperCase()
+      out[c] = (out[c] || 0) + (inv.total || 0)
+    }
+    return out
+  }
+  const formatByCurrency = (totals: ByCurrency): string => {
+    const entries = Object.entries(totals).filter(([, v]) => v > 0)
+    if (entries.length === 0) return formatCurrency(0)
+    return entries
+      .map(([c, v]) => `${c} ${v.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
+      .join(' · ')
+  }
+
   const totalDueThisWeek = useMemo(() => {
     const now = new Date()
     const weekEnd = new Date(now)
     weekEnd.setDate(now.getDate() + 7)
     const ws = now.toISOString().split('T')[0]
     const we = weekEnd.toISOString().split('T')[0]
-    return invoices.filter(i => i.status !== 'paid' && i.due_date && i.due_date >= ws && i.due_date <= we).reduce((s, i) => s + i.total, 0)
+    return sumByCurrency(invoices.filter(i => i.status !== 'paid' && i.due_date && i.due_date >= ws && i.due_date <= we))
   }, [invoices])
 
   const totalDueNextWeek = useMemo(() => {
@@ -2663,10 +2706,13 @@ function CalendarioPagosTab() {
     weekEnd.setDate(now.getDate() + 14)
     const ws = weekStart.toISOString().split('T')[0]
     const we = weekEnd.toISOString().split('T')[0]
-    return invoices.filter(i => i.status !== 'paid' && i.due_date && i.due_date >= ws && i.due_date <= we).reduce((s, i) => s + i.total, 0)
+    return sumByCurrency(invoices.filter(i => i.status !== 'paid' && i.due_date && i.due_date >= ws && i.due_date <= we))
   }, [invoices])
 
-  const totalDueMonth = invoices.filter(i => i.status !== 'paid').reduce((s, i) => s + i.total, 0)
+  const totalDueMonth = useMemo(
+    () => sumByCurrency(invoices.filter(i => i.status !== 'paid')),
+    [invoices]
+  )
 
   const selectedDayInvoices = selectedDay ? calendarData.find(d => d.date === selectedDay)?.invoices || [] : []
 
@@ -2675,9 +2721,9 @@ function CalendarioPagosTab() {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <KPICard label="Vence esta semana" value={formatCurrency(totalDueThisWeek)} icon={<CalendarDays size={22} />} color="#F97316" />
-        <KPICard label="Vence proxima semana" value={formatCurrency(totalDueNextWeek)} icon={<CalendarClock size={22} />} color="#EAB308" />
-        <KPICard label="Total pendiente (30d)" value={formatCurrency(totalDueMonth)} icon={<DollarSign size={22} />} color="#EF4444" />
+        <KPICard label="Vence esta semana" value={formatByCurrency(totalDueThisWeek)} icon={<CalendarDays size={22} />} color="#F97316" />
+        <KPICard label="Vence proxima semana" value={formatByCurrency(totalDueNextWeek)} icon={<CalendarClock size={22} />} color="#EAB308" />
+        <KPICard label="Total pendiente (30d)" value={formatByCurrency(totalDueMonth)} icon={<DollarSign size={22} />} color="#EF4444" />
       </div>
 
       {/* Calendar grid */}
@@ -2694,7 +2740,8 @@ function CalendarioPagosTab() {
           const hasPaid = day.invoices.some(i => i.status === 'paid')
           const hasOverdue = day.invoices.some(i => i.status !== 'paid' && new Date(i.due_date!) < new Date())
           const hasPending = day.invoices.some(i => i.status !== 'paid')
-          const totalDayAmount = day.invoices.filter(i => i.status !== 'paid').reduce((s, i) => s + i.total, 0)
+          const totalDayByCurrency = sumByCurrency(day.invoices.filter(i => i.status !== 'paid'))
+          const totalDayAmount = Object.values(totalDayByCurrency).reduce((s, v) => s + v, 0)
 
           let borderColor = 'border-[#1E2330]'
           let bgColor = 'bg-[#141820]'
