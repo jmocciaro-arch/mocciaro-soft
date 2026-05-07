@@ -15,6 +15,7 @@ import { DocumentProcessBar } from './document-process-bar'
 import { buildSteps, type DocumentType } from '@/lib/workflow-definitions'
 import { useCompanyContext } from '@/lib/company-context'
 import { useCompanyFilter } from '@/hooks/use-company-filter'
+import { usePermissions } from '@/hooks/use-permissions'
 import {
   ArrowLeft, Edit3, Save, Printer, Mail, MoreVertical,
   ChevronLeft, ChevronRight, Trash2, Copy, RefreshCw,
@@ -341,6 +342,12 @@ export function DocumentForm({
   const [showMoreMenu, setShowMoreMenu] = useState(false)
   const [showSendModal, setShowSendModal] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showCascadeConfirm, setShowCascadeConfirm] = useState(false)
+  const [cascadeConfirmed, setCascadeConfirmed] = useState(false)
+  const [cascadeReason, setCascadeReason] = useState('')
+  const [cascadeBusy, setCascadeBusy] = useState(false)
+  const { hasRole, isSuper } = usePermissions()
+  const isAdmin = isSuper || hasRole('admin') || hasRole('super_admin')
 
   // Convert document
   const [converting, setConverting] = useState(false)
@@ -1153,13 +1160,31 @@ export function DocumentForm({
         await supabase.from('tt_document_items').delete().eq('document_id', documentId)
         await supabase.from('tt_documents').delete().eq('id', documentId)
       } else {
-        const tableMap: Record<string, string> = {
+        // Legacy: borrar items primero (eran huérfanos antes), después la fila padre.
+        const itemsTableMap: Record<string, string> = {
+          coti: 'tt_quote_items',
+          pedido: 'tt_sales_order_items',
+          delivery_note: 'tt_delivery_note_items',
+          factura: 'tt_invoice_items',
+        }
+        const parentTableMap: Record<string, string> = {
           coti: 'tt_quotes',
           pedido: 'tt_sales_orders',
           delivery_note: 'tt_delivery_notes',
           factura: 'tt_invoices',
         }
-        await supabase.from(tableMap[documentType] || 'tt_quotes').delete().eq('id', documentId)
+        const itemsTable = itemsTableMap[documentType]
+        const parentTable = parentTableMap[documentType] || 'tt_quotes'
+        const fkMap: Record<string, string> = {
+          coti: 'quote_id',
+          pedido: 'order_id',
+          delivery_note: 'delivery_note_id',
+          factura: 'invoice_id',
+        }
+        if (itemsTable) {
+          await supabase.from(itemsTable).delete().eq(fkMap[documentType], documentId)
+        }
+        await supabase.from(parentTable).delete().eq('id', documentId)
       }
       addToast({ type: 'success', title: 'Documento eliminado' })
       onBack()
@@ -1167,6 +1192,44 @@ export function DocumentForm({
       addToast({ type: 'error', title: 'Error', message: (err as Error).message })
     }
     setShowDeleteConfirm(false)
+  }
+
+  // ---------------------------------------------------------------
+  // CASCADE DELETE (admin, solo cotizaciones por ahora)
+  // ---------------------------------------------------------------
+  const handleCascadeDelete = async () => {
+    if (!doc) return
+    if (!cascadeReason.trim()) {
+      addToast({ type: 'error', title: 'Motivo obligatorio' })
+      return
+    }
+    if (!cascadeConfirmed) {
+      addToast({ type: 'error', title: 'Confirmá el checkbox' })
+      return
+    }
+    setCascadeBusy(true)
+    try {
+      const res = await fetch('/api/quotes/delete-cascade', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: documentId,
+          source: source === 'tt_documents' ? 'tt_documents' : 'local',
+          reason: cascadeReason.trim(),
+        }),
+      })
+      const j = await res.json()
+      if (!res.ok) throw new Error(j.error || 'Error en cascade delete')
+      addToast({ type: 'success', title: 'Eliminada en cascada', message: j.message })
+      setShowCascadeConfirm(false)
+      setCascadeConfirmed(false)
+      setCascadeReason('')
+      onBack()
+    } catch (err) {
+      addToast({ type: 'error', title: 'Error', message: (err as Error).message })
+    } finally {
+      setCascadeBusy(false)
+    }
   }
 
   // ---------------------------------------------------------------
@@ -1674,6 +1737,15 @@ export function DocumentForm({
                     >
                       <Trash2 size={14} /> Eliminar
                     </button>
+                    {isAdmin && documentType === 'coti' && (
+                      <button
+                        onClick={() => { setShowCascadeConfirm(true); setShowMoreMenu(false) }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-300 hover:bg-red-600/15 border-t border-[#2A3040]"
+                        title="Borra la cotización + pedidos/albaranes/facturas derivados"
+                      >
+                        <Trash2 size={14} /> Eliminar con cascada
+                      </button>
+                    )}
                   </div>
                 </>
               )}
@@ -3722,6 +3794,77 @@ export function DocumentForm({
             </Button>
             <Button variant="danger" size="sm" onClick={handleDelete}>
               <Trash2 size={14} /> Eliminar
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Cascade delete confirm */}
+      <Modal
+        isOpen={showCascadeConfirm}
+        onClose={() => {
+          setShowCascadeConfirm(false)
+          setCascadeConfirmed(false)
+          setCascadeReason('')
+        }}
+        title="Eliminar cotización con cascada"
+        size="md"
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg border-2 border-red-500/40 bg-red-950/20 p-3 space-y-2">
+            <p className="text-sm font-semibold text-red-300">
+              Esta acción es destructiva e impacta:
+            </p>
+            <ul className="list-disc pl-5 text-xs text-[#D1D5DB] space-y-0.5">
+              <li>La cotización seleccionada.</li>
+              <li>Todos los pedidos/albaranes/facturas derivados de ella (vínculos en <code>tt_document_links</code>).</li>
+              <li>Líneas (<code>tt_document_items</code> / <code>tt_quote_items</code>): borrado duro.</li>
+              <li>Los vínculos entre documentos.</li>
+            </ul>
+            <p className="text-[10px] text-[#FF6600] mt-2">
+              Snapshot completo queda en <code>tt_activity_log</code> antes de tocar nada — recuperable manualmente.
+            </p>
+          </div>
+          <textarea
+            value={cascadeReason}
+            onChange={(e) => setCascadeReason(e.target.value)}
+            placeholder="Motivo de la eliminación (obligatorio)"
+            autoFocus
+            className="w-full h-20 rounded bg-[#1E2330] border border-red-500/30 px-2 py-1 text-sm text-[#F0F2F5] resize-none focus:outline-none focus:border-red-500"
+          />
+          <label className="flex items-start gap-2 text-xs text-[#D1D5DB] cursor-pointer">
+            <input
+              type="checkbox"
+              checked={cascadeConfirmed}
+              onChange={(e) => setCascadeConfirmed(e.target.checked)}
+              className="mt-0.5 accent-[#FF6600]"
+            />
+            <span>
+              Entiendo que esto borra la cotización, pedidos, albaranes y facturas derivados.
+              No se puede deshacer desde la UI.
+            </span>
+          </label>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setShowCascadeConfirm(false)
+                setCascadeConfirmed(false)
+                setCascadeReason('')
+              }}
+              disabled={cascadeBusy}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={handleCascadeDelete}
+              loading={cascadeBusy}
+              disabled={cascadeBusy || !cascadeReason.trim() || !cascadeConfirmed}
+            >
+              <Trash2 size={14} /> Eliminar todo en cascada
             </Button>
           </div>
         </div>
