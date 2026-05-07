@@ -86,6 +86,8 @@ export function OCDetailModal({ ocId, onClose, onUpdated }: Props) {
   const [busy, setBusy] = useState<string | null>(null)
   const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [showCascadeDialog, setShowCascadeDialog] = useState(false)
+  const [cascadeConfirmed, setCascadeConfirmed] = useState(false)
   const [deleteReason, setDeleteReason] = useState('')
   const [reviewNotes, setReviewNotes] = useState('')
 
@@ -189,6 +191,39 @@ export function OCDetailModal({ ocId, onClose, onUpdated }: Props) {
       setDeleteReason('')
       await reloadOC()
       if (isAdmin) setTimeout(() => onClose(), 1500)  // cerrar el modal tras borrar
+    } catch (e) {
+      setMsg({ type: 'err', text: (e as Error).message })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function handleCascadeDelete() {
+    if (!oc) return
+    if (!deleteReason.trim()) {
+      setMsg({ type: 'err', text: 'El motivo es obligatorio' })
+      return
+    }
+    if (!cascadeConfirmed) {
+      setMsg({ type: 'err', text: 'Confirmá el checkbox para proceder' })
+      return
+    }
+    setBusy('cascade')
+    setMsg(null)
+    try {
+      const res = await fetch('/api/oc/delete-cascade', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ocId: oc.id, reason: deleteReason.trim() }),
+      })
+      const j = await res.json()
+      if (!res.ok) throw new Error(j.error || 'Error en cascade delete')
+      setMsg({ type: 'ok', text: j.message || 'OC eliminada en cascada' })
+      setShowCascadeDialog(false)
+      setCascadeConfirmed(false)
+      setDeleteReason('')
+      onUpdated?.()
+      setTimeout(() => onClose(), 2000)
     } catch (e) {
       setMsg({ type: 'err', text: (e as Error).message })
     } finally {
@@ -418,6 +453,71 @@ export function OCDetailModal({ ocId, onClose, onUpdated }: Props) {
           )}
 
           {/* Diálogo inline para pedir motivo */}
+          {showCascadeDialog && oc.deletion_status === 'active' && isAdmin && (
+            <div className="rounded-lg px-3 py-3 bg-red-950/20 border-2 border-red-500/50 space-y-3">
+              <div className="flex items-center gap-2 text-red-400">
+                <ShieldAlert size={16} />
+                <strong className="text-sm">Eliminar OC + cadena completa</strong>
+              </div>
+              <div className="text-xs text-[#D1D5DB] space-y-1.5">
+                <p className="font-semibold text-red-300">Esta acción es destructiva e impacta:</p>
+                <ul className="list-disc pl-5 space-y-0.5 text-[#9CA3AF]">
+                  <li>La OC parseada (soft-delete, queda en audit log).</li>
+                  <li>El documento OC en <code>tt_documents</code> (status → cancelled).</li>
+                  <li>La cotización generada/matcheada (status → cancelled).</li>
+                  <li>Pedidos, albaranes y facturas downstream encadenados (status → cancelled).</li>
+                  <li>Todas las líneas (<code>tt_document_items</code>) y vínculos (<code>tt_document_links</code>): borrado duro.</li>
+                  <li>El PDF original en storage (<code>client-pos</code>): borrado duro.</li>
+                </ul>
+                <p className="text-[#FF6600] mt-2">
+                  Snapshot completo queda en <code>tt_oc_audit_log</code> antes de tocar nada — recuperable manualmente.
+                </p>
+              </div>
+              <textarea
+                value={deleteReason}
+                onChange={(e) => setDeleteReason(e.target.value)}
+                placeholder="Motivo de la eliminación (obligatorio)"
+                autoFocus
+                className="w-full h-20 rounded bg-[#1E2330] border border-red-500/30 px-2 py-1 text-sm text-[#F0F2F5] resize-none focus:outline-none focus:border-red-500"
+              />
+              <label className="flex items-start gap-2 text-xs text-[#D1D5DB] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={cascadeConfirmed}
+                  onChange={(e) => setCascadeConfirmed(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>
+                  Entiendo que esto cancela la cotización, los pedidos y todos los documentos derivados.
+                  No se puede deshacer desde la UI.
+                </span>
+              </label>
+              <div className="flex gap-2 justify-end">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    setShowCascadeDialog(false)
+                    setCascadeConfirmed(false)
+                    setDeleteReason('')
+                  }}
+                  disabled={busy !== null}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  size="sm"
+                  variant="danger"
+                  onClick={handleCascadeDelete}
+                  loading={busy === 'cascade'}
+                  disabled={busy !== null || !deleteReason.trim() || !cascadeConfirmed}
+                >
+                  Eliminar todo en cascada
+                </Button>
+              </div>
+            </div>
+          )}
+
           {showDeleteDialog && oc.deletion_status === 'active' && (
             <div className="rounded-lg px-3 py-3 bg-[#141820] border border-red-500/30 space-y-2">
               <div className="flex items-center gap-2 text-red-400">
@@ -611,16 +711,29 @@ export function OCDetailModal({ ocId, onClose, onUpdated }: Props) {
                   <Sparkles size={14} /> Re-parsear con IA
                 </Button>
               )}
-              {oc.deletion_status === 'active' && !showDeleteDialog && (
+              {oc.deletion_status === 'active' && !showDeleteDialog && !showCascadeDialog && (
                 <Button
                   variant="danger"
                   size="sm"
                   onClick={() => setShowDeleteDialog(true)}
                   disabled={busy !== null}
-                  title={isAdmin ? 'Eliminar OC (requiere motivo)' : 'Solicitar eliminación al administrador'}
+                  title={isAdmin ? 'Eliminar solo la OC (cotización y pedido quedan)' : 'Solicitar eliminación al administrador'}
                 >
                   <Trash2 size={14} />
-                  {isAdmin ? 'Eliminar' : 'Solicitar eliminación'}
+                  {isAdmin ? 'Eliminar OC' : 'Solicitar eliminación'}
+                </Button>
+              )}
+              {isAdmin && oc.deletion_status === 'active' && !showDeleteDialog && !showCascadeDialog && (
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={() => setShowCascadeDialog(true)}
+                  disabled={busy !== null}
+                  title="Eliminar OC + cotización + pedido + items + vínculos + PDF (cadena completa)"
+                  className="border border-red-500/60"
+                >
+                  <ShieldAlert size={14} />
+                  Eliminar todo (cascada)
                 </Button>
               )}
             </div>
