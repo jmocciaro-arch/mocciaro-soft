@@ -27,6 +27,7 @@ import {
 import { DocLink } from '@/components/ui/doc-link'
 import { DocumentChain } from './document-chain'
 import { StockReservationsPanel } from './stock-reservations-panel'
+import { ClientPOCard, type ClientPOContext } from './client-po-card'
 
 type Row = Record<string, unknown>
 
@@ -342,6 +343,11 @@ export function DocumentForm({
   const [showMoreMenu, setShowMoreMenu] = useState(false)
   const [showSendModal, setShowSendModal] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+
+  // Contexto de OC del cliente (cuando este doc es un pedido que vino
+  // de una OC parseada). ClientPOCard carga el contexto y lo expone
+  // para enriquecer el workflow bar.
+  const [clientPoCtx, setClientPoCtx] = useState<ClientPOContext | null>(null)
 
   // Convert document
   const [converting, setConverting] = useState(false)
@@ -1570,7 +1576,20 @@ export function DocumentForm({
           badge={{ label: doc.status || '—', variant: badgeVariant }}
           entity={<span>Tipo: <strong>{documentType.toUpperCase()}</strong> · Total: {formatCurrency(doc.total || 0, (doc.currency as 'EUR'|'USD'|'ARS') || 'EUR')}</span>}
           alerts={barAlerts}
-          steps={buildSteps(wfType, currentStepId)}
+          steps={buildSteps(wfType, currentStepId,
+            // Si este pedido tiene OC del cliente vinculada, marcar el
+            // step "po_received" como completado con tooltip que muestra
+            // el número de la OC. Solo aplica para sales_order.
+            wfType === 'sales_order' && clientPoCtx?.has_client_po
+              ? {
+                  po_received: {
+                    status: 'completed',
+                    label: `OC ${clientPoCtx.oc_number || 'cliente'}`,
+                    hint: `OC del cliente recibida (${clientPoCtx.oc_status || 'matcheada'})${clientPoCtx.discrepancies_count ? ` · ${clientPoCtx.discrepancies_count} discrepancias` : ''}`,
+                  },
+                }
+              : undefined
+          )}
           actions={[]}
         />
       </div>
@@ -2297,6 +2316,14 @@ export function DocumentForm({
         {/* ====== TAB: LINEAS ====== */}
         {activeTab === 'lineas' && (
           <>
+            {/* Card OC del cliente — solo para pedidos. Se renderiza
+                solo si el pedido tiene OC parseada vinculada (vía
+                quote_id → matched_quote_id). Si no hay, no se ve. */}
+            {documentType === 'pedido' && doc?.id && (
+              <div className="mb-4">
+                <ClientPOCard salesOrderId={doc.id} onContext={setClientPoCtx} />
+              </div>
+            )}
             {/* Stock reservations panel — solo para pedidos en tt_documents */}
             {(documentType === 'pedido') && source === 'tt_documents' && doc?.id && (
               <div className="mb-4">
