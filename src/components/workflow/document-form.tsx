@@ -1565,7 +1565,7 @@ export function DocumentForm({
   }
 
   return (
-    <div className="max-w-[1200px] mx-auto space-y-0 animate-fade-in print:bg-white print:text-black">
+    <div className="max-w-[1200px] mx-auto space-y-0 animate-fade-in pb-24 print:pb-0 print:bg-white print:text-black">
 
       {/* ═══════════════════════════════════════════════════════════════
            REGLA FUNDAMENTAL — Barra de proceso sticky
@@ -1958,8 +1958,8 @@ export function DocumentForm({
           )}
         </div>
 
-        {/* Row 2: Field Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {/* Row 2: Field Grid (StelOrder style — 2 columnas) */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
           {/* Fecha */}
           <FieldRow label="Fecha" editMode={editMode}>
             {editMode ? (
@@ -3813,6 +3813,46 @@ export function DocumentForm({
           </div>
         </div>
       </Modal>
+
+      {/* ════════════════════════════════════════════════════════════════
+           STICKY BOTTOM TOTALS BAR (StelOrder style)
+           Solo se muestra en la pestaña "lineas". Pinned al viewport,
+           muestra Uds. (items reales, sin secciones) + Base + IVA + TOTAL.
+          ════════════════════════════════════════════════════════════════ */}
+      {activeTab === 'lineas' && (() => {
+        const realItems = displayItems.filter(i => !i.is_section)
+        const totalUnits = realItems.reduce((s, i) => s + (Number(i.quantity) || 0), 0)
+        const curr = (displayDoc?.currency || doc?.currency || 'EUR') as 'EUR' | 'USD' | 'ARS'
+        return (
+          <div className="fixed bottom-0 left-0 right-0 z-40 bg-[#0B0E13]/95 backdrop-blur-md border-t-2 border-[#FF6600]/40 shadow-[0_-4px_24px_rgba(0,0,0,0.6)] print:hidden">
+            <div className="max-w-[1200px] mx-auto px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
+              <div className="flex items-center gap-4 text-xs text-[#9CA3AF]">
+                <span>
+                  Líneas: <span className="text-[#F0F2F5] font-semibold">{realItems.length}</span>
+                </span>
+                <span className="w-px h-4 bg-[#2A3040]" />
+                <span>
+                  Uds.: <span className="text-[#F0F2F5] font-semibold font-mono">{totalUnits.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </span>
+              </div>
+              <div className="flex items-center gap-6">
+                <div className="text-right">
+                  <p className="text-[10px] uppercase tracking-wider text-[#6B7280]">Base imponible</p>
+                  <p className="text-sm font-semibold text-[#F0F2F5] font-mono">{formatCurrency(totals.subtotal, curr)}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] uppercase tracking-wider text-[#6B7280]">IVA ({displayDoc?.tax_rate ?? doc?.tax_rate ?? 21}%)</p>
+                  <p className="text-sm text-[#F0F2F5] font-mono">{formatCurrency(totals.taxAmount, curr)}</p>
+                </div>
+                <div className="text-right border-l-2 border-[#FF6600]/30 pl-4">
+                  <p className="text-[10px] uppercase tracking-wider text-[#FF6600] font-bold">TOTAL</p>
+                  <p className="text-xl font-bold text-[#FF6600] font-mono leading-tight">{formatCurrency(totals.total, curr)}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Print styles are in globals.css */}
     </div>
