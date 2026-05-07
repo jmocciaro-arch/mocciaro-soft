@@ -19,10 +19,11 @@ import { formatDate, formatCurrency } from '@/lib/utils'
 import type { Warehouse } from '@/types'
 import { ExportButton } from '@/components/ui/export-button'
 import { ImportButton } from '@/components/ui/import-button'
+import { useCompanyContext } from '@/lib/company-context'
 import {
   Package, AlertTriangle, XCircle, CheckCircle, Loader2,
   ArrowLeftRight, Warehouse as WarehouseIcon, Activity, TrendingUp,
-  Plus, ClipboardEdit, Search
+  Plus, ClipboardEdit, Search, Database, Zap
 } from 'lucide-react'
 
 type Row = Record<string, unknown>
@@ -103,6 +104,54 @@ function InventarioTab() {
   // Alertas section toggle
   const [showAlertas, setShowAlertas] = useState(false)
 
+  // Seed banner state (BUG2): si la empresa activa tiene 0 filas en
+  // tt_stock, ofrecemos inicializar con el RPC seed_stock_for_company.
+  const { activeCompanyId, activeCompany } = useCompanyContext()
+  const [seedSummary, setSeedSummary] = useState<null | {
+    warehouses_count: number
+    products_count: number
+    stock_rows_count: number
+    rows_with_quantity_count: number
+    rows_with_zero_count: number
+  }>(null)
+  const [seeding, setSeeding] = useState(false)
+
+  const loadSeedSummary = useCallback(async () => {
+    if (!activeCompanyId) { setSeedSummary(null); return }
+    try {
+      const res = await fetch(`/api/stock/seed?companyId=${activeCompanyId}`)
+      const j = await res.json()
+      if (res.ok && j.summary) setSeedSummary(j.summary)
+    } catch { /* non-blocking */ }
+  }, [activeCompanyId])
+
+  const handleSeedStock = useCallback(async () => {
+    if (!activeCompanyId) return
+    if (!confirm(`Inicializar stock=0 para todos los productos × ${seedSummary?.warehouses_count || 'N'} almacenes de ${activeCompany?.name || 'esta empresa'}?\n\nEs idempotente: no pisa cantidades existentes, solo agrega filas faltantes.`)) return
+    setSeeding(true)
+    try {
+      const res = await fetch('/api/stock/seed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ companyId: activeCompanyId }),
+      })
+      const j = await res.json()
+      if (!res.ok) throw new Error(j.error || 'Error')
+      addToast({
+        type: 'success',
+        title: 'Stock inicializado',
+        message: `${j.seed?.rows_inserted ?? 0} filas creadas (${j.seed?.products_count ?? 0} productos × ${j.seed?.warehouses_count ?? 0} almacenes)`,
+      })
+      await loadSeedSummary()
+      loadStock()
+    } catch (err) {
+      addToast({ type: 'error', title: 'Error al inicializar stock', message: (err as Error).message })
+    } finally {
+      setSeeding(false)
+    }
+  }, [activeCompanyId, activeCompany, seedSummary, addToast, loadSeedSummary])
+
+  useEffect(() => { void loadSeedSummary() }, [loadSeedSummary])
   useEffect(() => { loadWarehouses() }, [])
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -276,6 +325,32 @@ function InventarioTab() {
         <KPICard label="Sin stock" value={kpis.outOfStock} icon={<XCircle size={20} />} color="#FF3D00" />
         <KPICard label="Stock Virtual Total" value={kpis.virtualTotal} icon={<TrendingUp size={20} />} color="#3B82F6" />
       </div>
+
+      {/* BUG2 banner — si la empresa no tiene filas de stock o muy pocas
+          relativas a productos × warehouses, ofrecer inicialización */}
+      {seedSummary && seedSummary.warehouses_count > 0 && seedSummary.stock_rows_count < (seedSummary.products_count * seedSummary.warehouses_count * 0.5) && (
+        <Card className="border-amber-500/40 bg-amber-500/5">
+          <div className="flex items-start gap-3">
+            <Database size={22} className="text-amber-400 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <h3 className="text-sm font-semibold text-amber-300">Stock sin inicializar</h3>
+              <p className="text-xs text-[#9CA3AF] mt-1">
+                Tenés <strong className="text-[#F0F2F5]">{seedSummary.products_count}</strong> productos activos y <strong className="text-[#F0F2F5]">{seedSummary.warehouses_count}</strong> almacenes en {activeCompany?.name || 'esta empresa'}, pero sólo <strong className="text-[#F0F2F5]">{seedSummary.stock_rows_count}</strong> filas en <code className="text-[10px] bg-[#1E2330] px-1 rounded">tt_stock</code>.
+                Click "Inicializar" para crear las filas faltantes con cantidad=0 (idempotente, no pisa lo existente).
+              </p>
+            </div>
+            <Button
+              onClick={handleSeedStock}
+              loading={seeding}
+              disabled={seeding}
+              variant="primary"
+              size="sm"
+            >
+              <Zap size={14} /> Inicializar
+            </Button>
+          </div>
+        </Card>
+      )}
 
       {/* Toolbar */}
       <Card>
