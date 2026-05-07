@@ -179,6 +179,8 @@ function StepPill({ step, index, total, isLast }: { step: ProcessStep; index: nu
     <>
       <button
         type="button"
+        data-testid={`workflow-step-${step.id}`}
+        data-status={step.status}
         onClick={step.onClick}
         disabled={!clickable}
         title={step.hint}
