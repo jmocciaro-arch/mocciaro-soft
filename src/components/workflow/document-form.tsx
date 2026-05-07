@@ -15,7 +15,6 @@ import { DocumentProcessBar } from './document-process-bar'
 import { buildSteps, type DocumentType } from '@/lib/workflow-definitions'
 import { useCompanyContext } from '@/lib/company-context'
 import { useCompanyFilter } from '@/hooks/use-company-filter'
-import { usePermissions } from '@/hooks/use-permissions'
 import {
   ArrowLeft, Edit3, Save, Printer, Mail, MoreVertical,
   ChevronLeft, ChevronRight, Trash2, Copy, RefreshCw,
@@ -346,8 +345,9 @@ export function DocumentForm({
   const [cascadeConfirmed, setCascadeConfirmed] = useState(false)
   const [cascadeReason, setCascadeReason] = useState('')
   const [cascadeBusy, setCascadeBusy] = useState(false)
-  const { hasRole, isSuper } = usePermissions()
-  const isAdmin = isSuper || hasRole('admin') || hasRole('super_admin')
+  // Admin gate ahora se valida server-side en /api/quotes/delete-cascade.
+  // El botón se muestra siempre para cotizaciones; el endpoint devuelve 403
+  // a no-admins y se traduce en toast de error.
 
   // Convert document
   const [converting, setConverting] = useState(false)
@@ -1737,11 +1737,11 @@ export function DocumentForm({
                     >
                       <Trash2 size={14} /> Eliminar
                     </button>
-                    {isAdmin && documentType === 'coti' && (
+                    {documentType === 'coti' && (
                       <button
                         onClick={() => { setShowCascadeConfirm(true); setShowMoreMenu(false) }}
                         className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-300 hover:bg-red-600/15 border-t border-[#2A3040]"
-                        title="Borra la cotización + pedidos/albaranes/facturas derivados"
+                        title="Borra la cotización + pedidos/albaranes/facturas derivados (solo admin)"
                       >
                         <Trash2 size={14} /> Eliminar con cascada
                       </button>
