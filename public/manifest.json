@@ -1,7 +1,7 @@
 {
-  "name": "Mocciaro Soft ERP",
-  "short_name": "Mocciaro",
-  "description": "ERP Multi-empresa con IA",
+  "name": "Mocciaro Soft V001",
+  "short_name": "Mocciaro V001",
+  "description": "Mocciaro Soft V001 — ERP multi-empresa con IA",
   "start_url": "/dashboard",
   "display": "standalone",
   "background_color": "#0B0E13",

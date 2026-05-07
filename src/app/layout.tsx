@@ -19,13 +19,13 @@ export const viewport: Viewport = {
 }
 
 export const metadata: Metadata = {
-  title: 'Mocciaro Soft | Sistema de Gestión Integral',
-  description: 'ERP/CRM multi-empresa con IA — Cotizador, CRM, Stock, SAT',
+  title: 'Mocciaro Soft V001 | Sistema de Gestión Integral',
+  description: 'Mocciaro Soft V001 — ERP/CRM multi-empresa con IA. Cotizador, CRM, Stock, SAT.',
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: 'Mocciaro',
+    title: 'Mocciaro V001',
   },
   icons: {
     icon: [

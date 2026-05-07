@@ -7,9 +7,12 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:e2e:install": "playwright install chromium"
+    "test:e2e:install": "playwright install chromium",
+    "seed:test": "tsx scripts/seed-test.ts",
+    "db:diagram": "tsx scripts/db-diagram.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.2",
