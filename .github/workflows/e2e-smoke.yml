@@ -1,0 +1,72 @@
+name: E2E Smoke Tests
+
+# Corre los smoke tests sin auth contra producción cada vez que:
+#   - Se hace push a main (post-merge).
+#   - Se abre/actualiza un PR contra main.
+#   - Manualmente desde la pestaña Actions.
+#
+# Los smoke tests verifican que la app está viva y los endpoints
+# críticos responden bien (ver tests/e2e/smoke.spec.ts).
+#
+# Tests autenticados están skipped por default (necesitan user dedicado
+# de E2E que todavía no se creó). Cuando se cree, agregar como secrets:
+#   E2E_USER_EMAIL, E2E_USER_PASSWORD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancelar runs anteriores del mismo branch para no acumular
+concurrency:
+  group: e2e-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Smoke tests (sin auth)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install deps
+        run: npm ci --include=dev
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Playwright Chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright system deps (cached browsers)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      - name: Run smoke tests against production
+        run: npm run test:e2e -- tests/e2e/smoke.spec.ts
+        env:
+          E2E_BASE_URL: https://cotizador-torquetools.vercel.app
+          CI: 'true'
+
+      - name: Upload Playwright report (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
