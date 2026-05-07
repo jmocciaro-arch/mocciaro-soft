@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { requireAdmin } from '@/lib/auth/require-admin'
 import { documentDeriveSchema } from '@/lib/schemas/documents'
 import { deriveDocument } from '@/lib/documents/engine'
+import { reserveStockForDocument, consumeStockForDelivery } from '@/lib/stock-transactions'
+import { createClient as createServiceClient } from '@supabase/supabase-js'
 
 type Ctx = { params: Promise<{ id: string }> }
 
@@ -34,8 +36,61 @@ export async function POST(req: NextRequest, { params }: Ctx) {
   })
 
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status })
+
+  // ── Stock workflow hooks (best-effort, no abortan si fallan) ───────
+  // - target = pedido → reservar stock disponible (modo no-strict).
+  // - target = albarán → consumir reservas del pedido origen (FIFO).
+  let stockHook: Record<string, unknown> | null = null
+  try {
+    const targetType = parsed.data.target_type
+    if (targetType === 'sales_order') {
+      const r = await reserveStockForDocument(result.documentId!, { strict: false })
+      stockHook = {
+        kind: 'reserve',
+        ok: r.ok,
+        rows: r.rows?.length || 0,
+        has_shortfall: !!r.hasShortfall,
+        shortfalls: r.rows?.filter((x) => x.shortfall > 0) || [],
+        error: r.error,
+      }
+    } else if (targetType === 'delivery_note') {
+      const sb = createServiceClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!,
+        { auth: { persistSession: false } }
+      )
+      const { data: items } = await sb
+        .from('tt_document_items')
+        .select('product_id, quantity')
+        .eq('document_id', result.documentId)
+      const consumeItems = (items || [])
+        .filter((it: { product_id: string | null; quantity: number | null }) =>
+          !!it.product_id && (it.quantity || 0) > 0
+        )
+        .map((it: { product_id: string | null; quantity: number | null }) => ({
+          product_id: it.product_id as string,
+          quantity: it.quantity as number,
+        }))
+      const r = await consumeStockForDelivery(id, consumeItems)
+      stockHook = {
+        kind: 'consume',
+        ok: r.ok,
+        rows: r.rows?.length || 0,
+        consumed_total: r.rows?.reduce((s, x) => s + x.consumed_qty, 0) || 0,
+        error: r.error,
+      }
+    }
+  } catch (err) {
+    stockHook = { ok: false, error: (err as Error).message }
+  }
+
   return NextResponse.json(
-    { success: true, document_id: result.documentId, relation: result.relation },
+    {
+      success: true,
+      document_id: result.documentId,
+      relation: result.relation,
+      stock_hook: stockHook,
+    },
     { status: 201 }
   )
 }
