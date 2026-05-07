@@ -785,6 +785,83 @@ export function DocumentForm({
     }
   }, [documentId, documentType, source, supabase, addToast])
 
+  // ---------------------------------------------------------------
+  // REGISTER PAYMENT (cobro parcial) — useCallback ARRIBA del early
+  // return de !doc para no violar rules of hooks (React error #310).
+  // ---------------------------------------------------------------
+  const handleRegisterPayment = useCallback(async () => {
+    if (!doc || newPayment.amount <= 0) return
+    setSavingPayment(true)
+    try {
+      const sb = createClient()
+      const currentPaidAmount = payments.reduce((sum, p) => sum + p.amount, 0)
+      const currentDocTotal = doc.total || 0
+
+      // Insert payment
+      const { error: payErr } = await sb.from('tt_invoice_payments').insert({
+        document_id: documentId,
+        invoice_id: null,
+        amount: newPayment.amount,
+        currency: doc.currency || 'EUR',
+        payment_date: newPayment.payment_date,
+        payment_method: newPayment.payment_method,
+        bank_reference: newPayment.bank_reference || null,
+        notes: newPayment.notes || null,
+      })
+      if (payErr) throw payErr
+
+      // Calculate new totals
+      const newPaidAmount = currentPaidAmount + newPayment.amount
+      const newPaymentCount = payments.length + 1
+      const isFullyPaid = newPaidAmount >= currentDocTotal
+
+      // Update tt_documents with paid_amount, payment_count, last_payment_date
+      const updateData: Record<string, unknown> = {
+        paid_amount: newPaidAmount,
+        payment_count: newPaymentCount,
+        last_payment_date: newPayment.payment_date,
+      }
+      if (isFullyPaid) {
+        updateData.status = 'paid'
+      } else if (newPaidAmount > 0) {
+        updateData.status = 'partial'
+      }
+
+      await sb.from('tt_documents').update(updateData).eq('id', documentId)
+
+      try {
+        await sb.from('tt_activity_log').insert({
+          entity_type: 'document',
+          entity_id: documentId,
+          action: isFullyPaid ? 'cobro_completo' : 'cobro_parcial',
+          detail: `Cobro de ${newPayment.amount.toFixed(2)} ${doc.currency || 'EUR'} via ${newPayment.payment_method}${isFullyPaid ? ' — Factura cobrada al 100%' : ''}`,
+        })
+      } catch { /* ignore */ }
+
+      addToast({
+        type: 'success',
+        title: isFullyPaid ? 'Factura cobrada al 100%' : 'Cobro registrado',
+        message: `${newPayment.amount.toFixed(2)} ${doc.currency || 'EUR'}`,
+      })
+
+      setShowPaymentForm(false)
+      setNewPayment({
+        amount: 0,
+        payment_date: new Date().toISOString().split('T')[0],
+        payment_method: 'transferencia',
+        bank_reference: '',
+        notes: '',
+      })
+
+      loadDocument()
+      onUpdate?.()
+    } catch (err) {
+      addToast({ type: 'error', title: 'Error registrando cobro', message: (err as Error).message })
+    } finally {
+      setSavingPayment(false)
+    }
+  }, [documentId, doc, newPayment, payments, addToast, loadDocument, onUpdate])
+
   useEffect(() => {
     loadDocument()
   }, [loadDocument])
@@ -1403,86 +1480,15 @@ export function DocumentForm({
   // ---------------------------------------------------------------
   // REGISTER PAYMENT (cobro parcial)
   // ---------------------------------------------------------------
+  // Variables derivadas para el JSX (ya está post early-return; no hay
+  // problema de orden de hooks acá).
   const isInvoiceType = documentType === 'factura' || documentType === 'invoice'
   const paidAmount = payments.reduce((sum, p) => sum + p.amount, 0)
   const docTotal = doc?.total || 0
   const remainingAmount = Math.max(0, docTotal - paidAmount)
   const paidPct = docTotal > 0 ? Math.min(100, (paidAmount / docTotal) * 100) : 0
-
-  const handleRegisterPayment = useCallback(async () => {
-    if (!doc || newPayment.amount <= 0) return
-    setSavingPayment(true)
-    try {
-      const sb = createClient()
-
-      // Insert payment
-      const { error: payErr } = await sb.from('tt_invoice_payments').insert({
-        document_id: documentId,
-        invoice_id: null,
-        amount: newPayment.amount,
-        currency: doc.currency || 'EUR',
-        payment_date: newPayment.payment_date,
-        payment_method: newPayment.payment_method,
-        bank_reference: newPayment.bank_reference || null,
-        notes: newPayment.notes || null,
-      })
-      if (payErr) throw payErr
-
-      // Calculate new totals
-      const newPaidAmount = paidAmount + newPayment.amount
-      const newPaymentCount = payments.length + 1
-      const isFullyPaid = newPaidAmount >= docTotal
-
-      // Update tt_documents with paid_amount, payment_count, last_payment_date
-      const updateData: Record<string, unknown> = {
-        paid_amount: newPaidAmount,
-        payment_count: newPaymentCount,
-        last_payment_date: newPayment.payment_date,
-      }
-      // Auto-change status to 'cobrada' if fully paid, or 'partial' if partially paid
-      if (isFullyPaid) {
-        updateData.status = 'paid'
-      } else if (newPaidAmount > 0) {
-        updateData.status = 'partial'
-      }
-
-      await sb.from('tt_documents').update(updateData).eq('id', documentId)
-
-      // Log activity
-      try {
-        await sb.from('tt_activity_log').insert({
-          entity_type: 'document',
-          entity_id: documentId,
-          action: isFullyPaid ? 'cobro_completo' : 'cobro_parcial',
-          detail: `Cobro de ${newPayment.amount.toFixed(2)} ${doc.currency || 'EUR'} via ${newPayment.payment_method}${isFullyPaid ? ' — Factura cobrada al 100%' : ''}`,
-        })
-      } catch { /* ignore */ }
-
-      addToast({
-        type: 'success',
-        title: isFullyPaid ? 'Factura cobrada al 100%' : 'Cobro registrado',
-        message: `${newPayment.amount.toFixed(2)} ${doc.currency || 'EUR'}`,
-      })
-
-      // Reset form
-      setShowPaymentForm(false)
-      setNewPayment({
-        amount: 0,
-        payment_date: new Date().toISOString().split('T')[0],
-        payment_method: 'transferencia',
-        bank_reference: '',
-        notes: '',
-      })
-
-      // Reload
-      loadDocument()
-      onUpdate?.()
-    } catch (err) {
-      addToast({ type: 'error', title: 'Error registrando cobro', message: (err as Error).message })
-    } finally {
-      setSavingPayment(false)
-    }
-  }, [documentId, doc, newPayment, paidAmount, payments.length, docTotal, addToast, loadDocument, onUpdate])
+  // El useCallback de handleRegisterPayment se movió ARRIBA del early
+  // return (cerca de loadDocument) para no violar las rules of hooks.
 
   // ===============================================================
   // RENDER
