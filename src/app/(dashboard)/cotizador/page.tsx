@@ -137,6 +137,7 @@ export default function CotizadorPage() {
 
   // Saved quotes list
   const [savedQuotes, setSavedQuotes] = useState<SavedQuote[]>([])
+  const [showCancelled, setShowCancelled] = useState(false)
   const [loadingQuotes, setLoadingQuotes] = useState(false)
   const [listSearch, setListSearch] = useState('')
 
@@ -536,8 +537,22 @@ export default function CotizadorPage() {
     { key: 'moneda', label: 'Moneda', sortable: true, width: '80px' },
   ]
 
-  // Convert savedQuotes to DataTable rows
-  const savedQuoteRows = savedQuotes.map((q) => ({
+  // Estados que consideramos "canceladas" (las ocultamos por default).
+  // Soporta variantes en español, inglés y mayúsculas mixtas.
+  const isCancelledStatus = (s: string | null | undefined): boolean => {
+    if (!s) return false
+    const x = s.toLowerCase()
+    return x === 'cancelled' || x === 'canceled' || x === 'cancelado' || x === 'cancelada'
+  }
+
+  // Convert savedQuotes to DataTable rows. Ocultamos canceladas salvo que
+  // el toggle esté activo.
+  const visibleSavedQuotes = showCancelled
+    ? savedQuotes
+    : savedQuotes.filter((q) => !isCancelledStatus(q.status))
+  const cancelledCount = savedQuotes.length - savedQuotes.filter((q) => !isCancelledStatus(q.status)).length
+
+  const savedQuoteRows = visibleSavedQuotes.map((q) => ({
     id: q.id,
     referencia: q.number || '-',
     cliente: q.client?.name || 'Sin cliente',
@@ -614,18 +629,33 @@ export default function CotizadorPage() {
 
       {/* LIST VIEW */}
       {viewMode === 'list' && (
-        <DataTable
-          data={savedQuoteRows}
-          columns={SAVED_QUOTE_COLS}
-          loading={loadingQuotes}
-          totalLabel="cotizaciones"
-          showTotals
-          onRowClick={handleQuoteRowClick}
-          onNewClick={() => setViewMode('create')}
-          newLabel="Nueva cotizacion"
-          exportFilename="cotizaciones_torquetools"
-          pageSize={25}
-        />
+        <>
+          {cancelledCount > 0 && (
+            <div className="flex items-center justify-end mb-2">
+              <label className="flex items-center gap-2 text-xs text-[#9CA3AF] cursor-pointer hover:text-[#F0F2F5] transition">
+                <input
+                  type="checkbox"
+                  checked={showCancelled}
+                  onChange={(e) => setShowCancelled(e.target.checked)}
+                  className="accent-[#FF6600]"
+                />
+                Mostrar canceladas ({cancelledCount})
+              </label>
+            </div>
+          )}
+          <DataTable
+            data={savedQuoteRows}
+            columns={SAVED_QUOTE_COLS}
+            loading={loadingQuotes}
+            totalLabel="cotizaciones"
+            showTotals
+            onRowClick={handleQuoteRowClick}
+            onNewClick={() => setViewMode('create')}
+            newLabel="Nueva cotizacion"
+            exportFilename="cotizaciones_torquetools"
+            pageSize={25}
+          />
+        </>
       )}
 
       {/* CREATE VIEW */}
