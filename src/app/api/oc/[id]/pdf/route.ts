@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient as createServiceClient } from '@supabase/supabase-js'
+import { getAdminClient } from '@/lib/supabase/admin'
+import { withCompanyFilter } from '@/lib/auth/with-company-filter'
 
 export const runtime = 'nodejs'
 
@@ -21,20 +22,22 @@ export async function GET(
     const { id } = await params
     if (!id) return NextResponse.json({ error: 'ocId requerido' }, { status: 400 })
 
-    const supabase = createServiceClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      { auth: { persistSession: false } }
-    )
+    const guard = await withCompanyFilter()
+    if (!guard.ok) return guard.response
+
+    const supabase = getAdminClient()
 
     const { data: oc, error: ocErr } = await supabase
       .from('tt_oc_parsed')
-      .select('id, file_url, file_name')
+      .select('id, file_url, file_name, company_id')
       .eq('id', id)
       .single()
 
     if (ocErr || !oc) {
       return NextResponse.json({ error: 'OC no encontrada' }, { status: 404 })
+    }
+    if (!guard.assertAccess((oc as { company_id: string | null }).company_id)) {
+      return NextResponse.json({ error: 'Acceso denegado a esta OC' }, { status: 403 })
     }
     if (!oc.file_url) {
       return NextResponse.json({ error: 'OC sin PDF original adjunto' }, { status: 404 })
