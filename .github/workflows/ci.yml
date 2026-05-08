@@ -33,8 +33,23 @@ jobs:
       - name: Build (Next.js)
         run: npm run build
         env:
-          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL_STAGING }}
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY_STAGING }}
+          # CI usa valores dummy — solo valida que el código compile, no
+          # que se pueda conectar a Supabase. Los valores reales viven
+          # en Vercel y se inyectan en deploys (Production/Preview).
+          # Cuando montemos staging environment, cambiar a:
+          #   NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL_STAGING }}
+          NEXT_PUBLIC_SUPABASE_URL: https://dummy.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: dummy-anon-key-for-ci-build
+          SUPABASE_SERVICE_ROLE_KEY: dummy-service-role-for-ci-build
+          CRON_SECRET: dummy-cron-secret
+          ANTHROPIC_API_KEY: dummy-anthropic-key
+          GEMINI_API_KEY: dummy-gemini-key
+          GOOGLE_CLIENT_ID: dummy-google-id
+          GOOGLE_CLIENT_SECRET: dummy-google-secret
+          GOOGLE_REDIRECT_URI: https://dummy.example.com/oauth
+          RESEND_API_KEY: dummy-resend
+          STELORDER_APIKEY_TORQUETOOLS: dummy-stelorder
+          CLAUDE_KEY: dummy-claude
 
       # ─────────────────────────────────────────────
       # Smoke tests (anonymous, contra preview/staging)
