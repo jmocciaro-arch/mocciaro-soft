@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { fetchAllRates } from '@/lib/fx/fetch-rates'
+import { wrapCronHandler } from '@/lib/observability/with-cron-logging'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -49,14 +50,7 @@ export async function GET(_req: NextRequest) {
 }
 
 // ── POST: fetch desde APIs externas y guarda ─────────────────────────────────
-export async function POST(req: NextRequest) {
-  // Verificar secret si está configurado
-  const authHeader = req.headers.get('authorization')
-  const cronSecret = process.env.CRON_SECRET
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
+const fxPostHandler = async (_req: NextRequest): Promise<NextResponse> => {
   const supabase = getServiceClient()
   const today = new Date().toISOString().slice(0, 10)
 
@@ -85,3 +79,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: (err as Error).message }, { status: 500 })
   }
 }
+
+export const POST = wrapCronHandler('fx-rates', fxPostHandler)

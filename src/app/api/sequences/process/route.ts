@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { sendEmail, renderTemplate } from '@/lib/email/send-email'
+import { wrapCronHandler } from '@/lib/observability/with-cron-logging'
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -30,17 +31,8 @@ interface Enrollment {
   }
 }
 
-// GET/POST /api/sequences/process — Cron endpoint (cada 15 minutos)
-export async function GET(req: NextRequest) {
-  // Verificar cron secret si está definido
-  const cronSecret = process.env.CRON_SECRET
-  if (cronSecret) {
-    const authHeader = req.headers.get('authorization')
-    if (authHeader !== `Bearer ${cronSecret}`) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-  }
-
+// GET/POST /api/sequences/process — Cron endpoint
+const handler = async (_req: NextRequest): Promise<NextResponse> => {
   const now = new Date().toISOString()
   let processed = 0
   let failed = 0
@@ -153,6 +145,9 @@ export async function GET(req: NextRequest) {
     timestamp: now,
   })
 }
+
+export const GET = wrapCronHandler('sequences-process', handler)
+export const POST = wrapCronHandler('sequences-process', handler)
 
 async function getEntityVars(
   entityType: string,
