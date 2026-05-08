@@ -137,6 +137,61 @@ export async function POST(req: NextRequest) {
       .update({ status: 'converted' })
       .eq('id', ocId)
 
+    // ──────────────────────────────────────────────────────────────────
+    // Sprint 2A — Eventos de trazabilidad
+    // ──────────────────────────────────────────────────────────────────
+    const events: Array<{
+      document_id: string
+      event_type: string
+      actor_id: string | null
+      related_document_id?: string | null
+      payload: Record<string, unknown>
+      notes?: string | null
+    }> = [
+      {
+        document_id: orderDoc.id,
+        event_type: 'created',
+        actor_id: null,
+        payload: {
+          source: 'oc_convert',
+          source_oc_id: ocId,
+          source_oc_legal: doc.legal_number,
+          items_count: itemsCreated,
+          total,
+        },
+        notes: 'Pedido generado al convertir OC del cliente',
+      },
+      {
+        document_id: orderDoc.id,
+        event_type: 'derived_in',
+        actor_id: null,
+        related_document_id: doc.id,
+        payload: { relation_type: 'pedido', from_doc_id: doc.id },
+        notes: `Derivado de OC ${doc.legal_number || doc.id}`,
+      },
+      {
+        document_id: doc.id,
+        event_type: 'derived_out',
+        actor_id: null,
+        related_document_id: orderDoc.id,
+        payload: { relation_type: 'pedido', to_doc_id: orderDoc.id },
+        notes: `OC convertida en pedido ${orderDoc.system_code}`,
+      },
+    ]
+    if (oc.matched_quote_id) {
+      events.push({
+        document_id: oc.matched_quote_id,
+        event_type: 'derived_out',
+        actor_id: null,
+        related_document_id: orderDoc.id,
+        payload: { relation_type: 'pedido', to_doc_id: orderDoc.id, via_oc_id: doc.id },
+        notes: `Cotización vinculada con pedido nuevo ${orderDoc.system_code} (vía OC)`,
+      })
+    }
+    await supabase.from('tt_document_events').insert(events).then(() => {}, (e) => {
+      console.error('[oc/convert-to-order] addEvent failed:', e)
+    })
+
     return NextResponse.json({
       ok: true,
       orderId: orderDoc.id,

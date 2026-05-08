@@ -138,6 +138,38 @@ export async function POST(req: NextRequest) {
       relation_type: 'orden_compra',
     }).single().then(() => {}, () => {})
 
+    // ──────────────────────────────────────────────────────────────────
+    // Sprint 2A — Eventos de trazabilidad (audit log / timeline)
+    // Append-only: tt_document_events tiene trigger que bloquea UPDATE/DELETE
+    // ──────────────────────────────────────────────────────────────────
+    await supabase.from('tt_document_events').insert([
+      {
+        document_id: quoteDoc.id,
+        event_type: 'created',
+        actor_id: null, // sistema (parser AI), no hay user en este endpoint
+        payload: {
+          source: 'oc_import',
+          source_oc_id: ocId,
+          source_oc_legal: doc.legal_number,
+          items_count: itemsCreated,
+          total,
+        },
+        notes: 'Cotización generada automáticamente desde OC del cliente parseada por IA',
+      },
+      {
+        document_id: quoteDoc.id,
+        event_type: 'derived_in',
+        actor_id: null,
+        related_document_id: doc.id,
+        payload: { relation_type: 'orden_compra', from_doc_id: doc.id },
+        notes: `Vinculada con OC ${doc.legal_number || doc.id}`,
+      },
+    ]).then(() => {}, (e) => {
+      // No bloqueamos la respuesta si falla el evento — la cotización ya está creada.
+      // El error queda en logs del server.
+      console.error('[oc/create-quote] addEvent failed:', e)
+    })
+
     return NextResponse.json({
       ok: true,
       quoteId: quoteDoc.id,
