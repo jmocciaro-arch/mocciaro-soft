@@ -36,6 +36,7 @@ import {
   InternalNotesCard,
   type InternalNote,
 } from '@/components/workflow/internal-notes-card'
+import { DocumentEventsTimeline } from '@/components/documents/document-events-timeline'
 
 // =====================================================
 // TIPOS LOCALES (alineados al schema real)
@@ -1152,6 +1153,19 @@ export default function DocumentDetailPage() {
               </p>
             </div>
           )}
+
+          {/* ════════════════════════════════════════════════════════════
+              Sprint 2A — Timeline de eventos (audit log cronológico)
+              Lee de tt_document_events vía /api/documents/[id]/events.
+              Append-only: cada operación importante (creación, derivación,
+              cambio de estado, emisión, etc.) deja un evento.
+              ════════════════════════════════════════════════════════════ */}
+          <div className="bg-[#141820] rounded-xl border border-[#2A3040] px-4 py-3">
+            <h3 className="text-xs font-bold text-[#F0F2F5] uppercase tracking-wide mb-3">
+              Línea de tiempo
+            </h3>
+            <DocumentEventsTimeline documentId={doc.id} limit={50} />
+          </div>
         </div>
       </div>
     </div>
