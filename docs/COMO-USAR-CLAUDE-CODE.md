@@ -20,8 +20,8 @@
 
 3. Clonar el repo y entrar:
    ```bash
-   git clone https://github.com/jmocciaro-arch/cotizador-torquetools.git
-   cd cotizador-torquetools
+   git clone https://github.com/jmocciaro-arch/mocciaro-soft.git
+   cd mocciaro-soft
    ```
 
 4. Verificar que `CLAUDE.md` está en la raíz y los docs están en `/docs/`:

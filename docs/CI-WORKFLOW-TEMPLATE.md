@@ -71,7 +71,7 @@ jobs:
       - name: E2E smoke tests
         run: npx playwright test tests/e2e/smoke.spec.ts
         env:
-          E2E_BASE_URL: ${{ secrets.E2E_BASE_URL_STAGING || 'https://cotizador-torquetools.vercel.app' }}
+          E2E_BASE_URL: ${{ secrets.E2E_BASE_URL_STAGING || 'https://mocciaro-soft.vercel.app' }}
 
       # ─────────────────────────────────────────────
       # Service role guard — no debe haber imports

@@ -143,7 +143,7 @@ export async function POST(req: NextRequest) {
               <table cellpadding="0" cellspacing="0">
                 <tr>
                   <td style="border-radius:6px;background:#1a3a6b;">
-                    <a href="https://cotizador-torquetools.vercel.app/buscador-clientes"
+                    <a href="https://mocciaro-soft.vercel.app/buscador-clientes"
                        style="display:inline-block;padding:12px 24px;color:#ffffff;font-size:14px;
                               font-weight:600;text-decoration:none;letter-spacing:0.2px;">
                       Aprobar en el Panel →
@@ -161,7 +161,7 @@ export async function POST(req: NextRequest) {
                 Este email fue generado automáticamente por el sistema de registro del buscador de
                 <a href="https://speedrill.com.ar" style="color:#6b7280;text-decoration:none;">Speedrill</a>.
                 Para gestionar registros, accedé al
-                <a href="https://cotizador-torquetools.vercel.app/buscador-clientes"
+                <a href="https://mocciaro-soft.vercel.app/buscador-clientes"
                    style="color:#1a3a6b;text-decoration:none;">panel de administración</a>.
               </p>
             </td>

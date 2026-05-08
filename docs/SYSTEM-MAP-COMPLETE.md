@@ -1,7 +1,7 @@
 # Mocciaro Soft ERP — Mapa completo del sistema
 
 **Fecha:** Abril 2026 | **Para:** contexto de IA (Copilot / Claude / Gemini)
-**Repo:** `cotizador-torquetools/` | **Produccion:** Vercel + Supabase
+**Repo:** `mocciaro-soft/` | **Produccion:** Vercel + Supabase
 
 ---
 

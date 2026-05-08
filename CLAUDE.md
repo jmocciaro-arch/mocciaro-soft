@@ -2,7 +2,7 @@
 
 > **Última actualización:** 2026-05-07
 > **Owner:** Juan Manuel Mocciaro (`jmocciaro@gmail.com`)
-> **Repo:** `github.com/jmocciaro-arch/cotizador-torquetools`
+> **Repo:** `github.com/jmocciaro-arch/mocciaro-soft`
 
 ---
 
@@ -174,7 +174,7 @@ Estas son decisiones de negocio, no bugs. Si te las cruzás, dejá comentario en
 ## 10. Estructura del repo
 
 ```
-cotizador-torquetools/
+mocciaro-soft/
 ├── src/
 │   ├── app/
 │   │   ├── (dashboard)/        # rutas con sidebar/header
