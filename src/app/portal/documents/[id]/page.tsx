@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 
 interface DocData {
   system_code?: string
-  type?: string
+  doc_type?: string
   status?: string
   total?: number
   currency?: string
@@ -52,7 +52,7 @@ export default function PortalDocumentPage() {
   const cur = doc.currency === 'EUR' ? '€' : doc.currency === 'USD' ? 'US$' : '$'
   const items = doc.items || doc.metadata?.lines || []
   const typeLabels: Record<string, string> = { cotizacion: 'Cotización', pedido: 'Pedido', albaran: 'Nota de Entrega', factura: 'Factura', nota_credito: 'Nota de Crédito' }
-  const label = typeLabels[doc.type || ''] || (doc.type || '').toUpperCase()
+  const label = typeLabels[doc.doc_type || ''] || (doc.doc_type || '').toUpperCase()
 
   const statusColors: Record<string, string> = { draft: '#6b7280', sent: '#3b82f6', accepted: '#10b981', open: '#f59e0b', shipped: '#8b5cf6', delivered: '#10b981', emitida: '#3b82f6', cobrada: '#10b981' }
 

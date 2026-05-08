@@ -114,7 +114,7 @@ export function OCDetailModal({ ocId, onClose, onUpdated }: Props) {
       let q = supabase
         .from('tt_documents')
         .select('id, legal_number, system_code, total, currency')
-        .eq('type', 'cotizacion')
+        .eq('doc_type', 'cotizacion')
         .order('created_at', { ascending: false })
         .limit(50)
       if (clientId) q = q.eq('client_id', clientId)
@@ -466,7 +466,7 @@ export function OCDetailModal({ ocId, onClose, onUpdated }: Props) {
                   <li>El documento OC en <code>tt_documents</code> (status → cancelled).</li>
                   <li>La cotización generada/matcheada (status → cancelled).</li>
                   <li>Pedidos, albaranes y facturas downstream encadenados (status → cancelled).</li>
-                  <li>Todas las líneas (<code>tt_document_items</code>) y vínculos (<code>tt_document_links</code>): borrado duro.</li>
+                  <li>Todas las líneas (<code>tt_document_lines</code>) y vínculos (<code>tt_document_relations</code>): borrado duro.</li>
                   <li>El PDF original en storage (<code>client-pos</code>): borrado duro.</li>
                 </ul>
                 <p className="text-[#FF6600] mt-2">

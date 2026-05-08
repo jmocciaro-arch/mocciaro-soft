@@ -61,24 +61,24 @@ export default function DashboardEjecutivo() {
     // Facturado actual y anterior
     const [facCur, facPrev, cotCur, cotPrev, pedCur, pedPrev,
            clientes, clientesNuevos, productos, ocsPend, deudas, topClientes, topProductos, recentAct] = await Promise.all([
-      sb.from('tt_documents').select('total').eq('type', 'factura').gte('created_at', fromCurrent),
-      sb.from('tt_documents').select('total').eq('type', 'factura').gte('created_at', fromPrevious).lt('created_at', fromCurrent),
-      sb.from('tt_documents').select('total').eq('type', 'cotizacion').gte('created_at', fromCurrent),
-      sb.from('tt_documents').select('total').eq('type', 'cotizacion').gte('created_at', fromPrevious).lt('created_at', fromCurrent),
-      sb.from('tt_documents').select('total').eq('type', 'pedido').gte('created_at', fromCurrent),
-      sb.from('tt_documents').select('total').eq('type', 'pedido').gte('created_at', fromPrevious).lt('created_at', fromCurrent),
+      sb.from('tt_documents').select('total').eq('doc_type', 'factura').gte('created_at', fromCurrent),
+      sb.from('tt_documents').select('total').eq('doc_type', 'factura').gte('created_at', fromPrevious).lt('created_at', fromCurrent),
+      sb.from('tt_documents').select('total').eq('doc_type', 'cotizacion').gte('created_at', fromCurrent),
+      sb.from('tt_documents').select('total').eq('doc_type', 'cotizacion').gte('created_at', fromPrevious).lt('created_at', fromCurrent),
+      sb.from('tt_documents').select('total').eq('doc_type', 'pedido').gte('created_at', fromCurrent),
+      sb.from('tt_documents').select('total').eq('doc_type', 'pedido').gte('created_at', fromPrevious).lt('created_at', fromCurrent),
       sb.from('tt_clients').select('id', { count: 'exact', head: true }).eq('active', true),
       sb.from('tt_clients').select('id', { count: 'exact', head: true }).gte('created_at', fromCurrent),
       sb.from('tt_products').select('id', { count: 'exact', head: true }).eq('active', true),
       sb.from('tt_oc_parsed').select('id', { count: 'exact', head: true }).neq('deletion_status', 'deleted').eq('status', 'pending'),
-      sb.from('tt_documents').select('total, status, created_at').eq('type', 'factura').not('status', 'in', '("paid","pagada","closed")'),
+      sb.from('tt_documents').select('total, status, created_at').eq('doc_type', 'factura').not('status', 'in', '("paid","pagada","closed")'),
       sb.from('tt_documents')
         .select('client_id, total, client:tt_clients(name)')
-        .eq('type', 'factura')
+        .eq('doc_type', 'factura')
         .gte('created_at', fromCurrent)
         .not('client_id', 'is', null)
         .limit(1000),
-      sb.from('tt_document_items')
+      sb.from('tt_document_lines')
         .select('sku, description, quantity')
         .gte('created_at', fromCurrent)
         .not('sku', 'is', null)

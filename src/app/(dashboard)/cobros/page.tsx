@@ -45,14 +45,14 @@ export default function CobrosPage() {
 
     // KPIs
     const openQ = supabase.from('tt_documents').select('total', { count: 'exact' })
-      .eq('type', 'factura').in('status', ['emitida', 'autorizada', 'pendiente_cobro'])
+      .eq('doc_type', 'factura').in('status', ['emitida', 'autorizada', 'pendiente_cobro'])
     const { count: openCount } = await filterByCompany(openQ) as any
     setOpenInvoices(openCount || 0)
 
     const firstDay = new Date()
     firstDay.setDate(1)
     const collQ = supabase.from('tt_documents').select('total')
-      .eq('type', 'factura').eq('status', 'cobrada')
+      .eq('doc_type', 'factura').eq('status', 'cobrada')
       .gte('updated_at', firstDay.toISOString())
     const { data: colls } = await filterByCompany(collQ)
     setCollectedThisMonth((colls || []).reduce((s: number, d: any) => s + Number(d.total || 0), 0))

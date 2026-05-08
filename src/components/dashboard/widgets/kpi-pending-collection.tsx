@@ -18,7 +18,7 @@ export function KpiPendingCollection() {
       try {
         const sb = createClient()
         // Pending collection from tt_documents (filtered) + tt_invoices (no company_id)
-        let docQ = sb.from('tt_documents').select('total').in('type', ['factura']).in('status', ['sent', 'open', 'pending', 'draft'])
+        let docQ = sb.from('tt_documents').select('total').in('doc_type', ['factura']).in('status', ['sent', 'open', 'pending', 'draft'])
         docQ = filterByCompany(docQ)
 
         const [docRes, localRes] = await Promise.all([

@@ -98,7 +98,7 @@ export function DocumentChain({ documentId, className }: DocumentChainProps) {
       // Obtener el doc actual
       const { data: currentDoc } = await supabase
         .from('tt_documents')
-        .select('id, type, display_ref, system_code, status, created_at')
+        .select('id, doc_type, display_ref, system_code, status, created_at')
         .eq('id', documentId)
         .maybeSingle()
 
@@ -116,19 +116,19 @@ export function DocumentChain({ documentId, className }: DocumentChainProps) {
         visited.add(docId)
 
         const { data: links } = await supabase
-          .from('tt_document_links')
-          .select('parent_id, parent:tt_documents!parent_id(id, type, display_ref, system_code, status, created_at)')
+          .from('tt_document_relations')
+          .select('parent_id, parent:tt_documents!parent_id(id, doc_type, display_ref, system_code, status, created_at)')
           .eq('child_id', docId)
 
         for (const link of links || []) {
           const parent = (link.parent as unknown) as {
-            id: string; type: string; display_ref: string
+            id: string; doc_type: string; display_ref: string
             system_code: string; status: string; created_at: string
           } | null
           if (parent?.id) {
             allNodes.push({
               id: parent.id,
-              type: parent.type || '',
+              type: parent.doc_type || '',
               display_ref: parent.display_ref || parent.system_code || parent.id,
               system_code: parent.system_code || '',
               status: parent.status || '',
@@ -146,19 +146,19 @@ export function DocumentChain({ documentId, className }: DocumentChainProps) {
         visited.add(docId)
 
         const { data: links } = await supabase
-          .from('tt_document_links')
-          .select('child_id, child:tt_documents!child_id(id, type, display_ref, system_code, status, created_at)')
+          .from('tt_document_relations')
+          .select('child_id, child:tt_documents!child_id(id, doc_type, display_ref, system_code, status, created_at)')
           .eq('parent_id', docId)
 
         for (const link of links || []) {
           const child = (link.child as unknown) as {
-            id: string; type: string; display_ref: string
+            id: string; doc_type: string; display_ref: string
             system_code: string; status: string; created_at: string
           } | null
           if (child?.id) {
             allNodes.push({
               id: child.id,
-              type: child.type || '',
+              type: child.doc_type || '',
               display_ref: child.display_ref || child.system_code || child.id,
               system_code: child.system_code || '',
               status: child.status || '',
@@ -178,7 +178,7 @@ export function DocumentChain({ documentId, className }: DocumentChainProps) {
       // Agregar nodo actual
       allNodes.push({
         id: currentDoc.id,
-        type: (currentDoc.type as string) || '',
+        type: (currentDoc.doc_type as string) || '',
         display_ref: (currentDoc.display_ref as string) || (currentDoc.system_code as string) || currentDoc.id,
         system_code: (currentDoc.system_code as string) || '',
         status: (currentDoc.status as string) || '',

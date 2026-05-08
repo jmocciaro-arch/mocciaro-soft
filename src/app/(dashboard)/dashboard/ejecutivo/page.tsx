@@ -91,12 +91,12 @@ export default function DashboardEjecutivoPage() {
       supabase.from('tt_opportunities').select('*', { count: 'exact', head: true }).in('company_id', activeCompanyIds).not('stage', 'in', '(ganado,perdido)'),
       supabase.from('tt_quotes').select('*', { count: 'exact', head: true }).in('company_id', activeCompanyIds).in('status', ['draft','borrador','sent','enviada','pending']),
       supabase.from('tt_sales_orders').select('*', { count: 'exact', head: true }).in('company_id', activeCompanyIds).eq('status', 'open'),
-      supabase.from('tt_documents').select('total, currency').in('company_id', activeCompanyIds).eq('type', 'factura').in('status', ['emitida','autorizada','pendiente_cobro']),
-      supabase.from('tt_documents').select('total, currency, invoice_date').in('company_id', activeCompanyIds).eq('type', 'factura').in('status', ['emitida','autorizada','pendiente_cobro']).lt('invoice_date', new Date(Date.now() - 30*86400000).toISOString()),
-      supabase.from('tt_documents').select('total, currency').in('company_id', activeCompanyIds).eq('type', 'factura').eq('status', 'cobrada').gte('updated_at', monthStart),
-      supabase.from('tt_documents').select('total, currency').in('company_id', activeCompanyIds).eq('type', 'factura').eq('status', 'cobrada').gte('updated_at', lastMonthStart).lte('updated_at', lastMonthEnd),
-      supabase.from('tt_documents').select('total, currency, client:tt_clients(name)').in('company_id', activeCompanyIds).eq('type', 'factura').in('status', ['cobrada','emitida','autorizada']).gte('invoice_date', monthStart).order('total', { ascending: false }).limit(100),
-      supabase.from('tt_documents').select('status').in('company_id', activeCompanyIds).eq('type', 'factura'),
+      supabase.from('tt_documents').select('total, currency').in('company_id', activeCompanyIds).eq('doc_type', 'factura').in('status', ['emitida','autorizada','pendiente_cobro']),
+      supabase.from('tt_documents').select('total, currency, invoice_date').in('company_id', activeCompanyIds).eq('doc_type', 'factura').in('status', ['emitida','autorizada','pendiente_cobro']).lt('invoice_date', new Date(Date.now() - 30*86400000).toISOString()),
+      supabase.from('tt_documents').select('total, currency').in('company_id', activeCompanyIds).eq('doc_type', 'factura').eq('status', 'cobrada').gte('updated_at', monthStart),
+      supabase.from('tt_documents').select('total, currency').in('company_id', activeCompanyIds).eq('doc_type', 'factura').eq('status', 'cobrada').gte('updated_at', lastMonthStart).lte('updated_at', lastMonthEnd),
+      supabase.from('tt_documents').select('total, currency, client:tt_clients(name)').in('company_id', activeCompanyIds).eq('doc_type', 'factura').in('status', ['cobrada','emitida','autorizada']).gte('invoice_date', monthStart).order('total', { ascending: false }).limit(100),
+      supabase.from('tt_documents').select('status').in('company_id', activeCompanyIds).eq('doc_type', 'factura'),
     ])
 
     // Agrupar top clients

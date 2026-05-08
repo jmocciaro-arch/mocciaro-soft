@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
     if (quoteDocumentId) {
       // Traer items de la cotización
       const { data: qItems } = await supabase
-        .from('tt_document_items')
+        .from('tt_document_lines')
         .select('sku, description, quantity, unit_price')
         .eq('document_id', quoteDocumentId)
 
@@ -88,16 +88,16 @@ export async function POST(req: NextRequest) {
       .eq('id', ocId)
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 })
 
-    // Crear/actualizar link tt_document_links
+    // Crear/actualizar link tt_document_relations
     if (quoteDocumentId && oc.document_id) {
       // Borrar link anterior si existía
       await supabase
-        .from('tt_document_links')
+        .from('tt_document_relations')
         .delete()
         .eq('child_id', oc.document_id)
         .eq('relation_type', 'orden_compra')
       // Insertar nuevo link
-      await supabase.from('tt_document_links').insert({
+      await supabase.from('tt_document_relations').insert({
         parent_id: quoteDocumentId,
         child_id: oc.document_id,
         relation_type: 'orden_compra',
@@ -105,7 +105,7 @@ export async function POST(req: NextRequest) {
     } else if (!quoteDocumentId && oc.document_id) {
       // Des-matchear: borrar link
       await supabase
-        .from('tt_document_links')
+        .from('tt_document_relations')
         .delete()
         .eq('child_id', oc.document_id)
         .eq('relation_type', 'orden_compra')

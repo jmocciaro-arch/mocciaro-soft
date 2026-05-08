@@ -71,7 +71,7 @@ export async function buildAgingReport(
     .from('tt_documents')
     .select('id, legal_number, total, currency, invoice_date, metadata, client_id, client:tt_clients(name)')
     .eq('company_id', companyId)
-    .eq('type', 'factura')
+    .eq('doc_type', 'factura')
     .in('status', ['emitida', 'autorizada', 'pendiente_cobro'])
     .order('invoice_date', { ascending: true })
 
@@ -80,7 +80,7 @@ export async function buildAgingReport(
     .from('tt_documents')
     .select('client_id, updated_at')
     .eq('company_id', companyId)
-    .eq('type', 'factura')
+    .eq('doc_type', 'factura')
     .eq('status', 'cobrada')
     .order('updated_at', { ascending: false })
 

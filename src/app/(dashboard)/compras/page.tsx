@@ -1801,7 +1801,7 @@ function PedidosCompraTab() {
     const sb = createClient()
     // Load from tt_documents (StelOrder historical PAPs)
     let qDoc = sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name)')
-      .eq('type', 'pap')
+      .eq('doc_type', 'pap')
       .order('created_at', { ascending: false })
       .range(0, 99)
     qDoc = filterByCompany(qDoc)
@@ -1853,7 +1853,7 @@ function PedidosCompraTab() {
   const openDetail = async (po: Row) => {
     setSelectedPO(po)
     if ((po as Row & { _source?: string })._source === 'tt_documents') {
-      const { data } = await supabase.from('tt_document_items').select('*').eq('document_id', po.id).order('sort_order')
+      const { data } = await supabase.from('tt_document_lines').select('*').eq('document_id', po.id).order('sort_order')
       setPOItems(data || [])
     } else {
       const { data } = await supabase.from('tt_po_items').select('*').eq('purchase_order_id', po.id).order('sort_order')
@@ -1990,7 +1990,7 @@ function RecepcionesTab() {
     (async () => {
       setLoading(true)
       const [{ data: docData }, { data: localData }] = await Promise.all([
-        supabase.from('tt_documents').select('*, client:tt_clients(id, name, legal_name)').eq('type', 'recepcion').order('created_at', { ascending: false }).range(0, 499),
+        supabase.from('tt_documents').select('*, client:tt_clients(id, name, legal_name)').eq('doc_type', 'recepcion').order('created_at', { ascending: false }).range(0, 499),
         supabase.from('tt_purchase_orders').select('*').in('status', ['partial', 'received']).order('updated_at', { ascending: false }),
       ])
 
@@ -2069,7 +2069,7 @@ function FacturasCompraTab() {
 
     // Also load historical from tt_documents
     const { data: docData } = await sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name)')
-      .eq('type', 'factura_compra')
+      .eq('doc_type', 'factura_compra')
       .order('created_at', { ascending: false })
       .range(0, 99)
     setHistDocs(docData || [])
@@ -2614,7 +2614,7 @@ function CalendarioPagosTab() {
       if (result.length === 0) {
         const { data: docInvs } = await sb.from('tt_documents')
           .select('id, display_ref, system_code, total, status, created_at, metadata, client:tt_clients(id, name, legal_name)')
-          .eq('type', 'factura_compra')
+          .eq('doc_type', 'factura_compra')
           .order('created_at', { ascending: false })
           .limit(50)
 
@@ -3451,7 +3451,7 @@ function IntercompanyTab() {
 
       // Get intercompany document links
       const { data: links } = await supabase
-        .from('tt_document_links')
+        .from('tt_document_relations')
         .select('*')
         .eq('relation_type', 'intercompany')
         .order('created_at', { ascending: false })

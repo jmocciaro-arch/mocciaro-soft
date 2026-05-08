@@ -68,7 +68,7 @@ function ResumenTab() {
     const sb = createClient()
     const { from, to } = getPeriodDates(period)
 
-    let docsQuery = sb.from('tt_documents').select('type, status, total, created_at').gte('created_at', from).lte('created_at', to)
+    let docsQuery = sb.from('tt_documents').select('doc_type, status, total, created_at').gte('created_at', from).lte('created_at', to)
     docsQuery = filterByCompany(docsQuery)
 
     const [docsRes, clientsRes, productsRes, paymentsRes] = await Promise.all([
@@ -82,7 +82,7 @@ function ResumenTab() {
     let ventas = 0, compras = 0, cobrado = 0, facturasPend = 0
     for (const d of docs) {
       const t = d.total as number || 0
-      const type = d.type as string
+      const type = d.doc_type as string
       if (['presupuesto', 'pedido', 'albaran', 'factura'].includes(type)) {
         if (type === 'factura') { ventas += t; if (['pending', 'partial', 'open', 'sent'].includes(d.status as string)) facturasPend += t; else cobrado += t }
       }
@@ -157,7 +157,7 @@ function ResultadosTab() {
     setLoading(true)
     const sb = createClient()
     const { from, to } = getPeriodDates(period)
-    let q = sb.from('tt_documents').select('type, status, total, client:tt_clients(name, legal_name)').gte('created_at', from).lte('created_at', to)
+    let q = sb.from('tt_documents').select('doc_type, status, total, client:tt_clients(name, legal_name)').gte('created_at', from).lte('created_at', to)
     q = filterByCompany(q)
     const { data } = await q
 
@@ -169,14 +169,14 @@ function ResultadosTab() {
         if (!map.has(name)) map.set(name, { cliente: name, ventas: 0, compras: 0 })
         const m = map.get(name)!
         const t = (d.total as number) || 0
-        if (['factura'].includes(d.type as string)) m.ventas += t
-        if (['pap', 'factura_compra'].includes(d.type as string)) m.compras += t
+        if (['factura'].includes(d.doc_type as string)) m.ventas += t
+        if (['pap', 'factura_compra'].includes(d.doc_type as string)) m.compras += t
       }
       setRows(Array.from(map.values()).map(r => ({ ...r, resultado: r.ventas - r.compras })).sort((a, b) => b.ventas - a.ventas))
     } else {
       const map = new Map<string, { tipo: string; cantidad: number; total: number }>()
       for (const d of (data || [])) {
-        const type = d.type as string
+        const type = d.doc_type as string
         if (!map.has(type)) map.set(type, { tipo: type, cantidad: 0, total: 0 })
         const m = map.get(type)!
         m.cantidad++; m.total += (d.total as number) || 0
@@ -225,7 +225,7 @@ function FacturacionTab() {
     setLoading(true)
     const sb = createClient()
     const { from, to } = getPeriodDates(period)
-    let q = sb.from('tt_documents').select('type, status, total, client:tt_clients(name, legal_name)').in('type', ['factura', 'factura_abono']).gte('created_at', from).lte('created_at', to)
+    let q = sb.from('tt_documents').select('doc_type, status, total, client:tt_clients(name, legal_name)').in('doc_type', ['factura', 'factura_abono']).gte('created_at', from).lte('created_at', to)
     q = filterByCompany(q)
     const { data } = await q
 
@@ -279,9 +279,9 @@ function TesoreriaTab() {
     const sb = createClient()
     const { from, to } = getPeriodDates(period)
 
-    let salesQuery = sb.from('tt_documents').select('id, display_ref, system_code, type, status, total, created_at, client:tt_clients(legal_name, name)').in('type', ['factura', 'factura_abono']).gte('created_at', from).lte('created_at', to).order('created_at', { ascending: false })
+    let salesQuery = sb.from('tt_documents').select('id, display_ref, system_code, doc_type, status, total, created_at, client:tt_clients(legal_name, name)').in('doc_type', ['factura', 'factura_abono']).gte('created_at', from).lte('created_at', to).order('created_at', { ascending: false })
     salesQuery = filterByCompany(salesQuery)
-    let purchQuery = sb.from('tt_documents').select('id, display_ref, system_code, type, status, total, created_at, client:tt_clients(legal_name, name)').eq('type', 'factura_compra').gte('created_at', from).lte('created_at', to).order('created_at', { ascending: false })
+    let purchQuery = sb.from('tt_documents').select('id, display_ref, system_code, doc_type, status, total, created_at, client:tt_clients(legal_name, name)').eq('doc_type', 'factura_compra').gte('created_at', from).lte('created_at', to).order('created_at', { ascending: false })
     purchQuery = filterByCompany(purchQuery)
 
     const [salesRes, purchRes] = await Promise.all([
@@ -366,7 +366,7 @@ function VentasTab() {
     setLoading(true)
     const sb = createClient()
     const { from, to } = getPeriodDates(period)
-    let q = sb.from('tt_documents').select('type, status, total').gte('created_at', from).lte('created_at', to)
+    let q = sb.from('tt_documents').select('doc_type, status, total').gte('created_at', from).lte('created_at', to)
     q = filterByCompany(q)
     const { data } = await q
 
@@ -374,7 +374,7 @@ function VentasTab() {
     for (const d of (data || [])) {
       const t = (d.total as number) || 0
       const st = d.status as string
-      switch (d.type as string) {
+      switch (d.doc_type as string) {
         case 'presupuesto': s.presupuestos.count++; s.presupuestos.total += t; if (['draft', 'sent', 'open'].includes(st)) s.presupuestos.abiertos++; break
         case 'pedido': s.pedidos.count++; s.pedidos.total += t; if (['open', 'sent', 'draft'].includes(st)) s.pedidos.abiertos++; break
         case 'albaran': s.albaranes.count++; s.albaranes.total += t; break
@@ -434,7 +434,7 @@ function RentabilidadTab() {
 
     // Load factura items with product costs
     // Load factura documents first, then their items
-    let facturaQuery = sb.from('tt_documents').select('id, type, client:tt_clients(legal_name, name)').eq('type', 'factura').gte('created_at', from).lte('created_at', to)
+    let facturaQuery = sb.from('tt_documents').select('id, doc_type, client:tt_clients(legal_name, name)').eq('doc_type', 'factura').gte('created_at', from).lte('created_at', to)
     facturaQuery = filterByCompany(facturaQuery)
     const { data: facturaDocs } = await facturaQuery
     const facturaIds = (facturaDocs || []).map((d: Row) => d.id as string)
@@ -444,7 +444,7 @@ function RentabilidadTab() {
       clientByDoc[d.id as string] = (c?.legal_name as string) || (c?.name as string) || 'Sin cliente'
     }
     const { data: items } = facturaIds.length > 0
-      ? await sb.from('tt_document_items').select('sku, description, quantity, unit_price, unit_cost, subtotal, product_id, document_id').in('document_id', facturaIds)
+      ? await sb.from('tt_document_lines').select('sku, description, quantity, unit_price, unit_cost, subtotal, product_id, document_id').in('document_id', facturaIds)
       : { data: [] }
 
     // Also load product costs for fallback

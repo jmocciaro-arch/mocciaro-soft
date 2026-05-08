@@ -19,7 +19,7 @@ export function KpiPendingInvoices() {
       try {
         const sb = createClient()
         // Count pending invoicing from tt_documents (filtered) + tt_invoices (no company_id)
-        let docQ = sb.from('tt_documents').select('total', { count: 'exact' }).in('type', ['factura', 'factura_abono']).in('status', ['draft', 'pending', 'sent', 'open'])
+        let docQ = sb.from('tt_documents').select('total', { count: 'exact' }).in('doc_type', ['factura', 'factura_abono']).in('status', ['draft', 'pending', 'sent', 'open'])
         docQ = filterByCompany(docQ)
 
         const [docRes, localRes] = await Promise.all([

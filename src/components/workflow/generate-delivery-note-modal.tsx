@@ -124,13 +124,13 @@ export function GenerateDeliveryNoteModal({
         .from('tt_documents')
         .select('id, display_ref, system_code, status, client_id')
         .eq('client_id', clientId)
-        .eq('type', 'pedido')
+        .eq('doc_type', 'pedido')
         .in('status', ['open', 'partially_delivered', 'accepted'])
         .order('created_at', { ascending: false })
 
       for (const so of (docOrders || [])) {
         const { data: items } = await supabase
-          .from('tt_document_items')
+          .from('tt_document_lines')
           .select('*')
           .eq('document_id', so.id)
           .order('sort_order')
@@ -281,7 +281,7 @@ export function GenerateDeliveryNoteModal({
                   .eq('id', item.id)
               } else {
                 await supabase
-                  .from('tt_document_items')
+                  .from('tt_document_lines')
                   .update({ qty_delivered: item.delivered + item.toDeliver })
                   .eq('id', item.id)
               }

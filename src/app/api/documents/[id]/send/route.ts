@@ -121,7 +121,7 @@ export async function POST(
       'https://app.torquetools.com'
     const pdfUrl = `${baseUrl}/api/documents/${id}/render`
 
-    const docType = normalizeDocType(doc?.type)
+    const docType = normalizeDocType(doc?.doc_type)
     const isQuote = docType === 'cotizacion'
 
     const sentChannels: string[] = []

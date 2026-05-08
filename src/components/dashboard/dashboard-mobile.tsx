@@ -48,10 +48,10 @@ export function DashboardMobile() {
           supabase.from('tt_products').select('*', { count: 'exact', head: true }),
           supabase.from('tt_clients').select('*', { count: 'exact', head: true }),
           supabase.from('tt_quotes').select('*', { count: 'exact', head: true }).gte('created_at', startOfMonth),
-          supabase.from('tt_documents').select('*', { count: 'exact', head: true }).eq('type', 'coti').gte('created_at', startOfMonth),
+          supabase.from('tt_documents').select('*', { count: 'exact', head: true }).eq('doc_type', 'coti').gte('created_at', startOfMonth),
           supabase.from('tt_quotes').select('id,number,total,currency,created_at,status,client:tt_clients(name)').order('created_at', { ascending: false }).limit(5),
           supabase.from('tt_sales_orders').select('*', { count: 'exact', head: true }).eq('status', 'open'),
-          supabase.from('tt_documents').select('total,paid_amount').eq('type', 'factura').neq('status', 'cobrada'),
+          supabase.from('tt_documents').select('total,paid_amount').eq('doc_type', 'factura').neq('status', 'cobrada'),
         ])
 
         const pendingCollection = (collRes.data || []).reduce((sum, d: { total: number | null; paid_amount: number | null }) =>

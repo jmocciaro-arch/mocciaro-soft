@@ -10,8 +10,8 @@ export const runtime = 'nodejs'
  *
  * Borra la OC + toda la cadena downstream:
  *   tt_oc_parsed (soft) → tt_documents OC (cancel) → cotización (cancel)
- *   → pedido/albarán/factura (cancel) → tt_document_items (hard)
- *   → tt_document_links (hard) → PDF en storage `client-pos` (hard)
+ *   → pedido/albarán/factura (cancel) → tt_document_lines (hard)
+ *   → tt_document_relations (hard) → PDF en storage `client-pos` (hard)
  *
  * Solo admin / super_admin. Snapshot completo en tt_oc_audit_log antes
  * de tocar nada, así es recuperable manualmente si hace falta.
@@ -58,13 +58,13 @@ export async function POST(req: NextRequest) {
     if (ocp.document_id) docIds.add(ocp.document_id) // el doc tipo orden_compra
     if (ocp.matched_quote_id) docIds.add(ocp.matched_quote_id) // la cotización generada/matcheada
 
-    // BFS por tt_document_links: descendientes del quote matcheado
+    // BFS por tt_document_relations: descendientes del quote matcheado
     const queue: string[] = ocp.matched_quote_id ? [ocp.matched_quote_id] : []
     const seen = new Set<string>(queue)
     while (queue.length > 0) {
       const parent = queue.shift()!
       const { data: children } = await supabase
-        .from('tt_document_links')
+        .from('tt_document_relations')
         .select('child_id')
         .eq('parent_id', parent)
       for (const c of children || []) {
@@ -85,11 +85,11 @@ export async function POST(req: NextRequest) {
         ? supabase.from('tt_documents').select('*').in('id', allDocIds)
         : Promise.resolve({ data: [] }),
       allDocIds.length > 0
-        ? supabase.from('tt_document_items').select('*').in('document_id', allDocIds)
+        ? supabase.from('tt_document_lines').select('*').in('document_id', allDocIds)
         : Promise.resolve({ data: [] }),
       allDocIds.length > 0
         ? supabase
-            .from('tt_document_links')
+            .from('tt_document_relations')
             .select('*')
             .or(`parent_id.in.(${allDocIds.join(',')}),child_id.in.(${allDocIds.join(',')})`)
         : Promise.resolve({ data: [] }),
@@ -117,14 +117,14 @@ export async function POST(req: NextRequest) {
     let linksDeleted = 0
     if (allDocIds.length > 0) {
       const { count: ic } = await supabase
-        .from('tt_document_items')
+        .from('tt_document_lines')
         .delete({ count: 'exact' })
         .in('document_id', allDocIds)
       itemsDeleted = ic || 0
 
       // Borrar links donde alguno de los lados sea uno de los docs
       const { count: lc } = await supabase
-        .from('tt_document_links')
+        .from('tt_document_relations')
         .delete({ count: 'exact' })
         .or(`parent_id.in.(${allDocIds.join(',')}),child_id.in.(${allDocIds.join(',')})`)
       linksDeleted = lc || 0

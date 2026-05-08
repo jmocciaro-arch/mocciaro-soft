@@ -140,7 +140,7 @@ export async function checkStockAvailability(
     // Leer items del doc + warehouse_id (o default de la company)
     const { data: doc } = await sb
       .from('tt_documents')
-      .select('id, company_id, warehouse_id, items:tt_document_items(id, product_id, quantity)')
+      .select('id, company_id, warehouse_id, items:tt_document_lines(id, product_id, quantity)')
       .eq('id', documentId)
       .single()
 

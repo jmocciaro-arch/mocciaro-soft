@@ -140,7 +140,7 @@ export function InvoiceMethodSelector({
       if (docErr) throw docErr
 
       if (sourceDocId) {
-        await supabase.from('tt_document_links').insert({
+        await supabase.from('tt_document_relations').insert({
           parent_id: sourceDocId,
           child_id: doc.id,
           relation_type: 'factura',

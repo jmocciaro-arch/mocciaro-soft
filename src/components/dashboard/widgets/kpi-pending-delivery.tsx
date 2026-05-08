@@ -17,7 +17,7 @@ export function KpiPendingDelivery() {
       try {
         const sb = createClient()
         // Count from tt_documents (pedidos without delivery) + tt_sales_orders
-        let docQ = sb.from('tt_documents').select('*', { count: 'exact', head: true }).eq('type', 'pedido').in('status', ['open', 'sent', 'accepted', 'draft'])
+        let docQ = sb.from('tt_documents').select('*', { count: 'exact', head: true }).eq('doc_type', 'pedido').in('status', ['open', 'sent', 'accepted', 'draft'])
         docQ = filterByCompany(docQ)
 
         let localQ = sb.from('tt_sales_orders').select('*', { count: 'exact', head: true }).in('status', ['open', 'partially_delivered'])

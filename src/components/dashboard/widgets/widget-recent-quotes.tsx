@@ -43,7 +43,7 @@ export function WidgetRecentQuotes() {
         let localQ = sb.from('tt_quotes').select('id, number, total, currency, created_at, status, client:tt_clients(name)').order('created_at', { ascending: false }).limit(5)
         localQ = filterByCompany(localQ)
 
-        let docQ = sb.from('tt_documents').select('id, display_ref, system_code, total, currency, created_at, status, metadata').eq('type', 'coti').order('created_at', { ascending: false }).limit(10)
+        let docQ = sb.from('tt_documents').select('id, display_ref, system_code, total, currency, created_at, status, metadata').eq('doc_type', 'coti').order('created_at', { ascending: false }).limit(10)
         docQ = filterByCompany(docQ)
 
         const [localRes, docRes] = await Promise.all([localQ, docQ])

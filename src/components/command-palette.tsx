@@ -97,7 +97,7 @@ export function CommandPalette() {
     const [clientsRes, productsRes, docsRes, leadsRes] = await Promise.all([
       supabase.from('tt_clients').select('id, name, tax_id, email').or(`name.ilike.${like},tax_id.ilike.${like},email.ilike.${like}`).limit(5),
       supabase.from('tt_products').select('id, sku, name, price_eur').or(`name.ilike.${like},sku.ilike.${like}`).limit(5),
-      supabase.from('tt_documents').select('id, type, legal_number, system_code, total, client:tt_clients(name)').or(`legal_number.ilike.${like},system_code.ilike.${like}`).limit(5),
+      supabase.from('tt_documents').select('id, doc_type, legal_number, system_code, total, client:tt_clients(name)').or(`legal_number.ilike.${like},system_code.ilike.${like}`).limit(5),
       supabase.from('tt_leads').select('id, name, company_name, ai_temperature').or(`name.ilike.${like},company_name.ilike.${like}`).limit(5),
     ])
 
@@ -133,13 +133,13 @@ export function CommandPalette() {
         id: `doc-${d.id}`,
         type: 'document',
         label: d.legal_number || d.system_code || 'Sin código',
-        subtitle: [d.type?.toUpperCase(), d.client?.name, d.total ? `$${d.total}` : ''].filter(Boolean).join(' · '),
+        subtitle: [d.doc_type?.toUpperCase(), d.client?.name, d.total ? `$${d.total}` : ''].filter(Boolean).join(' · '),
         icon: <FileText className="w-4 h-4" />,
         onSelect: () => {
-          const route = d.type === 'cotizacion' ? '/cotizador'
-            : d.type === 'factura' ? '/ventas?tab=facturas'
-            : d.type === 'pedido' ? '/ventas?tab=pedidos'
-            : d.type === 'albaran' ? '/ventas?tab=albaranes'
+          const route = d.doc_type === 'cotizacion' ? '/cotizador'
+            : d.doc_type === 'factura' ? '/ventas?tab=facturas'
+            : d.doc_type === 'pedido' ? '/ventas?tab=pedidos'
+            : d.doc_type === 'albaran' ? '/ventas?tab=albaranes'
             : '/ventas'
           router.push(route)
         },

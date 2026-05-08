@@ -59,7 +59,7 @@ export default function ImportarOCPage() {
     const qQ = supabase
       .from('tt_documents')
       .select('id, legal_number, system_code, client_id, total')
-      .eq('type', 'cotizacion')
+      .eq('doc_type', 'cotizacion')
       .order('created_at', { ascending: false })
       .limit(50)
     const { data: qs } = await filterByCompany(qQ)
@@ -80,8 +80,8 @@ export default function ImportarOCPage() {
     let orderLinks: Record<string, { id: string; code?: string }> = {}
     if (ocDocIds.length > 0) {
       const { data: links } = await supabase
-        .from('tt_document_links')
-        .select(`child_id, parent_id, tt_documents:child_id ( id, system_code, legal_number, type )`)
+        .from('tt_document_relations')
+        .select(`child_id, parent_id, tt_documents:child_id ( id, system_code, legal_number, doc_type )`)
         .in('parent_id', ocDocIds)
         .eq('relation_type', 'pedido')
       type LinkRow = {

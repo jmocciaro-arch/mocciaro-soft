@@ -19,7 +19,7 @@ import {
 
 export interface DocumentData {
   id: string
-  type: 'cotizacion' | 'pedido' | 'factura' | 'albaran' | 'remito' | 'oc_compra'
+  doc_type: 'cotizacion' | 'pedido' | 'factura' | 'albaran' | 'remito' | 'oc_compra'
   system_code?: string | null
   legal_number?: string | null
   status?: string | null
@@ -47,7 +47,7 @@ interface DocumentItem {
 
 interface RelatedDoc {
   id: string
-  type: string
+  doc_type: string
   system_code: string | null
   legal_number: string | null
   total: number | null
@@ -131,9 +131,9 @@ export function DocumentDetailModal({ open, onClose, documentId, onChanged }: Pr
 
     void Promise.all([
       supabase.from('tt_documents').select('*').eq('id', documentId).single(),
-      supabase.from('tt_document_items').select('*').eq('document_id', documentId).order('sort_order'),
-      supabase.from('tt_document_links')
-        .select('*, parent:tt_documents!parent_id(id,type,system_code,legal_number,total,currency,status), child:tt_documents!child_id(id,type,system_code,legal_number,total,currency,status)')
+      supabase.from('tt_document_lines').select('*').eq('document_id', documentId).order('sort_order'),
+      supabase.from('tt_document_relations')
+        .select('*, parent:tt_documents!parent_id(id,doc_type,system_code,legal_number,total,currency,status), child:tt_documents!child_id(id,doc_type,system_code,legal_number,total,currency,status)')
         .or(`parent_id.eq.${documentId},child_id.eq.${documentId}`),
       supabase.from('tt_activity_log').select('*, user:tt_users(name)').eq('entity_type', 'document').eq('entity_id', documentId).order('created_at', { ascending: false }).limit(30),
     ]).then(async ([docR, itemsR, relR, actR]) => {
@@ -156,7 +156,7 @@ export function DocumentDetailModal({ open, onClose, documentId, onChanged }: Pr
         if (!other) continue
         rels.push({
           id: other.id as string,
-          type: other.type as string,
+          doc_type: other.doc_type as string,
           system_code: other.system_code as string | null,
           legal_number: other.legal_number as string | null,
           total: other.total as number | null,
@@ -210,9 +210,9 @@ export function DocumentDetailModal({ open, onClose, documentId, onChanged }: Pr
     if (!confirm('¿Crear una copia de este documento como borrador?')) return
     setSaving(true)
     try {
-      const newCode = `${doc.type.toUpperCase().slice(0, 3)}-COPY-${Date.now()}`
+      const newCode = `${doc.doc_type.toUpperCase().slice(0, 3)}-COPY-${Date.now()}`
       const { data: newDoc, error } = await supabase.from('tt_documents').insert({
-        type: doc.type,
+        doc_type: doc.doc_type,
         system_code: newCode,
         client_id: doc.client_id,
         company_id: doc.company_id,
@@ -227,7 +227,7 @@ export function DocumentDetailModal({ open, onClose, documentId, onChanged }: Pr
 
       // Copiar items
       if (items.length > 0 && newDoc) {
-        const { error: itemsErr } = await supabase.from('tt_document_items').insert(
+        const { error: itemsErr } = await supabase.from('tt_document_lines').insert(
           items.map((it, idx) => ({
             document_id: newDoc.id,
             sort_order: it.sort_order ?? idx + 1,
@@ -256,7 +256,7 @@ export function DocumentDetailModal({ open, onClose, documentId, onChanged }: Pr
     )
   }
 
-  const typeMeta = TYPE_LABELS[doc.type] || TYPE_LABELS.cotizacion
+  const typeMeta = TYPE_LABELS[doc.doc_type] || TYPE_LABELS.cotizacion
   const TypeIcon = typeMeta.icon
   const toneClasses = {
     blue: 'bg-blue-500/10 border-blue-500/30 text-blue-400',
@@ -434,7 +434,7 @@ export function DocumentDetailModal({ open, onClose, documentId, onChanged }: Pr
                 <p className="text-sm text-[#6B7280]">Sin documentos relacionados</p>
               </div>
             ) : related.map(r => {
-              const meta = TYPE_LABELS[r.type] || TYPE_LABELS.cotizacion
+              const meta = TYPE_LABELS[r.doc_type] || TYPE_LABELS.cotizacion
               const RIcon = meta.icon
               return (
                 <a

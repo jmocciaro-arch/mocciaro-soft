@@ -8,7 +8,7 @@ export const runtime = 'nodejs'
  * Body: { sourceDocId, targetType: 'pedido'|'delivery_note'|'factura', companyId }
  *
  * Convierte un documento en otro tipo, copiando cliente, items y condiciones.
- * Crea el link en tt_document_links.
+ * Crea el link en tt_document_relations.
  * Si targetType === 'pedido', también verifica stock.
  */
 
@@ -34,7 +34,7 @@ const TYPE_PREFIX: Record<TargetType, string> = {
   factura: 'FAC',
 }
 
-// Tipo de relación para tt_document_links
+// Tipo de relación para tt_document_relations
 const RELATION_TYPE: Record<TargetType, string> = {
   pedido: 'pedido',
   delivery_note: 'albaran',
@@ -82,7 +82,7 @@ export async function POST(req: NextRequest) {
     }
 
     const { data: sourceItems, error: itemsErr } = await supabase
-      .from('tt_document_items')
+      .from('tt_document_lines')
       .select('*')
       .eq('document_id', sourceDocId)
       .order('sort_order', { ascending: true })
@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
 
     // ── 3. Crear el nuevo documento ─────────────────────────────
     const newDocData = {
-      type: targetType,
+      doc_type: targetType,
       system_code: newCode,
       display_ref: newCode,
       company_id: companyId,
@@ -130,7 +130,7 @@ export async function POST(req: NextRequest) {
       metadata: {
         ...((sourceDoc.metadata as Record<string, unknown>) || {}),
         converted_from: sourceDocId,
-        converted_from_type: sourceDoc.type,
+        converted_from_type: sourceDoc.doc_type,
         converted_at: new Date().toISOString(),
       },
     }
@@ -167,7 +167,7 @@ export async function POST(req: NextRequest) {
       }))
 
       const { error: itemInsertErr } = await supabase
-        .from('tt_document_items')
+        .from('tt_document_lines')
         .insert(newItems)
 
       if (itemInsertErr) {
@@ -175,15 +175,15 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ── 5. Crear link en tt_document_links ──────────────────────
-    await supabase.from('tt_document_links').insert({
+    // ── 5. Crear link en tt_document_relations ──────────────────────
+    await supabase.from('tt_document_relations').insert({
       parent_id: sourceDocId,
       child_id: newDoc.id,
       relation_type: RELATION_TYPE[targetType],
     })
 
     // ── 6. Actualizar status del doc fuente si corresponde ──────
-    if (sourceDoc.type === 'coti' && targetType === 'pedido') {
+    if (sourceDoc.doc_type === 'coti' && targetType === 'pedido') {
       await supabase
         .from('tt_documents')
         .update({ status: 'accepted' })

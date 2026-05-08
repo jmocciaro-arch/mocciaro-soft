@@ -22,7 +22,7 @@ export function KpiQuotesMonth() {
         const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
 
         // Count from tt_documents (StelOrder historical) + tt_quotes (local)
-        let docQ = sb.from('tt_documents').select('total', { count: 'exact' }).eq('type', 'coti').gte('created_at', startOfMonth)
+        let docQ = sb.from('tt_documents').select('total', { count: 'exact' }).eq('doc_type', 'coti').gte('created_at', startOfMonth)
         docQ = filterByCompany(docQ)
 
         let localQ = sb.from('tt_quotes').select('total', { count: 'exact' }).gte('created_at', startOfMonth)

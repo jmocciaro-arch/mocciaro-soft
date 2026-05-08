@@ -60,7 +60,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
         { auth: { persistSession: false } }
       )
       const { data: items } = await sb
-        .from('tt_document_items')
+        .from('tt_document_lines')
         .select('product_id, quantity')
         .eq('document_id', result.documentId)
       const consumeItems = (items || [])

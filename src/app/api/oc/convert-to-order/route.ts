@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
 
     // Chequear si ya existe un pedido creado desde esta OC
     const { data: existing } = await supabase
-      .from('tt_document_links')
+      .from('tt_document_relations')
       .select('child_id, tt_documents:child_id (type, system_code, legal_number)')
       .eq('parent_id', doc.id)
       .eq('relation_type', 'pedido')
@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: insErr?.message || 'Error creando pedido' }, { status: 500 })
     }
 
-    // Copiar items a tt_document_items.
+    // Copiar items a tt_document_lines.
     // La columna correcta para orden de líneas es `sort_order` (no `line_number`).
     let itemsCreated = 0
     if (items.length > 0) {
@@ -99,7 +99,7 @@ export async function POST(req: NextRequest) {
         subtotal: (item.cantidad || 0) * (item.precio_unitario || 0),
       }))
       const { error: itemsErr, count } = await supabase
-        .from('tt_document_items')
+        .from('tt_document_lines')
         .insert(itemsToInsert, { count: 'exact' })
       if (itemsErr) {
         return NextResponse.json(
@@ -116,7 +116,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Link OC → Pedido
-    await supabase.from('tt_document_links').insert({
+    await supabase.from('tt_document_relations').insert({
       parent_id: doc.id,
       child_id: orderDoc.id,
       relation_type: 'pedido',
@@ -124,7 +124,7 @@ export async function POST(req: NextRequest) {
 
     // Si la OC venía de una cotización, linkear también Cotización → Pedido
     if (oc.matched_quote_id) {
-      await supabase.from('tt_document_links').insert({
+      await supabase.from('tt_document_relations').insert({
         parent_id: oc.matched_quote_id,
         child_id: orderDoc.id,
         relation_type: 'pedido',

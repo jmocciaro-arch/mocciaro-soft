@@ -260,7 +260,7 @@ export async function phase4_sales_estimates(ctx: PhaseContext): Promise<PhaseRe
     stelorder_reference: d['full-reference'],
     parent_stelorder_id: d['parent-document-id'],
     stelorder_pdf_original_url: d['pdf-path'],
-    type: 'cotizacion',
+    doc_type: 'cotizacion',
     legal_number: d['full-reference'] || d.reference,
     client_id: map.get(d['account-id']) || null,
     company_id: ctx.companyId,
@@ -288,7 +288,7 @@ export async function phase4_sales_orders(ctx: PhaseContext): Promise<PhaseResul
     stelorder_reference: d['full-reference'],
     parent_stelorder_id: d['parent-document-id'],
     stelorder_pdf_original_url: d['pdf-path'],
-    type: 'pedido',
+    doc_type: 'pedido',
     legal_number: d['full-reference'] || d.reference,
     client_id: map.get(d['account-id']) || null,
     company_id: ctx.companyId,
@@ -319,7 +319,7 @@ export async function phase4_delivery_notes(ctx: PhaseContext): Promise<PhaseRes
       stelorder_reference: fullRef,
       parent_stelorder_id: d['parent-document-id'],
       stelorder_pdf_original_url: d['pdf-path'],
-      type: isPackingList ? 'packing_list' : 'albaran',
+      doc_type: isPackingList ? 'packing_list' : 'albaran',
       is_packing_list: isPackingList,
       legal_number: fullRef,
       client_id: map.get(d['account-id']) || null,
@@ -350,7 +350,7 @@ export async function phase4_invoices(ctx: PhaseContext): Promise<PhaseResult> {
     stelorder_reference: d['full-reference'],
     parent_stelorder_id: d['parent-document-id'],
     stelorder_pdf_original_url: d['pdf-path'],
-    type: 'factura',
+    doc_type: 'factura',
     legal_number: d['full-reference'] || d.reference,
     invoice_number: d['full-reference'] || d.reference,
     invoice_date: d.date,
@@ -386,7 +386,7 @@ export async function phase4_refund_invoices(ctx: PhaseContext): Promise<PhaseRe
 
   const rows = data.map((d: any) => ({
     stelorder_id: d.id,
-    type: 'nota_credito',
+    doc_type: 'nota_credito',
     legal_number: d['full-reference'] || d.reference,
     client_id: map.get(d['account-id']) || null,
     company_id: ctx.companyId,
@@ -408,7 +408,7 @@ export async function phase5_purchase_orders(ctx: PhaseContext): Promise<PhaseRe
   ctx.onProgress?.(0, data.length)
   const rows = data.map((d: any) => ({
     stelorder_id: d.id,
-    type: 'orden_compra',
+    doc_type: 'orden_compra',
     legal_number: d['full-reference'] || d.reference,
     company_id: ctx.companyId,
     subtotal: d['subtotal-amount'] || 0,
@@ -427,7 +427,7 @@ export async function phase5_purchase_delivery_notes(ctx: PhaseContext): Promise
   ctx.onProgress?.(0, data.length)
   const rows = data.map((d: any) => ({
     stelorder_id: d.id,
-    type: 'albaran_compra',
+    doc_type: 'albaran_compra',
     legal_number: d['full-reference'] || d.reference,
     company_id: ctx.companyId,
     subtotal: d['subtotal-amount'] || 0,
@@ -445,7 +445,7 @@ export async function phase5_purchase_invoices(ctx: PhaseContext): Promise<Phase
   ctx.onProgress?.(0, data.length)
   const rows = data.map((d: any) => ({
     stelorder_id: d.id,
-    type: 'factura_compra',
+    doc_type: 'factura_compra',
     legal_number: d['full-reference'] || d.reference,
     invoice_number: d['full-reference'] || d.reference,
     invoice_date: d.date,
@@ -465,7 +465,7 @@ export async function phase5_expenses(ctx: PhaseContext): Promise<PhaseResult> {
   ctx.onProgress?.(0, data.length)
   const rows = data.map((d: any) => ({
     stelorder_id: d.id,
-    type: 'gasto',
+    doc_type: 'gasto',
     legal_number: d['full-reference'] || d.reference,
     company_id: ctx.companyId,
     total: d['total-amount'] || 0,
@@ -484,7 +484,7 @@ export async function phase5_expenses(ctx: PhaseContext): Promise<PhaseResult> {
 export async function phase6_receipts(ctx: PhaseContext): Promise<PhaseResult> {
   const data = await ctx.stel.getOrdinaryInvoiceReceipts()
   ctx.onProgress?.(0, data.length)
-  const { data: invoiceMap } = await ctx.supabase.from('tt_documents').select('id, stelorder_id').eq('type', 'factura').not('stelorder_id', 'is', null)
+  const { data: invoiceMap } = await ctx.supabase.from('tt_documents').select('id, stelorder_id').eq('doc_type', 'factura').not('stelorder_id', 'is', null)
   const map = new Map<number, string>((invoiceMap || []).map((d: any) => [d.stelorder_id, d.id]))
 
   // Update status de facturas cobradas
@@ -530,14 +530,14 @@ export async function phase6_incidents_sat(ctx: PhaseContext): Promise<PhaseResu
 export async function phase7_link_documents(ctx: PhaseContext): Promise<PhaseResult> {
   const { data: docs } = await ctx.supabase
     .from('tt_documents')
-    .select('id, type, stelorder_id, parent_stelorder_id, client_po_reference, notes')
+    .select('id, doc_type, stelorder_id, parent_stelorder_id, client_po_reference, notes')
     .eq('company_id', ctx.companyId)
     .not('stelorder_id', 'is', null)
   if (!docs) return { processed: 0, inserted: 0, updated: 0, skipped: 0, errors: 0, errorLog: [] }
 
   ctx.onProgress?.(0, docs.length)
   const byStelId = new Map<number, { id: string; type: string }>()
-  for (const d of docs as any[]) byStelId.set(d.stelorder_id, { id: d.id, type: d.type })
+  for (const d of docs as any[]) byStelId.set(d.stelorder_id, { id: d.id, type: d.doc_type })
 
   const linksToInsert: Array<{ parent_id: string; child_id: string; relation_type: string }> = []
   let withParent = 0, withPO = 0, orphans = 0
@@ -546,18 +546,18 @@ export async function phase7_link_documents(ctx: PhaseContext): Promise<PhaseRes
     if (d.parent_stelorder_id) {
       const parent = byStelId.get(d.parent_stelorder_id)
       if (parent) {
-        linksToInsert.push({ parent_id: parent.id, child_id: d.id, relation_type: `${parent.type}_to_${d.type}` })
+        linksToInsert.push({ parent_id: parent.id, child_id: d.id, relation_type: `${parent.type}_to_${d.doc_type}` })
         withParent++
       } else orphans++
     }
 
     // Albarán ↔ Pedido por OC del cliente (title del albarán)
-    if (d.type === 'albaran' && d.client_po_reference) {
+    if (d.doc_type === 'albaran' && d.client_po_reference) {
       const { data: matchingOrders } = await ctx.supabase
         .from('tt_documents')
         .select('id')
         .eq('company_id', ctx.companyId)
-        .eq('type', 'pedido')
+        .eq('doc_type', 'pedido')
         .or(`client_po_reference.eq.${d.client_po_reference},notes.ilike.%${d.client_po_reference}%`)
         .limit(1)
       if (matchingOrders && matchingOrders[0]) {
@@ -571,7 +571,7 @@ export async function phase7_link_documents(ctx: PhaseContext): Promise<PhaseRes
   for (let i = 0; i < linksToInsert.length; i += 100) {
     const batch = linksToInsert.slice(i, i + 100)
     const { data } = await ctx.supabase
-      .from('tt_document_links')
+      .from('tt_document_relations')
       .upsert(batch, { onConflict: 'parent_id,child_id,relation_type', ignoreDuplicates: true })
       .select('id')
     if (data) inserted += data.length
@@ -591,9 +591,9 @@ export async function phase7_link_documents(ctx: PhaseContext): Promise<PhaseRes
 export async function phase8_download_pdfs(ctx: PhaseContext): Promise<PhaseResult> {
   const { data: docs } = await ctx.supabase
     .from('tt_documents')
-    .select('id, stelorder_id, type, stelorder_reference, stelorder_pdf_original_url, stelorder_pdf_url')
+    .select('id, stelorder_id, doc_type, stelorder_reference, stelorder_pdf_original_url, stelorder_pdf_url')
     .eq('company_id', ctx.companyId)
-    .in('type', ['albaran', 'factura', 'packing_list', 'factura_compra', 'albaran_compra', 'nota_credito'])
+    .in('doc_type', ['albaran', 'factura', 'packing_list', 'factura_compra', 'albaran_compra', 'nota_credito'])
     .not('stelorder_pdf_original_url', 'is', null)
     .is('stelorder_pdf_url', null)
   if (!docs || docs.length === 0) return { processed: 0, inserted: 0, updated: 0, skipped: 0, errors: 0, errorLog: [] }
@@ -609,7 +609,7 @@ export async function phase8_download_pdfs(ctx: PhaseContext): Promise<PhaseResu
       if (!res.ok) { errors++; errorLog.push({ ref: d.stelorder_reference, error: `HTTP ${res.status}` }); continue }
       const blob = new Uint8Array(await res.arrayBuffer())
       const safeName = (d.stelorder_reference || `DOC-${d.stelorder_id}`).replace(/[^\w.-]/g, '_')
-      const path = `${ctx.companyId}/${d.type}/${safeName}.pdf`
+      const path = `${ctx.companyId}/${d.doc_type}/${safeName}.pdf`
 
       const { error: upErr } = await ctx.supabase.storage
         .from('stelorder-pdfs')

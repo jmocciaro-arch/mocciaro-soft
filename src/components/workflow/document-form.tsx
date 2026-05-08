@@ -419,7 +419,7 @@ export function DocumentForm({
 
           setDoc({
             id: docData.id,
-            type: docData.type || documentType,
+            type: docData.doc_type || documentType,
             status: docData.status || 'draft',
             display_ref: docData.display_ref || (raw?.reference as string) || '',
             system_code: docData.system_code || '',
@@ -465,7 +465,7 @@ export function DocumentForm({
 
           // Load items
           const { data: itemsData } = await supabase
-            .from('tt_document_items')
+            .from('tt_document_lines')
             .select('*')
             .eq('document_id', documentId)
             .order('sort_order')
@@ -498,15 +498,15 @@ export function DocumentForm({
 
           // Load parent links
           const { data: parents } = await supabase
-            .from('tt_document_links')
-            .select('parent_id, relation_type, parent:tt_documents!parent_id(id, type, system_code, display_ref, created_at)')
+            .from('tt_document_relations')
+            .select('parent_id, relation_type, parent:tt_documents!parent_id(id, doc_type, system_code, display_ref, created_at)')
             .eq('child_id', documentId)
 
           setParentLinks((parents || []).map((p: Row) => {
             const parent = p.parent as Row
             return {
               id: (parent?.id as string) || '',
-              type: (parent?.type as string) || '',
+              type: (parent?.doc_type as string) || '',
               system_code: (parent?.system_code as string) || '',
               display_ref: (parent?.display_ref as string) || (parent?.system_code as string) || '',
               created_at: (parent?.created_at as string) || '',
@@ -515,15 +515,15 @@ export function DocumentForm({
 
           // Load child links
           const { data: children } = await supabase
-            .from('tt_document_links')
-            .select('child_id, relation_type, child:tt_documents!child_id(id, type, system_code, display_ref, created_at)')
+            .from('tt_document_relations')
+            .select('child_id, relation_type, child:tt_documents!child_id(id, doc_type, system_code, display_ref, created_at)')
             .eq('parent_id', documentId)
 
           setChildLinks((children || []).map((c: Row) => {
             const child = c.child as Row
             return {
               id: (child?.id as string) || '',
-              type: (child?.type as string) || '',
+              type: (child?.doc_type as string) || '',
               system_code: (child?.system_code as string) || '',
               display_ref: (child?.display_ref as string) || (child?.system_code as string) || '',
               created_at: (child?.created_at as string) || '',
@@ -963,7 +963,7 @@ export function DocumentForm({
         // Update items
         for (const item of editItems) {
           if (item.id.startsWith('new-')) {
-            await supabase.from('tt_document_items').insert({
+            await supabase.from('tt_document_lines').insert({
               document_id: documentId,
               sku: item.sku,
               description: item.description,
@@ -978,7 +978,7 @@ export function DocumentForm({
               section_label: item.section_label,
             })
           } else {
-            await supabase.from('tt_document_items').update({
+            await supabase.from('tt_document_lines').update({
               sku: item.sku,
               description: item.description,
               quantity: item.quantity,
@@ -996,7 +996,7 @@ export function DocumentForm({
         const originalIds = items.map(i => i.id)
         const removedIds = originalIds.filter(id => !currentIds.includes(id))
         for (const rid of removedIds) {
-          await supabase.from('tt_document_items').delete().eq('id', rid)
+          await supabase.from('tt_document_lines').delete().eq('id', rid)
         }
 
         // Log activity (non-blocking, ignore errors)
@@ -1234,7 +1234,7 @@ export function DocumentForm({
     if (!doc) return
     try {
       if (source === 'tt_documents') {
-        await supabase.from('tt_document_items').delete().eq('document_id', documentId)
+        await supabase.from('tt_document_lines').delete().eq('document_id', documentId)
         await supabase.from('tt_documents').delete().eq('id', documentId)
       } else {
         const tableMap: Record<string, string> = {

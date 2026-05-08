@@ -66,12 +66,12 @@ export async function GET(
       if (doc) {
         pedidoNumber = (doc.legal_number as string) || (doc.system_code as string) || null
         // En tt_documents la cotización origen vive en metadata o en
-        // tt_document_links. Probar ambos.
+        // tt_document_relations. Probar ambos.
         const meta = (doc.metadata as Record<string, unknown>) || {}
         quoteId = (meta.quote_id as string) || (meta.source_quote_id as string) || null
         if (!quoteId) {
           const { data: link } = await supabase
-            .from('tt_document_links')
+            .from('tt_document_relations')
             .select('parent_id, relation_type, source_document_id, target_document_id')
             .or(`child_id.eq.${id},target_document_id.eq.${id}`)
             .limit(1)
@@ -113,7 +113,7 @@ export async function GET(
     let itemsCount = 0
     if (oc.document_id) {
       const { count } = await supabase
-        .from('tt_document_items')
+        .from('tt_document_lines')
         .select('id', { count: 'exact', head: true })
         .eq('document_id', oc.document_id)
       itemsCount = count || 0

@@ -60,7 +60,7 @@ function renderDocument(doc: any): string {
     nota_credito: 'NOTA DE CRÉDITO', nota_debito: 'NOTA DE DÉBITO',
     orden_compra: 'ORDEN DE COMPRA', factura_compra: 'FACTURA DE COMPRA',
   }
-  const label = typeLabel[doc.type] || String(doc.type).toUpperCase()
+  const label = typeLabel[doc.doc_type] || String(doc.doc_type).toUpperCase()
   const code = doc.system_code || doc.legal_number || doc.stelorder_reference || '—'
 
   const rowsHtml = (items || []).map((it: any, i: number) => `

@@ -10,7 +10,7 @@ export const runtime = 'nodejs'
  *
  * Borra una cotización + toda la cadena downstream:
  *   - Si source = 'local': cotización en tt_quotes + tt_quote_items.
- *   - Si source = 'tt_documents': tt_documents + tt_document_items + tt_document_links
+ *   - Si source = 'tt_documents': tt_documents + tt_document_lines + tt_document_relations
  *     + downstream (pedidos/albaranes/facturas) por BFS.
  *
  * Snapshot completo en tt_activity_log antes de tocar nada para auditoría
@@ -146,13 +146,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Acceso denegado a este documento' }, { status: 403 })
     }
 
-    // BFS por tt_document_links: la cotización + todos sus descendientes
+    // BFS por tt_document_relations: la cotización + todos sus descendientes
     const docIds = new Set<string>([id])
     const queue: string[] = [id]
     while (queue.length > 0) {
       const parent = queue.shift()!
       const { data: children } = await supabase
-        .from('tt_document_links')
+        .from('tt_document_relations')
         .select('child_id')
         .eq('parent_id', parent)
       for (const c of children || []) {
@@ -169,9 +169,9 @@ export async function POST(req: NextRequest) {
     // Snapshot pre-cascade
     const [docsSnap, itemsSnap, linksSnap] = await Promise.all([
       supabase.from('tt_documents').select('*').in('id', allDocIds),
-      supabase.from('tt_document_items').select('*').in('document_id', allDocIds),
+      supabase.from('tt_document_lines').select('*').in('document_id', allDocIds),
       supabase
-        .from('tt_document_links')
+        .from('tt_document_relations')
         .select('*')
         .or(`parent_id.in.(${allDocIds.join(',')}),child_id.in.(${allDocIds.join(',')})`),
     ])
@@ -194,12 +194,12 @@ export async function POST(req: NextRequest) {
 
     // Hard delete items y links
     const { count: itemsDel } = await supabase
-      .from('tt_document_items')
+      .from('tt_document_lines')
       .delete({ count: 'exact' })
       .in('document_id', allDocIds)
 
     const { count: linksDel } = await supabase
-      .from('tt_document_links')
+      .from('tt_document_relations')
       .delete({ count: 'exact' })
       .or(`parent_id.in.(${allDocIds.join(',')}),child_id.in.(${allDocIds.join(',')})`)
 

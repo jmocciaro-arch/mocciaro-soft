@@ -135,7 +135,7 @@ Respondé SOLO con el JSON, sin texto adicional.`
         .from('tt_documents')
         .insert({
           company_id: companyId,
-          type: 'gasto',
+          doc_type: 'gasto',
           status: 'borrador',
           description: extracted.proveedor
             ? `Gasto - ${extracted.proveedor}`

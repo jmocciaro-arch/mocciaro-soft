@@ -78,12 +78,12 @@ export async function GET(
   if (qt.client_id) {
     const { data: hist } = await supabaseAdmin
       .from('tt_documents')
-      .select('id, type, system_code, display_ref, status, total, currency, created_at')
+      .select('id, doc_type, system_code, display_ref, status, total, currency, created_at')
       .eq('client_id', qt.client_id)
       .eq('company_id', qt.company_id)
       .order('created_at', { ascending: false })
       .limit(20)
-    history = hist ?? []
+    history = (hist ?? []).map((h: Record<string, unknown>) => ({ ...h, type: h.doc_type }))
   }
 
   // 6. Items del documento
@@ -100,7 +100,7 @@ export async function GET(
     },
     document: {
       id: doc.id,
-      type: doc.type,
+      type: doc.doc_type,
       system_code: doc.system_code,
       display_ref: doc.display_ref,
       legal_number: doc.legal_number,
