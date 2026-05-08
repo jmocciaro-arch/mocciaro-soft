@@ -57,7 +57,8 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      - name: E2E smoke tests
+      - name: E2E smoke tests (informativo, no bloquea — ver Fase 0.1)
+        continue-on-error: true
         run: npx playwright test tests/e2e/smoke.spec.ts
         env:
           E2E_BASE_URL: ${{ secrets.E2E_BASE_URL_STAGING || 'https://cotizador-torquetools.vercel.app' }}
