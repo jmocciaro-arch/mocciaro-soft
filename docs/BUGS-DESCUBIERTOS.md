@@ -56,6 +56,20 @@
 - **Workaround:** ejecutar seed manual desde admin
 - **Triage:** ✅ planificado en Fase 2.4
 
+### BUG-05 — Deuda técnica masiva de lint en código preexistente
+- **Descubierto:** 2026-05-08 cuando arrancó el primer CI run
+- **Severidad:** media (no bloquea funcionalidad, sí calidad y seguridad)
+- **Síntoma:** `npm run lint` produce **300 errores + 367 warnings en 256 archivos**.
+- **Distribución de errores top:**
+  - **53** `@typescript-eslint/no-explicit-any` — uso de `any` (regla 7 de CLAUDE.md viola)
+  - **15** `@typescript-eslint/no-unused-vars`
+  - Varios `@typescript-eslint/no-require-imports` (3 archivos en `scripts/`)
+  - **1** `prefer-const`
+  - Múltiples `react-hooks/exhaustive-deps`
+- **Workaround actual:** CI step "Lint" tiene `continue-on-error: true` desde commit que arregla PR #21. **El lint corre y reporta pero NO bloquea merges.** Cuando se complete Fase 0.1 (E2E + tests), endurecer a `continue-on-error: false`.
+- **Plan de remediación:** sprint dedicado a lint cleanup. Estimación 8-12 horas (script automático con `eslint --fix` resuelve unused-vars, prefer-const, require-imports; `no-explicit-any` requiere review caso por caso).
+- **Triage:** 🟡 backlog. No bloquea features. Atacar en bloque cuando sea sprint dedicado.
+
 ---
 
 ## Bugs cerrados
