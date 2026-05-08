@@ -11,7 +11,7 @@ import { OCParserModal } from '@/components/ai/oc-parser-modal'
 import { OCDetailModal } from '@/components/ai/oc-detail-modal'
 import { DocumentProcessBar } from '@/components/workflow/document-process-bar'
 import { buildSteps } from '@/lib/workflow-definitions'
-import { Upload, FileText, Sparkles, RefreshCw, ArrowRight, CheckCircle2, AlertCircle, Clock, Inbox, Eye } from 'lucide-react'
+import { Upload, FileText, Sparkles, RefreshCw, ArrowRight, CheckCircle2, AlertCircle, Clock, Inbox, Eye, Info } from 'lucide-react'
 
 interface OC {
   id: string
@@ -175,6 +175,30 @@ export default function ImportarOCPage() {
 
   return (
     <div className="space-y-4">
+      {/* ══════════════════════════════════════════════════════════════
+          Sprint 1 — Banner: el flujo de subir OC se mueve al Cotizador.
+          Esta página queda como histórico/lectura. Se borra en sprint
+          futuro cuando esté validado el flujo nuevo (no antes).
+          ══════════════════════════════════════════════════════════════ */}
+      <div className="mx-4 sm:mx-6 mt-4 rounded-lg border border-[#FF6600]/30 bg-[#FF6600]/5 p-4 flex items-start gap-3">
+        <Info size={18} className="text-[#FF6600] shrink-0 mt-0.5" />
+        <div className="flex-1">
+          <p className="text-sm font-semibold text-[#F0F2F5]">
+            Subir OC ahora se hace desde el Cotizador
+          </p>
+          <p className="text-xs text-[#9CA3AF] mt-0.5">
+            La OC del cliente entra directo como cotización nueva (con el PDF adjunto y discrepancias detectadas).
+            Esta vista queda como histórico de OCs subidas anteriormente.
+          </p>
+          <button
+            onClick={() => router.push('/cotizador')}
+            className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-[#FF6600] hover:text-[#FF8533] transition"
+          >
+            Ir al Cotizador → "Importar OC" <ArrowRight size={12} />
+          </button>
+        </div>
+      </div>
+
       {/* ══════════════════════════════════════════════════════════════
           REGLA FUNDAMENTAL: Barra sticky con código + stepper + alertas
           ══════════════════════════════════════════════════════════════ */}

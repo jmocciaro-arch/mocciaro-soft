@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
     const { data: quoteDoc, error: insErr } = await supabase
       .from('tt_documents')
       .insert({
-        type: 'cotizacion',
+        doc_type: 'quote',
         system_code: quoteCode,
         legal_number: doc.legal_number ? `COT-desde-OC-${doc.legal_number}` : null,
         client_id: doc.client_id,

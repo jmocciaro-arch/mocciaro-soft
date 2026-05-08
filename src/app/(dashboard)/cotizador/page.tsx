@@ -1,6 +1,8 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useRouter } from 'next/navigation'
+import { OCParserModal } from '@/components/ai/oc-parser-modal'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -25,7 +27,7 @@ import { DataTable, type DataTableColumn } from '@/components/ui/data-table'
 import { mapStatus } from '@/lib/document-helpers'
 import {
   Plus, Minus, Trash2, Save, FileText,
-  MessageSquare, Building2, User, Search, X, Loader2, Printer, List, PlusCircle
+  MessageSquare, Building2, User, Search, X, Loader2, Printer, List, PlusCircle, Upload, Sparkles
 } from 'lucide-react'
 
 interface QuoteLineItem {
@@ -84,9 +86,14 @@ interface SavedQuote {
 type ViewMode = 'create' | 'list' | 'detail'
 
 export default function CotizadorPage() {
+  const router = useRouter()
   const { addToast } = useToast()
   const { filterByCompany, companyKey } = useCompanyFilter()
   const { visibleCompanies, activeCompanyId } = useCompanyContext()
+
+  // Importar OC del cliente como entrada de cotización (Sprint 1)
+  const [ocParserOpen, setOcParserOpen] = useState(false)
+  const [convertingOc, setConvertingOc] = useState(false)
 
   // Pre-carga desde URL params (viene del Lead o de otra pantalla)
   const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
@@ -146,6 +153,40 @@ export default function CotizadorPage() {
     loadCompanies()
 
   }, [visibleCompanies.length, activeCompanyId])
+
+  // ════════════════════════════════════════════════════════════════════
+  // Sprint 1: OC del cliente como entrada de cotización
+  // Recibe { ocParsedId } del OCParserModal, llama /api/oc/create-quote
+  // que crea tt_documents(doc_type='quote') con líneas matcheadas y
+  // metadata.oc_parsed con discrepancias. Después redirige al detalle.
+  // ════════════════════════════════════════════════════════════════════
+  const handleOCParsed = useCallback(async (result: { ocParsedId?: string; discrepancies?: unknown[] }) => {
+    if (!result.ocParsedId) {
+      addToast({ type: 'error', title: 'No se pudo identificar la OC parseada' })
+      return
+    }
+    setConvertingOc(true)
+    try {
+      const res = await fetch('/api/oc/create-quote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ocId: result.ocParsedId }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Error creando cotización desde OC')
+      const discCount = (result.discrepancies || []).length
+      addToast({
+        type: 'success',
+        title: `Cotización ${data.quoteCode} creada desde OC${discCount > 0 ? ` (${discCount} discrepancia${discCount !== 1 ? 's' : ''} detectada${discCount !== 1 ? 's' : ''})` : ''}`,
+      })
+      setOcParserOpen(false)
+      router.push(`/documentos/${data.quoteId}`)
+    } catch (err) {
+      addToast({ type: 'error', title: (err as Error).message })
+    } finally {
+      setConvertingOc(false)
+    }
+  }, [addToast, router])
 
   useEffect(() => {
     generateQuoteNumber()
@@ -608,6 +649,22 @@ export default function CotizadorPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {viewMode === 'create' && (
+            <button
+              onClick={() => setOcParserOpen(true)}
+              disabled={convertingOc || !activeCompanyId}
+              title={!activeCompanyId
+                ? 'Seleccioná una empresa primero'
+                : 'Subí el PDF de la OC del cliente y la IA crea la cotización automáticamente'}
+              className="px-3 py-1.5 rounded-md border border-[#FF6600]/40 hover:bg-[#FF6600]/10 disabled:opacity-50 disabled:cursor-not-allowed text-[#FF6600] text-xs font-semibold transition flex items-center gap-1.5"
+            >
+              {convertingOc ? (
+                <><Loader2 size={14} className="animate-spin" /> Creando…</>
+              ) : (
+                <><Sparkles size={12} /> <Upload size={14} /> Importar OC</>
+              )}
+            </button>
+          )}
           <div className="flex bg-[#0B0E13] rounded-lg border border-[#2A3040] p-0.5">
             <button
               onClick={() => setViewMode('create')}
@@ -1042,6 +1099,19 @@ export default function CotizadorPage() {
           ))}
         </div>
       </Modal>
+
+      {/* ══════════════════════════════════════════════════════════════
+          Sprint 1 — Importar OC del cliente como entrada de cotización
+          ══════════════════════════════════════════════════════════════ */}
+      {activeCompanyId && (
+        <OCParserModal
+          open={ocParserOpen}
+          onClose={() => setOcParserOpen(false)}
+          companyId={activeCompanyId}
+          clientId={selectedClient?.id}
+          onParsed={(result) => { void handleOCParsed(result) }}
+        />
+      )}
     </div>
   )
 }
