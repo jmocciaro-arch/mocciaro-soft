@@ -19,6 +19,7 @@ import { createClient } from '@supabase/supabase-js'
 import * as XLSX from 'xlsx'
 import { parseExpression } from 'cron-parser'
 import { Resend } from 'resend'
+import { wrapCronHandler } from '@/lib/observability/with-cron-logging'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -36,26 +37,7 @@ interface ExportRow {
   is_active: boolean
 }
 
-function isAuthorized(req: NextRequest): boolean {
-  const authHeader = req.headers.get('authorization')
-  const cronSecret = process.env.CRON_SECRET
-  if (!cronSecret) return true  // dev sin secret
-  return authHeader === `Bearer ${cronSecret}`
-}
-
-export async function GET(req: NextRequest) {
-  return runHandler(req)
-}
-
-export async function POST(req: NextRequest) {
-  return runHandler(req)
-}
-
-async function runHandler(req: NextRequest) {
-  if (!isAuthorized(req)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
+const handler = async (req: NextRequest): Promise<NextResponse> => {
   let exportId: string | null = null
   if (req.method === 'POST') {
     try {
@@ -239,3 +221,6 @@ function toXml(rows: Record<string, unknown>[], tag: string): string {
   }).join('\n')
   return `<?xml version="1.0" encoding="UTF-8"?>\n<${tag}>\n${inner}\n</${tag}>`
 }
+
+export const GET = wrapCronHandler('scheduled-exports', handler)
+export const POST = wrapCronHandler('scheduled-exports', handler)

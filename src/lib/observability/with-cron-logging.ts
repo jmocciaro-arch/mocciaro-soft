@@ -26,6 +26,92 @@ import { NextResponse } from 'next/server'
 
 type CronHandler<T = unknown> = (req: NextRequest) => Promise<T>
 
+/**
+ * Variante que acepta un handler que devuelve NextResponse directamente
+ * (handlers existentes que ya manejan su propio response). Loguea el
+ * inicio y el resultado pero no toca el response. Útil para refactor
+ * incremental — envolver crons existentes sin reescribirlos.
+ */
+export function wrapCronHandler(
+  cronName: string,
+  handler: (req: NextRequest) => Promise<NextResponse>,
+  opts: CronOptions = {}
+): (req: NextRequest) => Promise<NextResponse> {
+  const requireSecret = opts.requireSecret ?? true
+
+  return async (req: NextRequest): Promise<NextResponse> => {
+    if (requireSecret) {
+      const authHeader = req.headers.get('authorization') ?? ''
+      const expected = `Bearer ${process.env.CRON_SECRET ?? ''}`
+      if (!process.env.CRON_SECRET || authHeader !== expected) {
+        return NextResponse.json({ error: 'cron secret inválido' }, { status: 401 })
+      }
+    }
+
+    const endpoint = opts.endpoint ?? new URL(req.url).pathname
+    const triggeredBy = req.headers.get('x-vercel-cron') ? 'vercel-cron' : 'manual'
+    const startedAt = Date.now()
+
+    let runId: string | null = null
+    try {
+      const sb = getAdminClient()
+      const { data } = await sb.rpc('fn_log_cron_start', {
+        p_cron_name: cronName,
+        p_endpoint: endpoint,
+        p_triggered_by: triggeredBy,
+        p_app_version: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? null,
+      })
+      if (data) runId = data as unknown as string
+    } catch {
+      // tabla puede no existir todavía — degraded mode
+    }
+
+    try {
+      const response = await handler(req)
+      const duration = Date.now() - startedAt
+      const ok = response.status >= 200 && response.status < 300
+
+      if (runId) {
+        try {
+          const sb = getAdminClient()
+          await sb.rpc('fn_log_cron_finish', {
+            p_run_id: runId,
+            p_status: ok ? 'success' : 'failed',
+            p_result: { http_status: response.status, duration_ms: duration } as object,
+            p_error_message: ok ? null : `HTTP ${response.status}`,
+          })
+        } catch {
+          /* degraded */
+        }
+      }
+
+      return response
+    } catch (err) {
+      const duration = Date.now() - startedAt
+      const error = err as Error
+      console.error(`[cron:${cronName}] failed after ${duration}ms:`, error.message)
+
+      if (runId) {
+        try {
+          const sb = getAdminClient()
+          await sb.rpc('fn_log_cron_finish', {
+            p_run_id: runId,
+            p_status: 'failed',
+            p_error_message: error.message,
+            p_error_stack: error.stack ?? null,
+          })
+        } catch {
+          /* degraded */
+        }
+      }
+      return NextResponse.json(
+        { success: false, cron: cronName, duration_ms: duration, error: error.message },
+        { status: 500 }
+      )
+    }
+  }
+}
+
 interface CronOptions {
   /** Si true (default), valida header `Authorization: Bearer ${CRON_SECRET}` antes de correr. */
   requireSecret?: boolean

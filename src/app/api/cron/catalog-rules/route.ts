@@ -1,10 +1,13 @@
 /**
  * Cron para catalog-rules con trigger scheduled_daily / scheduled_weekly.
  * Además dispara reglas para lotes próximos a vencer y series con calibración.
+ *
+ * Envuelto con wrapCronHandler — Fase 0.6.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { getAdminClient } from '@/lib/supabase/admin'
+import { wrapCronHandler } from '@/lib/observability/with-cron-logging'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -20,31 +23,8 @@ interface RuleRow {
   fire_count: number | null
 }
 
-function isAuthorized(req: NextRequest): boolean {
-  const authHeader = req.headers.get('authorization')
-  const cronSecret = process.env.CRON_SECRET
-  if (!cronSecret) return true
-  return authHeader === `Bearer ${cronSecret}`
-}
-
-export async function GET(req: NextRequest) {
-  return runHandler(req)
-}
-
-export async function POST(req: NextRequest) {
-  return runHandler(req)
-}
-
-async function runHandler(req: NextRequest) {
-  if (!isAuthorized(req)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  const sb = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { persistSession: false } }
-  )
+const handler = async (_req: NextRequest): Promise<NextResponse> => {
+  const sb = getAdminClient()
 
   const day = new Date().getDay()  // 0 = domingo, 1 = lunes, ...
   const triggers = ['scheduled_daily']
@@ -61,19 +41,12 @@ async function runHandler(req: NextRequest) {
 
   const matched: Array<{ rule: string }> = []
 
-  // Para cada regla: ejecutamos sus acciones con un context vacío (no hay before/after).
-  // Las acciones del lado server (notify_email, webhook) deberían correr aquí.
-  // Reusamos la lógica del engine pero ejecutada server-side.
   for (const rule of (rules || []) as RuleRow[]) {
     matched.push({ rule: rule.name })
     void sb.from('tt_catalog_rules').update({
       fire_count: (rule.fire_count || 0) + 1,
       last_fired_at: new Date().toISOString(),
     }).eq('id', rule.id)
-    // TODO: ejecutar acciones server-side. Por ahora solo logueamos disparo —
-    // el browser ejecuta la mayoría de las acciones cuando el usuario está
-    // logueado. Para acciones puramente server-side hace falta portear
-    // executeActions a un módulo server-only.
   }
 
   // Lotes a vencer + reglas lot_expiring
@@ -90,3 +63,6 @@ async function runHandler(req: NextRequest) {
 
   return NextResponse.json({ ran: matched.length, matched })
 }
+
+export const POST = wrapCronHandler('catalog-rules', handler)
+export const GET = wrapCronHandler('catalog-rules', handler)
