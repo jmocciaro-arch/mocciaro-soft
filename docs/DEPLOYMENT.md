@@ -8,7 +8,7 @@
 ## Estado actual (sin staging)
 
 ```
-PR → main → Vercel auto-deploy → cotizador-torquetools.vercel.app
+PR → main → Vercel auto-deploy → mocciaro-soft.vercel.app
 ```
 
 ⚠ **Sin red de seguridad**. Cualquier merge a `main` toca clientes pagos en segundos.
@@ -102,7 +102,7 @@ Secrets en GitHub Settings → Secrets:
 
 Después de cualquier merge a `main`:
 
-- [ ] `cotizador-torquetools.vercel.app/login` carga
+- [ ] `mocciaro-soft.vercel.app/login` carga
 - [ ] Login con cuenta de prueba funciona
 - [ ] `/cotizador` lista cotizaciones
 - [ ] Sentry no muestra errores nuevos en últimos 5 min (cuando esté Fase 0.6)

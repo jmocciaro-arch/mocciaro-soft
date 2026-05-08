@@ -2,7 +2,7 @@
 
 **Version 2.1 — Abril 2026**
 **Plataforma:** Aplicacion web (Next.js / Supabase)
-**URL de produccion:** https://cotizador-torquetools.vercel.app
+**URL de produccion:** https://mocciaro-soft.vercel.app
 
 ---
 
@@ -76,7 +76,7 @@ El sistema opera en modo **multi-empresa**. Las empresas actuales son:
 
 ### 2.1 Login
 
-1. Abri tu navegador y accede a `cotizador-torquetools.vercel.app`.
+1. Abri tu navegador y accede a `mocciaro-soft.vercel.app`.
 2. Vas a ver la pantalla de login con el logo naranja "M" de Mocciaro Soft.
 3. Hace click en **"Iniciar sesion con Google"**.
 4. Selecciona tu cuenta de Google corporativa.

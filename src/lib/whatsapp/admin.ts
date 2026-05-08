@@ -26,7 +26,7 @@ export function last4(token: string): string {
 export function buildWebhookUrl(webhookPath: string): string {
   const base = process.env.NEXT_PUBLIC_APP_URL
     || process.env.VERCEL_URL
-    || 'https://cotizador-torquetools.vercel.app'
+    || 'https://mocciaro-soft.vercel.app'
   const host = base.startsWith('http') ? base : `https://${base}`
   return `${host}/api/whatsapp/webhook/${webhookPath}`
 }

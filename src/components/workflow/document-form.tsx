@@ -3006,7 +3006,7 @@ export function DocumentForm({
                 {signatures.map((sig) => {
                   const isExpired = sig.expires_at && new Date(sig.expires_at) < new Date() && sig.status === 'pending'
                   const effectiveStatus = isExpired ? 'expired' : sig.status
-                  const sigUrl = `https://cotizador-torquetools.vercel.app/portal/${sig.token}`
+                  const sigUrl = `https://mocciaro-soft.vercel.app/portal/${sig.token}`
                   const roleLabels: Record<string, string> = { client: 'Cliente', approver: 'Aprobador', witness: 'Testigo' }
 
                   return (
