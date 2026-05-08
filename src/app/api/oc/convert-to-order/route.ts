@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
     const { data: orderDoc, error: insErr } = await supabase
       .from('tt_documents')
       .insert({
-        type: 'pedido',
+        doc_type: 'pedido',
         system_code: orderCode,
         legal_number: doc.legal_number ? `PED-${doc.legal_number}` : null,
         client_id: doc.client_id,
