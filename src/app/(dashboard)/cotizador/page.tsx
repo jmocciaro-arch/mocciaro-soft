@@ -392,7 +392,7 @@ export default function CotizadorPage() {
     // Load historical from tt_documents (filtered by company)
     let qDoc = sb.from('tt_documents')
       .select('id, display_ref, system_code, status, total, currency, created_at, subtotal, tax_amount, notes, metadata, client_id, client:tt_clients(id, name, legal_name, tax_id)')
-      .in('type', ['coti', 'presupuesto', 'quote'])
+      .in('doc_type', ['coti', 'presupuesto', 'quote'])
     qDoc = filterByCompany(qDoc)
     const { data: docData } = await qDoc.order('created_at', { ascending: false }).limit(50)
 
@@ -431,9 +431,9 @@ export default function CotizadorPage() {
     const supabase = createClient()
     const isDoc = (quote as SavedQuote & { _source?: string })._source === 'tt_documents'
     if (isDoc) {
-      // Load items from tt_document_items
+      // Load items from tt_document_lines
       const { data: docItems } = await supabase
-        .from('tt_document_items')
+        .from('tt_document_lines')
         .select('*')
         .eq('document_id', quote.id)
         .order('sort_order')

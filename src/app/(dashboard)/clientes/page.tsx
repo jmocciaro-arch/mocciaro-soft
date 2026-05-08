@@ -191,7 +191,7 @@ function CompanyDetail({ company, onClose, onUpdate }: {
     const sb = createClient()
     const { data } = await sb
       .from('tt_documents')
-      .select('id, type, system_code, display_ref, status, total, currency, created_at')
+      .select('id, doc_type, system_code, display_ref, status, total, currency, created_at')
       .in('client_id', allClientIds)
       .order('created_at', { ascending: false })
       .limit(30)
@@ -345,12 +345,12 @@ function CompanyDetail({ company, onClose, onUpdate }: {
   const loadOCs = useCallback(async () => {
     const sb = createClient()
     const { data } = await sb.from('tt_documents')
-      .select('id, type, display_ref, system_code, status, total, created_at, metadata')
+      .select('id, doc_type, display_ref, system_code, status, total, created_at, metadata')
       .in('client_id', allClientIds)
       .order('created_at', { ascending: false })
     const withOC = (data || []).filter((d: Record<string, unknown>) => {
       const meta = d.metadata as Record<string, unknown> | null
-      return meta?.client_reference || (d.type as string) === 'pedido'
+      return meta?.client_reference || (d.doc_type as string) === 'pedido'
     })
     setClientOCs(withOC)
   }, [allClientIds])
@@ -613,8 +613,8 @@ function CompanyDetail({ company, onClose, onUpdate }: {
                               <span className="font-mono text-[#FF6600] font-bold">{ocRef}</span>
                               {ocFile && <a href={ocFile.url} target="_blank" rel="noreferrer" className="ml-2 text-[10px] text-blue-400 hover:underline">PDF</a>}
                             </td>
-                            <td className="px-4 py-2.5"><Badge variant="default" size="sm">{(d.type as string) || '-'}</Badge></td>
-                            <td className="px-4 py-2.5"><DocLink docRef={(d.display_ref as string) || (d.system_code as string) || '-'} docId={d.id as string} docType={d.type as string} /></td>
+                            <td className="px-4 py-2.5"><Badge variant="default" size="sm">{(d.doc_type as string) || '-'}</Badge></td>
+                            <td className="px-4 py-2.5"><DocLink docRef={(d.display_ref as string) || (d.system_code as string) || '-'} docId={d.id as string} docType={d.doc_type as string} /></td>
                             <td className="px-4 py-2.5"><Badge variant={((d.status as string) === 'closed' || (d.status as string) === 'paid') ? 'success' : (d.status as string) === 'open' ? 'info' : 'default'} size="sm">{(d.status as string) || '-'}</Badge></td>
                             <td className="px-4 py-2.5 text-xs text-[#9CA3AF] whitespace-nowrap">{d.created_at ? formatDate(d.created_at as string) : '-'}</td>
                             <td className="px-4 py-2.5 text-right font-bold text-[#FF6600]">{formatCurrency((d.total as number) || 0)}</td>
@@ -648,13 +648,13 @@ function CompanyDetail({ company, onClose, onUpdate }: {
                     </TableHeader>
                     <TableBody>
                       {documents.map((doc) => {
-                        const docType = doc.type as string
+                        const docType = doc.doc_type as string
                         const typeLabels: Record<string, string> = { quote: 'Cotizacion', sales_order: 'Pedido', invoice: 'Factura', delivery: 'Remito', purchase_order: 'Orden compra' }
                         const statusColors: Record<string, string> = { draft: 'default', sent: 'info', accepted: 'success', confirmed: 'success', invoiced: 'orange', cancelled: 'danger', paid: 'success' }
                         return (
                           <TableRow key={doc.id as string}>
                             <TableCell><Badge variant="info" size="sm">{typeLabels[docType] || docType}</Badge></TableCell>
-                            <TableCell><DocLink docRef={(doc.display_ref || doc.system_code) as string} docId={doc.id as string} docType={doc.type as string} className="text-xs font-mono" /></TableCell>
+                            <TableCell><DocLink docRef={(doc.display_ref || doc.system_code) as string} docId={doc.id as string} docType={doc.doc_type as string} className="text-xs font-mono" /></TableCell>
                             <TableCell><Badge variant={(statusColors[(doc.status as string)] || 'default') as 'default' | 'success' | 'warning' | 'danger' | 'info' | 'orange'} size="sm">{doc.status as string}</Badge></TableCell>
                             <TableCell className="font-semibold text-[#F0F2F5]">{formatCurrency((doc.total as number) || 0, ((doc.currency as string) || 'EUR') as 'EUR' | 'ARS' | 'USD')}</TableCell>
                             <TableCell className="text-xs text-[#9CA3AF]">{formatDate(doc.created_at as string)}</TableCell>
@@ -692,13 +692,13 @@ function CompanyDetail({ company, onClose, onUpdate }: {
           {/* Pendientes de entrega */}
           <Card>
             <h3 className="text-xs font-semibold text-[#6B7280] uppercase mb-3">Pendientes de entrega</h3>
-            {documents.filter(d => d.type === 'sales_order' && d.status !== 'delivered' && d.status !== 'cancelled').length === 0 ? (
+            {documents.filter(d => d.doc_type === 'sales_order' && d.status !== 'delivered' && d.status !== 'cancelled').length === 0 ? (
               <p className="text-xs text-[#4B5563]">Sin pendientes</p>
             ) : (
               <div className="space-y-2">
-                {documents.filter(d => d.type === 'sales_order' && d.status !== 'delivered' && d.status !== 'cancelled').slice(0, 5).map(d => (
+                {documents.filter(d => d.doc_type === 'sales_order' && d.status !== 'delivered' && d.status !== 'cancelled').slice(0, 5).map(d => (
                   <div key={d.id as string} className="flex items-center justify-between p-2 rounded-lg bg-[#0F1218]">
-                    <DocLink docRef={(d.display_ref || d.system_code) as string} docId={d.id as string} docType={d.type as string} className="text-xs font-mono" />
+                    <DocLink docRef={(d.display_ref || d.system_code) as string} docId={d.id as string} docType={d.doc_type as string} className="text-xs font-mono" />
                     <Badge variant="warning" size="sm">{d.status as string}</Badge>
                   </div>
                 ))}
@@ -709,13 +709,13 @@ function CompanyDetail({ company, onClose, onUpdate }: {
           {/* Pendientes de pago */}
           <Card>
             <h3 className="text-xs font-semibold text-[#6B7280] uppercase mb-3">Pendientes de pago</h3>
-            {documents.filter(d => d.type === 'invoice' && d.status !== 'paid' && d.status !== 'cancelled').length === 0 ? (
+            {documents.filter(d => d.doc_type === 'invoice' && d.status !== 'paid' && d.status !== 'cancelled').length === 0 ? (
               <p className="text-xs text-[#4B5563]">Sin pendientes</p>
             ) : (
               <div className="space-y-2">
-                {documents.filter(d => d.type === 'invoice' && d.status !== 'paid' && d.status !== 'cancelled').slice(0, 5).map(d => (
+                {documents.filter(d => d.doc_type === 'invoice' && d.status !== 'paid' && d.status !== 'cancelled').slice(0, 5).map(d => (
                   <div key={d.id as string} className="flex items-center justify-between p-2 rounded-lg bg-[#0F1218]">
-                    <DocLink docRef={(d.display_ref || d.system_code) as string} docId={d.id as string} docType={d.type as string} className="text-xs font-mono" />
+                    <DocLink docRef={(d.display_ref || d.system_code) as string} docId={d.id as string} docType={d.doc_type as string} className="text-xs font-mono" />
                     <span className="text-xs font-semibold text-red-400">{formatCurrency((d.total as number) || 0, ((d.currency as string) || 'EUR') as 'EUR' | 'ARS' | 'USD')}</span>
                   </div>
                 ))}
@@ -733,7 +733,7 @@ function CompanyDetail({ company, onClose, onUpdate }: {
                 {documents.slice(0, 5).map(d => (
                   <div key={d.id as string} className="flex items-center justify-between p-2 rounded-lg bg-[#0F1218]">
                     <div>
-                      <DocLink docRef={(d.display_ref || d.system_code) as string} docId={d.id as string} docType={d.type as string} className="text-xs font-mono" />
+                      <DocLink docRef={(d.display_ref || d.system_code) as string} docId={d.id as string} docType={d.doc_type as string} className="text-xs font-mono" />
                       <p className="text-[10px] text-[#4B5563]">{formatRelative(d.created_at as string)}</p>
                     </div>
                     <span className="text-xs font-semibold text-[#F0F2F5]">{formatCurrency((d.total as number) || 0, ((d.currency as string) || 'EUR') as 'EUR' | 'ARS' | 'USD')}</span>
@@ -838,7 +838,7 @@ function ClientesTab() {
   const loadMetrics = useCallback(async () => {
     const sb = createClient()
     let qMetrics = sb.from('tt_documents')
-      .select('client_id, type, status, total, created_at')
+      .select('client_id, doc_type, status, total, created_at')
       .not('client_id', 'is', null)
     qMetrics = filterByCompany(qMetrics)
     const { data } = await qMetrics
@@ -858,7 +858,7 @@ function ClientesTab() {
       m.doc_count++
       const total = (doc.total as number) || 0
       const st = doc.status as string
-      const tp = doc.type as string
+      const tp = doc.doc_type as string
       const ca = doc.created_at as string
       if (!m.last_activity || ca > m.last_activity) m.last_activity = ca
 

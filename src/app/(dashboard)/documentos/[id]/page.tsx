@@ -43,7 +43,7 @@ import {
 
 interface DocRow {
   id: string
-  type: string
+  doc_type: string
   subtype?: string | null
   flow_role?: string | null
   system_code: string
@@ -400,7 +400,7 @@ export default function DocumentDetailPage() {
       // 2) En paralelo: items, client, company, links
       const [itemsRes, clientRes, companyRes, linksRes] = await Promise.all([
         sb
-          .from('tt_document_items')
+          .from('tt_document_lines')
           .select('*')
           .eq('document_id', docId)
           .order('sort_order', { ascending: true }),
@@ -419,7 +419,7 @@ export default function DocumentDetailPage() {
               .maybeSingle()
           : Promise.resolve({ data: null, error: null }),
         sb
-          .from('tt_document_links')
+          .from('tt_document_relations')
           .select('id, parent_id, child_id, relation_type, fulfillment_pct')
           .or(`parent_id.eq.${docId},child_id.eq.${docId}`),
       ])
@@ -462,7 +462,7 @@ export default function DocumentDetailPage() {
         const otherIds = Array.from(relatedIds).filter((id) => id !== docId)
         if (otherIds.length > 0) {
           const { data: extraLinks } = await sb
-            .from('tt_document_links')
+            .from('tt_document_relations')
             .select('id, parent_id, child_id, relation_type, fulfillment_pct')
             .or(
               `parent_id.in.(${otherIds.join(',')}),child_id.in.(${otherIds.join(',')})`
@@ -480,7 +480,7 @@ export default function DocumentDetailPage() {
         const { data: chainData } = await sb
           .from('tt_documents')
           .select(
-            'id, type, system_code, display_ref, status, created_at, total, currency, subtotal, tax_amount, client_id, company_id'
+            'id, doc_type, system_code, display_ref, status, created_at, total, currency, subtotal, tax_amount, client_id, company_id'
           )
           .in('id', idsToFetch)
         extraDocs = (chainData || []) as DocRow[]
@@ -493,7 +493,7 @@ export default function DocumentDetailPage() {
 
       // 5) Compras a proveedor (PAPs vinculadas)
       const papDocs = allDocs.filter(
-        (d) => normalizeType(d.type) === 'pap' || d.type === 'factura_compra'
+        (d) => normalizeType(d.doc_type) === 'pap' || d.doc_type === 'factura_compra'
       )
       if (papDocs.length > 0) {
         // Para mostrar proveedor traemos los items de los PAPs no necesarios; el "supplier" lo obtenemos via metadata o client (los PAPs apuntan al proveedor a traves de client_id si la convencion lo permite)
@@ -520,7 +520,7 @@ export default function DocumentDetailPage() {
             }
             // contar items
             const { count } = await sb
-              .from('tt_document_items')
+              .from('tt_document_lines')
               .select('id', { count: 'exact', head: true })
               .eq('document_id', p.id)
 
@@ -681,7 +681,7 @@ export default function DocumentDetailPage() {
     // Mapear doc por tipo normalizado, quedandonos con el mas reciente por tipo
     const byType = new Map<string, DocRow>()
     for (const d of chainDocs) {
-      const normType = normalizeType(d.type)
+      const normType = normalizeType(d.doc_type)
       const existing = byType.get(normType)
       if (
         !existing ||
@@ -691,7 +691,7 @@ export default function DocumentDetailPage() {
       }
     }
 
-    const currentNormType = normalizeType(doc.type)
+    const currentNormType = normalizeType(doc.doc_type)
 
     const steps: WorkflowStep[] = WORKFLOW_ORDER.map((key) => {
       const linked = byType.get(key)
@@ -889,19 +889,19 @@ export default function DocumentDetailPage() {
   // Parent docs for header (docs upstream in the chain)
   const parentDocs = useMemo(() => {
     if (!doc) return []
-    const currentIdx = WORKFLOW_ORDER.indexOf(normalizeType(doc.type))
+    const currentIdx = WORKFLOW_ORDER.indexOf(normalizeType(doc.doc_type))
     if (currentIdx <= 0) return []
     const byType = new Map<string, DocRow>()
     for (const d of chainDocs) {
       if (d.id === doc.id) continue
-      byType.set(normalizeType(d.type), d)
+      byType.set(normalizeType(d.doc_type), d)
     }
     const upstream = WORKFLOW_ORDER.slice(0, currentIdx)
       .map((t) => byType.get(t))
       .filter((d): d is DocRow => !!d)
     return upstream.map((d) => ({
       id: d.id,
-      type: normalizeType(d.type),
+      type: normalizeType(d.doc_type),
       ref: d.display_ref || d.system_code,
     }))
   }, [doc, chainDocs])
@@ -1000,7 +1000,7 @@ export default function DocumentDetailPage() {
 
   const headerDoc = {
     id: doc.id,
-    type: normalizeType(doc.type),
+    type: normalizeType(doc.doc_type),
     system_code: doc.system_code,
     display_ref: doc.display_ref || doc.system_code,
     status: doc.status,
@@ -1033,8 +1033,8 @@ export default function DocumentDetailPage() {
 
   const showSupplierPurchases =
     supplierPurchases.length > 0 ||
-    normalizeType(doc.type) === 'pedido' ||
-    normalizeType(doc.type) === 'pap'
+    normalizeType(doc.doc_type) === 'pedido' ||
+    normalizeType(doc.doc_type) === 'pap'
   const showStockSnapshot = stockSnapshot.length > 0
 
   return (
@@ -1064,9 +1064,9 @@ export default function DocumentDetailPage() {
             </div>
           )}
 
-          {(normalizeType(doc.type) === 'pedido' ||
-            normalizeType(doc.type) === 'albaran' ||
-            normalizeType(doc.type) === 'factura') && (
+          {(normalizeType(doc.doc_type) === 'pedido' ||
+            normalizeType(doc.doc_type) === 'albaran' ||
+            normalizeType(doc.doc_type) === 'factura') && (
             <DeliveryProgressCard
               clientName={
                 client?.legal_name || client?.company_name || 'Cliente'

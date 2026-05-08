@@ -18,7 +18,7 @@ export function WidgetWelcome() {
           supabase.from('tt_products').select('*', { count: 'exact', head: true }),
           supabase.from('tt_clients').select('*', { count: 'exact', head: true }),
           supabase.from('tt_quotes').select('*', { count: 'exact', head: true }).gte('created_at', startOfMonth),
-          supabase.from('tt_documents').select('*', { count: 'exact', head: true }).eq('type', 'coti').gte('created_at', startOfMonth),
+          supabase.from('tt_documents').select('*', { count: 'exact', head: true }).eq('doc_type', 'coti').gte('created_at', startOfMonth),
         ])
 
         setStats({

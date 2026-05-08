@@ -191,7 +191,7 @@ export async function createIntercompanyPurchase(
   await supabase.from('tt_sales_order_items').insert(soItems)
 
   // 7. Link both documents
-  await supabase.from('tt_document_links').insert({
+  await supabase.from('tt_document_relations').insert({
     source_type: 'purchase_order',
     source_id: po.id,
     target_type: 'sales_order',
@@ -261,7 +261,7 @@ export async function getIntercompanyDocuments(companyId: string) {
 
   // Get document links involving this company
   const { data: links } = await supabase
-    .from('tt_document_links')
+    .from('tt_document_relations')
     .select('*')
     .eq('relation_type', 'intercompany')
 

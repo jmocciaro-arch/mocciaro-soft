@@ -96,7 +96,7 @@ export async function POST(req: NextRequest) {
         client:tt_clients ( id, name, cuit )
       `)
       .eq('company_id', companyId)
-      .eq('type', 'factura')
+      .eq('doc_type', 'factura')
       .in('status', ['emitida', 'autorizada', 'pendiente_cobro'])
 
     const openInvoices: OpenInvoice[] = (openInvoicesRaw || []).map((d: any) => ({

@@ -62,14 +62,14 @@ export async function POST(req: NextRequest) {
         .from('tt_documents')
         .select('id')
         .eq('company_id', companyId)
-        .eq('type', 'remito')
+        .eq('doc_type', 'remito')
         .eq('legal_number', legalNumber)
         .maybeSingle()
 
       if (existing) continue
 
       await supabase.from('tt_documents').insert({
-        type: 'remito',
+        doc_type: 'remito',
         legal_number: legalNumber,
         company_id: companyId,
         status: 'emitido',

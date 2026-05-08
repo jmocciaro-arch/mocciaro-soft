@@ -78,7 +78,7 @@ export async function buildForecast(
     .from('tt_documents')
     .select('id, total, currency, invoice_date, metadata, client_id')
     .eq('company_id', companyId)
-    .eq('type', 'factura')
+    .eq('doc_type', 'factura')
     .in('status', ['emitida', 'autorizada', 'pendiente_cobro'])
 
   const invoiceRows = (invoices || []) as InvoiceRow[]
@@ -89,14 +89,14 @@ export async function buildForecast(
     .from('tt_documents')
     .select('*', { count: 'exact', head: true })
     .eq('company_id', companyId)
-    .eq('type', 'factura')
+    .eq('doc_type', 'factura')
     .gte('invoice_date', cutoff90)
 
   const { count: totalCobradas } = await supabase
     .from('tt_documents')
     .select('*', { count: 'exact', head: true })
     .eq('company_id', companyId)
-    .eq('type', 'factura')
+    .eq('doc_type', 'factura')
     .eq('status', 'cobrada')
     .gte('invoice_date', cutoff90)
 

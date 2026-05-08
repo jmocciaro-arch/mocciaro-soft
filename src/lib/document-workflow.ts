@@ -134,7 +134,7 @@ export async function quoteToOrder(
     quoteItems = items || []
   } else {
     const { data: q } = await supabase.from('tt_documents').select('*').eq('id', quoteId).single()
-    const { data: items } = await supabase.from('tt_document_items').select('*').eq('document_id', quoteId).order('sort_order')
+    const { data: items } = await supabase.from('tt_document_lines').select('*').eq('document_id', quoteId).order('sort_order')
     quoteData = q
     quoteItems = items || []
   }

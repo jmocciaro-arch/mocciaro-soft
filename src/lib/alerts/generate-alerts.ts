@@ -39,7 +39,7 @@ export async function generateAlertsForCompany(
       .from('tt_documents')
       .select('id, legal_number, total, currency, invoice_date, client:tt_clients(name), metadata')
       .eq('company_id', companyId)
-      .eq('type', 'factura')
+      .eq('doc_type', 'factura')
       .in('status', ['emitida', 'autorizada', 'pendiente_cobro'])
 
     for (const inv of (invoices || []) as any[]) {
@@ -180,7 +180,7 @@ export async function generateAlertsForCompany(
       .from('tt_documents')
       .select('id, legal_number, total, currency, invoice_date, client:tt_clients(name), metadata')
       .eq('company_id', companyId)
-      .eq('type', 'factura')
+      .eq('doc_type', 'factura')
       .in('status', ['emitida', 'autorizada', 'pendiente_cobro'])
 
     const now = new Date()
@@ -215,7 +215,7 @@ export async function generateAlertsForCompany(
       .from('tt_documents')
       .select('total')
       .eq('company_id', companyId)
-      .eq('type', 'factura')
+      .eq('doc_type', 'factura')
       .in('status', ['emitida', 'autorizada', 'pendiente_cobro'])
 
     const { data: openPOData } = await supabase

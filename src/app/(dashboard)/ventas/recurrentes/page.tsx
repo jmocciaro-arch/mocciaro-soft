@@ -441,7 +441,7 @@ export default function RecurrentesPage() {
         .order('sort_order'),
       sb.from('tt_documents')
         .select('id, display_ref, system_code, status, total, created_at')
-        .eq('type', 'factura')
+        .eq('doc_type', 'factura')
         .ilike('internal_notes', `%${id}%`)
         .order('created_at', { ascending: false })
         .limit(50),
@@ -476,7 +476,7 @@ export default function RecurrentesPage() {
       .insert({
         company_id: sub.company_id,
         client_id: sub.client_id,
-        type: 'factura',
+        doc_type: 'factura',
         display_ref: docNum,
         system_code: docNum,
         status: 'draft',
@@ -499,7 +499,7 @@ export default function RecurrentesPage() {
       return
     }
 
-    // Copy items to tt_document_items
+    // Copy items to tt_document_lines
     if (recItems && recItems.length > 0) {
       const docItems = recItems.map((item: Row, i: number) => ({
         document_id: doc.id,
@@ -512,7 +512,7 @@ export default function RecurrentesPage() {
         line_total: (item.quantity as number) * (item.unit_price as number) * (1 - ((item.discount_pct as number) || 0) / 100),
         sort_order: i,
       }))
-      await sb.from('tt_document_items').insert(docItems)
+      await sb.from('tt_document_lines').insert(docItems)
     }
 
     // Update recurring invoice: next_date, total_generated, last_generated_at

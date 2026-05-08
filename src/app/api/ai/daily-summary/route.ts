@@ -125,11 +125,11 @@ async function generateSummary(
     supabase.from('tt_quotes').select('*', { count: 'exact', head: true }).eq('company_id', companyId).eq('status', 'expired').gte('updated_at', weekStart),
     supabase.from('tt_sales_orders').select('*', { count: 'exact', head: true }).eq('company_id', companyId).gte('created_at', weekStart),
     supabase.from('tt_sales_orders').select('*', { count: 'exact', head: true }).eq('company_id', companyId).eq('status', 'shipped').gte('updated_at', weekStart),
-    supabase.from('tt_documents').select('total, currency').eq('company_id', companyId).eq('type', 'factura').gte('invoice_date', monthStart),
-    supabase.from('tt_documents').select('total, currency').eq('company_id', companyId).eq('type', 'factura').eq('status', 'cobrada').gte('updated_at', monthStart),
-    supabase.from('tt_documents').select('total, currency').eq('company_id', companyId).eq('type', 'factura').in('status', ['emitida', 'autorizada', 'pendiente_cobro']),
-    supabase.from('tt_documents').select('total, currency, invoice_date').eq('company_id', companyId).eq('type', 'factura').in('status', ['emitida', 'autorizada', 'pendiente_cobro']).lt('invoice_date', new Date(Date.now() - 30 * 86400000).toISOString()),
-    supabase.from('tt_documents').select('total, currency').eq('company_id', companyId).eq('type', 'factura').eq('status', 'cobrada').gte('updated_at', monthStart),
+    supabase.from('tt_documents').select('total, currency').eq('company_id', companyId).eq('doc_type', 'factura').gte('invoice_date', monthStart),
+    supabase.from('tt_documents').select('total, currency').eq('company_id', companyId).eq('doc_type', 'factura').eq('status', 'cobrada').gte('updated_at', monthStart),
+    supabase.from('tt_documents').select('total, currency').eq('company_id', companyId).eq('doc_type', 'factura').in('status', ['emitida', 'autorizada', 'pendiente_cobro']),
+    supabase.from('tt_documents').select('total, currency, invoice_date').eq('company_id', companyId).eq('doc_type', 'factura').in('status', ['emitida', 'autorizada', 'pendiente_cobro']).lt('invoice_date', new Date(Date.now() - 30 * 86400000).toISOString()),
+    supabase.from('tt_documents').select('total, currency').eq('company_id', companyId).eq('doc_type', 'factura').eq('status', 'cobrada').gte('updated_at', monthStart),
     supabase.from('tt_agent_tasks').select('*', { count: 'exact', head: true }).eq('company_id', companyId).gte('created_at', today),
   ])
 

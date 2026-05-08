@@ -63,7 +63,7 @@ export async function GET(
 
     // 2. Items del documento + stock disponible actual por línea
     const { data: docItems } = await supabase
-      .from('tt_document_items')
+      .from('tt_document_lines')
       .select('id, product_id, sku, description, quantity, product:tt_products(sku, name)')
       .eq('document_id', id)
       .order('sort_order')

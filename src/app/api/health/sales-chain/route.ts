@@ -27,7 +27,7 @@ export async function GET() {
     'tt_companies', 'tt_clients', 'tt_products',
     'tt_leads', 'tt_lead_interactions',
     'tt_opportunities', 'tt_quotes', 'tt_sales_orders', 'tt_purchase_orders',
-    'tt_documents', 'tt_document_items', 'tt_oc_parsed',
+    'tt_documents', 'tt_document_lines', 'tt_oc_parsed',
     'tt_invoice_providers', 'tt_tango_maestros_cache',
     'tt_bank_statements', 'tt_bank_statement_lines',
     'tt_document_sequences',

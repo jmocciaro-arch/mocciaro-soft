@@ -10,7 +10,7 @@ export const runtime = 'nodejs'
  *
  * Crea una cotización nueva a partir de los items de una OC.
  * Útil cuando el cliente manda una OC directa sin haber pedido cotización previa.
- * Copia items a tt_document_items, auto-matchea la OC con la cotización nueva.
+ * Copia items a tt_document_lines, auto-matchea la OC con la cotización nueva.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -88,7 +88,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Copiar items.
-    // OJO: la columna en tt_document_items es `sort_order` (no `line_number`).
+    // OJO: la columna en tt_document_lines es `sort_order` (no `line_number`).
     // El bug previo insertaba `line_number` y PostgREST rechazaba la fila,
     // dejando la cotización con 0 items pero `total` ya seteado.
     let itemsCreated = 0
@@ -103,7 +103,7 @@ export async function POST(req: NextRequest) {
         subtotal: (item.cantidad || 0) * (item.precio_unitario || 0),
       }))
       const { error: itemsErr, count } = await supabase
-        .from('tt_document_items')
+        .from('tt_document_lines')
         .insert(itemsToInsert, { count: 'exact' })
       if (itemsErr) {
         // No swallow silencioso: devolvemos el error junto con el id de
@@ -132,7 +132,7 @@ export async function POST(req: NextRequest) {
       .eq('id', ocId)
 
     // Link Cotización → OC
-    await supabase.from('tt_document_links').insert({
+    await supabase.from('tt_document_relations').insert({
       parent_id: quoteDoc.id,
       child_id: doc.id,
       relation_type: 'orden_compra',

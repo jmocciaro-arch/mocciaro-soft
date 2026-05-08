@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
     let discrepancies: ReturnType<typeof detectOCDiscrepancies> = []
     if (quoteDocumentId) {
       const { data: items } = await supabase
-        .from('tt_document_items')
+        .from('tt_document_lines')
         .select('sku, description, quantity, unit_price')
         .eq('document_id', quoteDocumentId)
       if (items?.length) {
@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
       const { data: doc } = await supabase
         .from('tt_documents')
         .insert({
-          type: 'orden_compra',
+          doc_type: 'orden_compra',
           system_code: systemCode,
           legal_number: result.data.numero_oc,
           client_id: clientId,
@@ -119,7 +119,7 @@ export async function POST(req: NextRequest) {
 
       // Link OC → cotización
       if (quoteDocumentId && doc?.id) {
-        await supabase.from('tt_document_links').insert({
+        await supabase.from('tt_document_relations').insert({
           parent_id: quoteDocumentId,
           child_id: doc.id,
           relation_type: 'orden_compra',

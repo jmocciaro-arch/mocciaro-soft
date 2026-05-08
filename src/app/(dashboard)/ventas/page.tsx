@@ -151,7 +151,7 @@ function PresupuestosTab() {
   const load = useCallback(async () => {
     setLoading(true)
     const sb = createClient()
-    let q = sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').in('type', ['coti', 'presupuesto', 'quote'])
+    let q = sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').in('doc_type', ['coti', 'presupuesto', 'quote'])
     q = filterByCompany(q)
     const [{ data: docData }, { data: localData }] = await Promise.all([
       q.order('created_at', { ascending: false }).range(0, 499),
@@ -226,7 +226,7 @@ function PedidosTab() {
   const load = useCallback(async () => {
     setLoading(true)
     const sb = createClient()
-    let q = sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').in('type', ['pedido', 'order', 'so'])
+    let q = sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').in('doc_type', ['pedido', 'order', 'so'])
     q = filterByCompany(q)
     const [{ data: docData }, { data: localData }] = await Promise.all([
       q.order('created_at', { ascending: false }).range(0, 499),
@@ -423,7 +423,7 @@ function AlbaranesTab() {
   const load = useCallback(async () => {
     setLoading(true)
     const sb = createClient()
-    let q = sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').in('type', ['delivery_note', 'albaran', 'remito'])
+    let q = sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').in('doc_type', ['delivery_note', 'albaran', 'remito'])
     q = filterByCompany(q)
     const [{ data: docData }, { data: localData }] = await Promise.all([
       q.order('created_at', { ascending: false }).range(0, 499),
@@ -484,7 +484,7 @@ function AlbaranesTab() {
     if (companyIds.size > 1) { addToast({ type: 'error', title: 'Error de validacion', message: 'Todos los albaranes deben ser de la misma empresa' }); return }
     const alreadyInvoiced = docs.filter(d => d.status === 'facturado' || d.status === 'invoiced')
     if (alreadyInvoiced.length > 0) { addToast({ type: 'error', title: 'Error de validacion', message: `${alreadyInvoiced.length} albaran(es) ya estan facturados` }); return }
-    const { data: allItems } = await sb.from('tt_document_items').select('*').in('document_id', ids).order('sort_order')
+    const { data: allItems } = await sb.from('tt_document_lines').select('*').in('document_id', ids).order('sort_order')
     const clientData = docs[0].client as unknown as Row | null
     const deliveryNotes = docs.map(d => ({ id: d.id, ref: (d.display_ref as string) || (d.system_code as string) || 'S/N', date: d.created_at ? formatDate(d.created_at as string) : '-', total: (d.total as number) || 0 }))
     const docRefMap = new Map<string, string>()
@@ -518,7 +518,7 @@ function AlbaranesTab() {
       const taxAmount = subtotal * (taxRate / 100)
       const total = subtotal + taxAmount
       const { data: newInvoice, error: invoiceErr } = await sb.from('tt_documents').insert({
-        type: 'factura', status: 'pending', display_ref: invoiceRef, system_code: invoiceRef,
+        doc_type: 'factura', status: 'pending', display_ref: invoiceRef, system_code: invoiceRef,
         client_id: consolidatePreview.clientId, company_id: consolidatePreview.companyId,
         currency: consolidatePreview.currency, subtotal, tax_amount: taxAmount, total,
         notes: `Factura consolidada de ${consolidatePreview.deliveryNotes.length} albaranes: ${consolidatePreview.deliveryNotes.map(dn => dn.ref).join(', ')}`,
@@ -531,9 +531,9 @@ function AlbaranesTab() {
         unit_price: item.unit_price, discount_pct: item.discount_pct, subtotal: item.subtotal,
         sort_order: idx, product_id: item.product_id, notes: `Desde albaran: ${item.source_dn_ref}`,
       }))
-      if (itemInserts.length > 0) { const { error: itemsErr } = await sb.from('tt_document_items').insert(itemInserts); if (itemsErr) throw itemsErr }
+      if (itemInserts.length > 0) { const { error: itemsErr } = await sb.from('tt_document_lines').insert(itemInserts); if (itemsErr) throw itemsErr }
       const linkInserts = consolidatePreview.deliveryNotes.map(dn => ({ parent_id: dn.id, child_id: newInvoice.id, relation_type: 'consolidated_invoice' }))
-      await sb.from('tt_document_links').insert(linkInserts)
+      await sb.from('tt_document_relations').insert(linkInserts)
       try { await sb.from('tt_invoice_sources').insert(consolidatePreview.deliveryNotes.map(dn => ({ invoice_id: newInvoice.id, source_document_id: dn.id, source_type: 'delivery_note' }))) } catch { /* table might not exist */ }
       await sb.from('tt_documents').update({ status: 'facturado' }).in('id', consolidatePreview.deliveryNotes.map(dn => dn.id))
       try { await sb.from('tt_activity_log').insert({ entity_type: 'document', entity_id: newInvoice.id, action: 'consolidate', detail: `Factura consolidada desde ${consolidatePreview.deliveryNotes.length} albaranes` }) } catch { /* ignore */ }
@@ -736,7 +736,7 @@ function FacturasTab() {
   const load = useCallback(async () => {
     setLoading(true)
     const sb = createClient()
-    let q = sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').in('type', ['factura', 'factura_abono'])
+    let q = sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').in('doc_type', ['factura', 'factura_abono'])
     q = filterByCompany(q)
     const [{ data: docData }, { data: localData }] = await Promise.all([
       q.order('created_at', { ascending: false }).range(0, 499),
@@ -811,7 +811,7 @@ function CobrosTab() {
   const loadInvoices = async () => {
     let q = supabase.from('tt_documents')
       .select('id, display_ref, system_code, total, status, client:tt_clients(name, legal_name)')
-      .in('type', ['factura', 'factura_abono'])
+      .in('doc_type', ['factura', 'factura_abono'])
       .in('status', ['pending', 'partial', 'open', 'sent', 'draft'])
     q = filterByCompany(q)
     const { data } = await q
@@ -962,7 +962,7 @@ function NotasCreditoTab() {
     let q = sb
       .from('tt_documents')
       .select('*, client:tt_clients(id, name, legal_name, tax_id)')
-      .in('type', ['factura', 'factura_abono'])
+      .in('doc_type', ['factura', 'factura_abono'])
       .or(`display_ref.ilike.%${term}%,system_code.ilike.%${term}%`)
       .eq('is_credit_note', false)
     q = filterByCompany(q)
@@ -981,7 +981,7 @@ function NotasCreditoTab() {
     // Load invoice items
     const sb = createClient()
     const { data: items } = await sb
-      .from('tt_document_items')
+      .from('tt_document_lines')
       .select('*')
       .eq('document_id', invoice.id)
       .order('sort_order')
@@ -1046,7 +1046,7 @@ function NotasCreditoTab() {
       .insert({
         company_id: (selectedInvoice.company_id as string) || defaultCompanyId,
         client_id: (selectedInvoice.client_id as string) || null,
-        type: 'factura',
+        doc_type: 'factura',
         display_ref: docNum,
         system_code: docNum,
         status: 'draft',
@@ -1083,7 +1083,7 @@ function NotasCreditoTab() {
       line_total: -(item.quantity * item.unit_price * (1 - (item.discount_pct || 0) / 100)),
       sort_order: i,
     }))
-    const { error: itemsError } = await sb.from('tt_document_items').insert(itemPayloads)
+    const { error: itemsError } = await sb.from('tt_document_lines').insert(itemPayloads)
     if (itemsError) {
       addToast({ type: 'error', title: 'Error al crear items', message: itemsError.message })
     }
@@ -1416,7 +1416,7 @@ function NotasCreditoTab() {
             <div className="p-4 rounded-lg bg-[#0F1218] border border-[#1E2330] text-center">
               <AlertTriangle size={20} className="mx-auto text-amber-400 mb-2" />
               <p className="text-sm text-[#6B7280]">
-                La factura seleccionada no tiene items en tt_document_items.
+                La factura seleccionada no tiene items en tt_document_lines.
                 Se creara la nota de credito por el total de la factura.
               </p>
             </div>

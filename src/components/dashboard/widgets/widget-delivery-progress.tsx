@@ -29,7 +29,7 @@ export function WidgetDeliveryProgress() {
         let q = sb
           .from('tt_documents')
           .select('id, display_ref, system_code, total, status, metadata, client:tt_clients(name, legal_name)')
-          .eq('type', 'pedido')
+          .eq('doc_type', 'pedido')
           .in('status', ['open', 'sent', 'accepted', 'draft'])
           .order('created_at', { ascending: false })
           .limit(8)

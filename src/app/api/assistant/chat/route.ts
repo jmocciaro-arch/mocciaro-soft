@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
         supabase.from('tt_leads').select('*', { count: 'exact', head: true }).eq('company_id', companyId),
         supabase.from('tt_leads').select('name, company_name, ai_score, ai_tags, status').eq('company_id', companyId).eq('ai_temperature', 'hot').order('ai_score', { ascending: false }).limit(5),
         supabase.from('tt_opportunities').select('title, stage, value, currency, probability').eq('company_id', companyId).order('created_at', { ascending: false }).limit(5),
-        supabase.from('tt_documents').select('legal_number, total, currency, invoice_date, client:tt_clients(name)').eq('company_id', companyId).eq('type', 'factura').in('status', ['emitida', 'autorizada', 'pendiente_cobro']).order('invoice_date', { ascending: true }).limit(5),
+        supabase.from('tt_documents').select('legal_number, total, currency, invoice_date, client:tt_clients(name)').eq('company_id', companyId).eq('doc_type', 'factura').in('status', ['emitida', 'autorizada', 'pendiente_cobro']).order('invoice_date', { ascending: true }).limit(5),
         supabase.from('tt_leads').select('name, company_name, ai_score, ai_temperature, status, created_at').eq('company_id', companyId).order('created_at', { ascending: false }).limit(5),
         supabase.from('tt_clients').select('name, email, phone').eq('company_id', companyId).limit(10),
       ])

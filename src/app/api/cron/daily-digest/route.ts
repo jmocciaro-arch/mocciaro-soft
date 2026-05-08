@@ -75,10 +75,10 @@ async function buildStats(supabase: any, companyId: string) {
   ] = await Promise.all([
     supabase.from('tt_leads').select('name, company_name, ai_score').eq('company_id', companyId).eq('ai_temperature', 'hot').order('ai_score', { ascending: false }).limit(5),
     supabase.from('tt_opportunities').select('title, value, currency, stage').eq('company_id', companyId).not('stage', 'in', '(ganado,perdido)').order('value', { ascending: false }).limit(5),
-    supabase.from('tt_documents').select('legal_number, total, currency, client:tt_clients(name)').eq('company_id', companyId).eq('type', 'factura').in('status', ['emitida','autorizada']).gte('invoice_date', new Date(Date.now() - 86400000*35).toISOString()).limit(10),
-    supabase.from('tt_documents').select('legal_number, total, currency, invoice_date, client:tt_clients(name)').eq('company_id', companyId).eq('type', 'factura').in('status', ['emitida','autorizada']).lt('invoice_date', new Date(Date.now() - 86400000*30).toISOString()).limit(10),
-    supabase.from('tt_documents').select('total').eq('company_id', companyId).eq('type', 'factura').eq('status', 'cobrada').gte('updated_at', today0),
-    supabase.from('tt_documents').select('total').eq('company_id', companyId).eq('type', 'factura').eq('status', 'cobrada').gte('updated_at', monthStart),
+    supabase.from('tt_documents').select('legal_number, total, currency, client:tt_clients(name)').eq('company_id', companyId).eq('doc_type', 'factura').in('status', ['emitida','autorizada']).gte('invoice_date', new Date(Date.now() - 86400000*35).toISOString()).limit(10),
+    supabase.from('tt_documents').select('legal_number, total, currency, invoice_date, client:tt_clients(name)').eq('company_id', companyId).eq('doc_type', 'factura').in('status', ['emitida','autorizada']).lt('invoice_date', new Date(Date.now() - 86400000*30).toISOString()).limit(10),
+    supabase.from('tt_documents').select('total').eq('company_id', companyId).eq('doc_type', 'factura').eq('status', 'cobrada').gte('updated_at', today0),
+    supabase.from('tt_documents').select('total').eq('company_id', companyId).eq('doc_type', 'factura').eq('status', 'cobrada').gte('updated_at', monthStart),
     supabase.from('tt_leads').select('*', { count: 'exact', head: true }).eq('company_id', companyId).gte('created_at', yesterday),
     supabase.from('tt_quotes').select('quote_number, total, currency, client:tt_clients(name)').eq('company_id', companyId).in('status', ['draft','sent']).gte('valid_until', today0).lte('valid_until', new Date(Date.now() + 86400000*3).toISOString()),
   ])

@@ -99,7 +99,7 @@ export default function GastosPage() {
       .from('tt_documents')
       .select('id, description, total, subtotal, tax_amount, invoice_date, number, status, currency, created_at, ocr_extracted_data, expense_type, tax_deductible, expense_category')
       .in('company_id', activeCompanyIds)
-      .eq('type', 'gasto')
+      .eq('doc_type', 'gasto')
       .order('created_at', { ascending: false })
       .limit(100)
 

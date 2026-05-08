@@ -27,7 +27,7 @@ export function WidgetSalesChart() {
         const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1)
 
         // Load from both tt_documents and tt_quotes
-        let docQ = sb.from('tt_documents').select('created_at, total').eq('type', 'coti').gte('created_at', sixMonthsAgo.toISOString()).order('created_at', { ascending: true })
+        let docQ = sb.from('tt_documents').select('created_at, total').eq('doc_type', 'coti').gte('created_at', sixMonthsAgo.toISOString()).order('created_at', { ascending: true })
         docQ = filterByCompany(docQ)
 
         let localQ = sb.from('tt_quotes').select('created_at, total').gte('created_at', sixMonthsAgo.toISOString()).order('created_at', { ascending: true })
