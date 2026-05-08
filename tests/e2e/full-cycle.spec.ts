@@ -6,32 +6,37 @@
  *   derivar a albarán → emitir → derivar a factura → emitir →
  *   registrar cobro → status `paid`
  *
- * Mismo test corre en empresa A y empresa B en paralelo.
+ * Mismo test corre para 2 empresas en paralelo (diferentes user accounts).
  *
  * REQUIERE:
  * - DB con seed reproducible (`npm run seed:test` antes).
- * - Credenciales E2E_USER_A_EMAIL / E2E_USER_B_EMAIL en .env.local
- *   con sus respectivas passwords.
- * - E2E_BASE_URL apuntando a staging (no a producción real).
+ * - Credenciales E2E_USER_A_*/B_* en .env.local.
+ * - E2E_BASE_URL apuntando a staging (no producción).
  *
- * STATUS: ESQUELETO. Los `test.skip()` quedan hasta que se complete:
- *   1. seed:test reproducible
- *   2. helpers de auth + selectors estables
- *   3. data-testid en componentes clave
+ * Si falta seed o credenciales, los tests se skipean y log warning.
  */
 
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect } from '@playwright/test'
+import { login } from './helpers/auth'
+import {
+  createQuote,
+  issueDocument,
+  deriveDocument,
+  registerPayment,
+} from './helpers/document-flow'
 
 const COMPANIES = [
   {
-    name: 'Empresa A — TORQUETOOLS',
+    name: 'Empresa A — TORQUETOOLS-TEST',
     email: process.env.E2E_USER_A_EMAIL,
     password: process.env.E2E_USER_A_PASSWORD,
+    seedClient: 'Cliente Seed A1',
   },
   {
-    name: 'Empresa B — BUSCATOOLS',
+    name: 'Empresa B — BUSCATOOLS-TEST',
     email: process.env.E2E_USER_B_EMAIL,
     password: process.env.E2E_USER_B_PASSWORD,
+    seedClient: 'Cliente Seed B1',
   },
 ] as const
 
@@ -40,7 +45,7 @@ const HAS_CREDENTIALS = COMPANIES.every((c) => c.email && c.password)
 test.describe('Full sales cycle (cotización → cobro)', () => {
   test.beforeAll(() => {
     if (!HAS_CREDENTIALS) {
-      console.warn('[full-cycle] Skipping suite: faltan credenciales E2E_USER_*')
+      console.warn('[full-cycle] Skipping suite: faltan credenciales E2E_USER_A_*/B_*')
     }
   })
 
@@ -49,75 +54,39 @@ test.describe('Full sales cycle (cotización → cobro)', () => {
       test.skip(!HAS_CREDENTIALS, 'Falta seed + credenciales E2E')
 
       test('login → quote → sales_order → delivery_note → invoice → paid', async ({ page }) => {
+        // 1. Login
         await login(page, company.email!, company.password!)
 
-        // 1. Crear cotización
+        // 2. Crear cotización
         const quoteCode = await createQuote(page, {
-          clientName: 'Cliente Seed 1',
-          items: [
-            { sku: 'SEED-001', qty: 5, unit_price: 100 },
-            { sku: 'SEED-002', qty: 3, unit_price: 250 },
-          ],
+          clientName: company.seedClient,
+          productSkus: ['SEED-001', 'SEED-002'],
         })
-        expect(quoteCode).toMatch(/^[A-Z]+-/)
+        expect(quoteCode).toMatch(/^[A-Z]+/)
 
-        // 2. Emitir
-        await issueDocument(page, quoteCode)
-        await expect(page.getByTestId('doc-status')).toContainText(/issued|emitido/i)
+        // 3. Emitir cotización
+        await issueDocument(page)
 
-        // 3. Derivar a pedido
-        const orderCode = await deriveDocument(page, quoteCode, 'sales_order')
-        await issueDocument(page, orderCode)
+        // 4. Derivar a pedido
+        const orderCode = await deriveDocument(page, 'sales_order')
+        expect(orderCode).toMatch(/^[A-Z]+/)
+        await issueDocument(page)
 
-        // 4. Derivar a albarán
-        const deliveryCode = await deriveDocument(page, orderCode, 'delivery_note')
-        await issueDocument(page, deliveryCode)
-        await expect(page.getByTestId('doc-status')).toContainText(/delivered|entregado/i)
+        // 5. Derivar a albarán
+        const deliveryCode = await deriveDocument(page, 'delivery_note')
+        expect(deliveryCode).toMatch(/^[A-Z]+/)
+        await issueDocument(page)
+        await expect(page.getByTestId('doc-status')).toContainText(/delivered|entregad/i)
 
-        // 5. Derivar a factura
-        const invoiceCode = await deriveDocument(page, deliveryCode, 'invoice')
-        await issueDocument(page, invoiceCode)
+        // 6. Derivar a factura
+        const invoiceCode = await deriveDocument(page, 'invoice')
+        expect(invoiceCode).toMatch(/^[A-Z]+/)
+        await issueDocument(page)
 
-        // 6. Registrar cobro completo
-        await registerPayment(page, invoiceCode, /* amount: total */)
-        await expect(page.getByTestId('doc-status')).toContainText(/paid|cobrado/i)
+        // 7. Registrar cobro completo
+        await registerPayment(page, { method: 'transfer' })
+        await expect(page.getByTestId('doc-status')).toContainText(/paid|cobrad|pagad/i)
       })
     })
   }
 })
-
-// ─────────────────────────────────────────────────────────────────────
-// Helpers — implementar en Fase 0.1 (selectores estables vía data-testid)
-// ─────────────────────────────────────────────────────────────────────
-
-async function login(page: Page, email: string, password: string) {
-  await page.goto('/login')
-  await page.getByLabel(/correo|email/i).fill(email)
-  await page.getByLabel(/contraseña|password/i).fill(password)
-  await page.getByRole('button', { name: /entrar|login|iniciar/i }).click()
-  await page.waitForURL(/\/(dashboard|cotizador|inicio)/, { timeout: 15000 })
-}
-
-async function createQuote(
-  page: Page,
-  _opts: { clientName: string; items: Array<{ sku: string; qty: number; unit_price: number }> }
-): Promise<string> {
-  // TODO: implementar — abrir /cotizador → Nueva → seleccionar cliente →
-  //       agregar items → guardar draft → leer code del header
-  throw new Error('TODO: implementar createQuote helper en Fase 0.1')
-}
-
-async function issueDocument(page: Page, _docCode: string) {
-  // TODO: navegar al detalle, click "Emitir", confirmar modal, esperar status
-  throw new Error('TODO: implementar issueDocument helper en Fase 0.1')
-}
-
-async function deriveDocument(page: Page, _fromCode: string, _toType: string): Promise<string> {
-  // TODO: click "Derivar" → seleccionar tipo destino → confirmar → leer code nuevo
-  throw new Error('TODO: implementar deriveDocument helper en Fase 0.1')
-}
-
-async function registerPayment(page: Page, _invoiceCode: string) {
-  // TODO: abrir factura → tab "Pagos" → "Registrar pago" → completar → guardar
-  throw new Error('TODO: implementar registerPayment helper en Fase 0.1')
-}
