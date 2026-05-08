@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient as createServiceClient } from '@supabase/supabase-js'
-import { createClient } from '@/lib/supabase/server'
+import { getAdminClient } from '@/lib/supabase/admin'
+import { withCompanyFilter } from '@/lib/auth/with-company-filter'
 
 export const runtime = 'nodejs'
 
@@ -24,35 +24,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Motivo obligatorio' }, { status: 400 })
     }
 
-    // Auth + admin gate
-    const supabaseAuth = await createClient()
-    const { data: { user } } = await supabaseAuth.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
-
-    const { data: ttUser } = await supabaseAuth
-      .from('tt_users')
-      .select('id')
-      .eq('auth_id', user.id)
-      .single()
-    if (!ttUser) return NextResponse.json({ error: 'Usuario no encontrado' }, { status: 401 })
-
-    const { data: roles } = await supabaseAuth
-      .from('tt_user_roles')
-      .select('role:tt_roles(name)')
-      .eq('user_id', ttUser.id)
-    const roleNames = (roles || []).map((r: Record<string, unknown>) => (r.role as Record<string, unknown>)?.name as string)
-    const isAdmin = roleNames.includes('admin') || roleNames.includes('super_admin')
-    if (!isAdmin) {
+    // Auth + admin gate + company access
+    const guard = await withCompanyFilter()
+    if (!guard.ok) return guard.response
+    if (!guard.isAdmin) {
       return NextResponse.json({
         error: 'El borrado en cascada solo lo puede hacer un administrador.',
       }, { status: 403 })
     }
 
-    const supabase = createServiceClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      { auth: { persistSession: false } }
-    )
+    const supabase = getAdminClient()
 
     // 1) Cargar OC parseada con FK al doc OC y al quote matcheado
     const { data: ocp, error: ocpErr } = await supabase
@@ -65,6 +46,11 @@ export async function POST(req: NextRequest) {
     }
     if (ocp.deletion_status === 'deleted') {
       return NextResponse.json({ error: 'La OC ya está eliminada' }, { status: 409 })
+    }
+
+    // Validar que la OC pertenece a una empresa accesible
+    if (!guard.assertAccess((ocp as { company_id: string | null }).company_id)) {
+      return NextResponse.json({ error: 'Acceso denegado a esta OC' }, { status: 403 })
     }
 
     // 2) Construir el set de tt_documents involucrados, recorriendo links
@@ -121,7 +107,7 @@ export async function POST(req: NextRequest) {
     await supabase.from('tt_oc_audit_log').insert({
       oc_parsed_id: ocId,
       action: 'cascade_delete_started',
-      performed_by: ttUser.id,
+      performed_by: guard.ttUserId,
       reason: reason.trim(),
       snapshot,
     })
@@ -150,7 +136,7 @@ export async function POST(req: NextRequest) {
         oc_parsed_id: ocId,
         oc_legal_number: ocp.parsed_items ? null : null, // info viene del doc OC ya snapshotteado
         reason: reason.trim(),
-        cancelled_by: ttUser.id,
+        cancelled_by: guard.ttUserId,
         cancelled_at: new Date().toISOString(),
       },
     }
@@ -183,7 +169,7 @@ export async function POST(req: NextRequest) {
       .from('tt_oc_parsed')
       .update({
         deletion_status: 'deleted',
-        deletion_reviewed_by: ttUser.id,
+        deletion_reviewed_by: guard.ttUserId,
         deletion_reviewed_at: new Date().toISOString(),
         deletion_reason: reason.trim(),
         deletion_review_notes: 'cascade',
@@ -205,7 +191,7 @@ export async function POST(req: NextRequest) {
     await supabase.from('tt_oc_audit_log').insert({
       oc_parsed_id: ocId,
       action: 'cascade_delete_completed',
-      performed_by: ttUser.id,
+      performed_by: guard.ttUserId,
       reason: reason.trim(),
       snapshot: result,
     })
