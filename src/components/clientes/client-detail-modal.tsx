@@ -19,8 +19,10 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/toast'
 import { createClient } from '@/lib/supabase/client'
+import { ClientProductsHistory } from '@/components/clientes/client-products-history'
+import { ProductDetailModal } from '@/components/catalogo/product-detail-modal'
 import {
-  User, MapPin, DollarSign, Users, Building2, Activity,
+  User, MapPin, DollarSign, Users, Building2, Activity, Package,
   Save, Plus, Trash2, Star, AlertCircle, Mail, Phone, Globe2,
   TrendingUp, FileText, Receipt, Hash,
 } from 'lucide-react'
@@ -179,7 +181,7 @@ export function ClientDetailModal({ open, onClose, client, onSaved }: Props) {
   const supabase = createClient()
   const { addToast } = useToast()
 
-  const [tab, setTab] = useState<'general' | 'address' | 'commercial' | 'contacts' | 'addresses' | 'activity'>('general')
+  const [tab, setTab] = useState<'general' | 'address' | 'commercial' | 'contacts' | 'addresses' | 'products' | 'activity'>('general')
   const [form, setForm] = useState<ClientData | null>(null)
   const [stats, setStats] = useState<ClientStats | null>(null)
   const [contacts, setContacts] = useState<ClientContact[]>([])
@@ -188,6 +190,9 @@ export function ClientDetailModal({ open, onClose, client, onSaved }: Props) {
   const [editingContact, setEditingContact] = useState<ClientContact | null>(null)
   const [editingAddress, setEditingAddress] = useState<ClientAddress | null>(null)
   const [saving, setSaving] = useState(false)
+
+  // Sprint 2B — modal de ficha producto al hacer click en un producto del tab Productos
+  const [openProductId, setOpenProductId] = useState<string | null>(null)
 
   // Cargar todo al abrir
   useEffect(() => {
@@ -368,6 +373,7 @@ export function ClientDetailModal({ open, onClose, client, onSaved }: Props) {
             { id: 'commercial', label: 'Comercial',   icon: DollarSign },
             { id: 'contacts',   label: 'Contactos',   icon: Users, count: contacts.length },
             { id: 'addresses',  label: 'Direcciones', icon: Building2, count: addresses.length },
+            { id: 'products',   label: 'Productos',   icon: Package },
             { id: 'activity',   label: 'Actividad',   icon: Activity, count: activity.length },
           ] as const).map(t => (
             <button
@@ -635,6 +641,25 @@ export function ClientDetailModal({ open, onClose, client, onSaved }: Props) {
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* ============ TAB PRODUCTOS (Sprint 2B — trazabilidad) ============ */}
+        {tab === 'products' && client && (
+          <div className="space-y-3">
+            <SectionHeader icon={<Package size={14} />} title="Productos comprados — trazabilidad histórica" />
+            <p className="text-xs text-[#9CA3AF]">
+              Lista de productos que este cliente compró alguna vez (cotizaciones, pedidos, remitos y facturas no canceladas), con totales acumulados, último precio pactado y frecuencia.
+            </p>
+            <ClientProductsHistory
+              clientId={client.id}
+              onProductClick={(productId) => setOpenProductId(productId)}
+            />
+
+            <ProductDetailModal
+              productId={openProductId}
+              onClose={() => setOpenProductId(null)}
+            />
           </div>
         )}
 
