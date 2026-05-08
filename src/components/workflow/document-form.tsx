@@ -1599,13 +1599,14 @@ export function DocumentForm({
         <div className="flex items-center justify-between gap-3 flex-wrap">
           {/* Left: Back + Edit */}
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={onBack}>
+            <Button data-testid="doc-back" variant="ghost" size="sm" onClick={onBack}>
               <ArrowLeft size={16} /> Volver
             </Button>
 
             <div className="w-px h-6 bg-[#2A3040]" />
 
             <Button
+              data-testid={editMode ? 'doc-save' : 'doc-edit'}
               variant={editMode ? 'primary' : 'outline'}
               size="sm"
               onClick={() => {
@@ -1621,7 +1622,7 @@ export function DocumentForm({
             </Button>
 
             {editMode && (
-              <Button variant="ghost" size="sm" onClick={() => setEditMode(false)}>
+              <Button data-testid="doc-cancel-edit" variant="ghost" size="sm" onClick={() => setEditMode(false)}>
                 <X size={14} /> Cancelar
               </Button>
             )}
@@ -1927,7 +1928,7 @@ export function DocumentForm({
                 />
               </div>
             ) : (
-              <code className="text-sm font-mono text-[#9CA3AF] bg-[#0B0E13] px-2.5 py-1 rounded-md border border-[#2A3040]">
+              <code data-testid="doc-code" className="text-sm font-mono text-[#9CA3AF] bg-[#0B0E13] px-2.5 py-1 rounded-md border border-[#2A3040]">
                 {doc.display_ref || doc.system_code || '-'}
               </code>
             )}
@@ -1946,6 +1947,8 @@ export function DocumentForm({
             </select>
           ) : (
             <span
+              data-testid="doc-status"
+              data-status={doc.status}
               className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold"
               style={{
                 background: `${currentStatus.color}20`,
@@ -2330,10 +2333,10 @@ export function DocumentForm({
                 <StockReservationsPanel documentId={doc.id} documentType={documentType} />
               </div>
             )}
-            <div className="bg-[#141820] rounded-xl border border-[#2A3040] overflow-hidden">
+            <div data-testid="doc-items-card" className="bg-[#141820] rounded-xl border border-[#2A3040] overflow-hidden">
             {/* Items table */}
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table data-testid="doc-items-table" className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-[#2A3040] text-[#6B7280] text-xs uppercase tracking-wider">
                     {editMode && <th className="w-8 px-2 py-3" />}
@@ -2500,13 +2503,13 @@ export function DocumentForm({
             {/* Add item buttons */}
             {editMode && (
               <div className="flex items-center gap-2 px-4 py-3 border-t border-[#2A3040]">
-                <Button variant="ghost" size="sm" onClick={addItem}>
+                <Button data-testid="doc-add-item" variant="ghost" size="sm" onClick={addItem}>
                   <Plus size={14} /> Agregar item
                 </Button>
-                <Button variant="ghost" size="sm" onClick={addSection}>
+                <Button data-testid="doc-add-section" variant="ghost" size="sm" onClick={addSection}>
                   <Plus size={14} /> Agregar seccion (OC)
                 </Button>
-                <Button variant="ghost" size="sm" onClick={() => setShowProductSearch(true)}>
+                <Button data-testid="doc-search-product" variant="ghost" size="sm" onClick={() => setShowProductSearch(true)}>
                   <Search size={14} /> Buscar producto
                 </Button>
               </div>

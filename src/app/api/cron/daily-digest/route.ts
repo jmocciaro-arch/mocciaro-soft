@@ -1,26 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { getAdminClient } from '@/lib/supabase/admin'
+import { wrapCronHandler } from '@/lib/observability/with-cron-logging'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
 
 /**
  * POST /api/cron/daily-digest
- * Corre 1 vez al día (Vercel cron 0 8 * * *) y manda resumen ejecutivo por email
- * a cada empresa con digest habilitado.
+ * Corre 1 vez al día (Vercel cron 5 8 * * *) y manda resumen ejecutivo
+ * por email a cada empresa con digest habilitado.
+ *
+ * Envuelto con wrapCronHandler — Fase 0.6.
  */
-export async function POST(req: NextRequest) {
-  const authHeader = req.headers.get('authorization')
-  const cronSecret = process.env.CRON_SECRET
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { persistSession: false } }
-  )
+const handler = async (_req: NextRequest): Promise<NextResponse> => {
+  const supabase = getAdminClient()
 
   const { data: settings } = await supabase
     .from('tt_alert_settings')
@@ -67,7 +60,8 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ ok: true, date: today, results })
 }
 
-export const GET = POST
+export const POST = wrapCronHandler('daily-digest', handler)
+export const GET = wrapCronHandler('daily-digest', handler)
 
 async function buildStats(supabase: any, companyId: string) {
   const now = new Date()

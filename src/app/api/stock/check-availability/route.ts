@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { getAdminClient } from '@/lib/supabase/admin'
+import { withCompanyFilter } from '@/lib/auth/with-company-filter'
 
 export const runtime = 'nodejs'
 
@@ -42,12 +43,23 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      { auth: { persistSession: false } }
-    )
+    const guard = await withCompanyFilter()
+    if (!guard.ok) return guard.response
 
+    // Si se pasa warehouseId, validar que pertenece a empresa accesible
+    if (warehouseId) {
+      const supabaseCheck = getAdminClient()
+      const { data: wh } = await supabaseCheck
+        .from('tt_warehouses')
+        .select('company_id')
+        .eq('id', warehouseId)
+        .maybeSingle()
+      if (!wh || !guard.assertAccess((wh as { company_id: string | null }).company_id)) {
+        return NextResponse.json({ error: 'Warehouse no accesible' }, { status: 403 })
+      }
+    }
+
+    const supabase = getAdminClient()
     const skus = items.map((i) => i.sku).filter(Boolean)
 
     // Buscar productos por SKU
@@ -61,11 +73,19 @@ export async function POST(req: NextRequest) {
     )
     const productIds = Array.from(productIdBySku.values())
 
-    // Obtener stock de tt_stock
+    // Obtener warehouses accesibles para limitar el query de stock
+    // (tt_stock no tiene company_id directo; filtramos vía warehouse_id)
+    const { data: accessibleWarehouses } = await supabase
+      .from('tt_warehouses')
+      .select('id')
+      .in('company_id', guard.accessibleCompanyIds)
+    const accessibleWhIds = (accessibleWarehouses ?? []).map((w) => w.id as string)
+
     let stockQuery = supabase
       .from('tt_stock')
       .select('product_id, quantity, warehouse_id')
       .in('product_id', productIds)
+      .in('warehouse_id', accessibleWhIds.length > 0 ? accessibleWhIds : ['00000000-0000-0000-0000-000000000000'])
 
     if (warehouseId) {
       stockQuery = stockQuery.eq('warehouse_id', warehouseId)

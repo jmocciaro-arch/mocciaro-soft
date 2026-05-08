@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient as createServiceClient } from '@supabase/supabase-js'
-import { createClient } from '@/lib/supabase/server'
+import { getAdminClient } from '@/lib/supabase/admin'
+import { withCompanyFilter } from '@/lib/auth/with-company-filter'
 
 export const runtime = 'nodejs'
 
@@ -19,31 +19,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Motivo obligatorio' }, { status: 400 })
     }
 
-    // Auth
-    const supabaseAuth = await createClient()
-    const { data: { user } } = await supabaseAuth.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
+    const guard = await withCompanyFilter()
+    if (!guard.ok) return guard.response
 
-    const { data: ttUser } = await supabaseAuth
-      .from('tt_users')
-      .select('id')
-      .eq('auth_id', user.id)
-      .single()
-    if (!ttUser) return NextResponse.json({ error: 'Usuario no encontrado' }, { status: 401 })
+    const supabase = getAdminClient()
 
-    const supabase = createServiceClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      { auth: { persistSession: false } }
-    )
-
-    // Chequear estado actual
+    // Chequear estado actual + acceso a company
     const { data: oc } = await supabase
       .from('tt_oc_parsed')
-      .select('deletion_status')
+      .select('deletion_status, company_id')
       .eq('id', ocId)
       .single()
     if (!oc) return NextResponse.json({ error: 'OC no encontrada' }, { status: 404 })
+
+    if (!guard.assertAccess((oc as { company_id: string | null }).company_id)) {
+      return NextResponse.json({ error: 'Acceso denegado a esta OC' }, { status: 403 })
+    }
     if (oc.deletion_status === 'deleted') {
       return NextResponse.json({ error: 'La OC ya está eliminada' }, { status: 409 })
     }
@@ -58,7 +49,7 @@ export async function POST(req: NextRequest) {
       .from('tt_oc_parsed')
       .update({
         deletion_status: 'deletion_requested',
-        deletion_requested_by: ttUser.id,
+        deletion_requested_by: guard.ttUserId,
         deletion_requested_at: new Date().toISOString(),
         deletion_reason: reason.trim(),
       })
@@ -68,7 +59,7 @@ export async function POST(req: NextRequest) {
     await supabase.from('tt_oc_audit_log').insert({
       oc_parsed_id: ocId,
       action: 'deletion_requested',
-      performed_by: ttUser.id,
+      performed_by: guard.ttUserId,
       reason: reason.trim(),
     })
 

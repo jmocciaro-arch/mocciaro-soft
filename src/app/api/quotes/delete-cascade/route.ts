@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient as createServiceClient } from '@supabase/supabase-js'
-import { createClient } from '@/lib/supabase/server'
+import { getAdminClient } from '@/lib/supabase/admin'
+import { withCompanyFilter } from '@/lib/auth/with-company-filter'
 
 export const runtime = 'nodejs'
 
@@ -29,35 +29,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Motivo obligatorio' }, { status: 400 })
     }
 
-    // Auth + admin gate
-    const supabaseAuth = await createClient()
-    const { data: { user } } = await supabaseAuth.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
-
-    const { data: ttUser } = await supabaseAuth
-      .from('tt_users')
-      .select('id')
-      .eq('auth_id', user.id)
-      .single()
-    if (!ttUser) return NextResponse.json({ error: 'Usuario no encontrado' }, { status: 401 })
-
-    const { data: roles } = await supabaseAuth
-      .from('tt_user_roles')
-      .select('role:tt_roles(name)')
-      .eq('user_id', ttUser.id)
-    const roleNames = (roles || []).map((r: Record<string, unknown>) => (r.role as Record<string, unknown>)?.name as string)
-    const isAdmin = roleNames.includes('admin') || roleNames.includes('super_admin')
-    if (!isAdmin) {
+    // Auth + admin gate + company access
+    const guard = await withCompanyFilter()
+    if (!guard.ok) return guard.response
+    if (!guard.isAdmin) {
       return NextResponse.json({
         error: 'El borrado en cascada solo lo puede hacer un administrador.',
       }, { status: 403 })
     }
 
-    const supabase = createServiceClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      { auth: { persistSession: false } }
-    )
+    const supabase = getAdminClient()
 
     // ─────────────────────────────────────────────────────────────────
     // CASO A: cotización legacy en tt_quotes (cascade a sales_orders)
@@ -70,6 +51,10 @@ export async function POST(req: NextRequest) {
         .single()
       if (qErr || !quote) {
         return NextResponse.json({ error: 'Cotización no encontrada' }, { status: 404 })
+      }
+
+      if (!guard.assertAccess((quote as { company_id: string | null }).company_id)) {
+        return NextResponse.json({ error: 'Acceso denegado a esta cotización' }, { status: 403 })
       }
 
       const { data: items } = await supabase
@@ -95,7 +80,7 @@ export async function POST(req: NextRequest) {
         entity_type: 'quote',
         entity_id: id,
         action: 'cascade_delete',
-        detail: { snapshot, performed_by: ttUser.id, reason: reason.trim() },
+        detail: { snapshot, performed_by: guard.ttUserId, reason: reason.trim() },
       })
 
       // Hard delete en orden de dependencias:
@@ -157,6 +142,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Documento no encontrado' }, { status: 404 })
     }
 
+    if (!guard.assertAccess((docRoot as { company_id: string | null }).company_id)) {
+      return NextResponse.json({ error: 'Acceso denegado a este documento' }, { status: 403 })
+    }
+
     // BFS por tt_document_links: la cotización + todos sus descendientes
     const docIds = new Set<string>([id])
     const queue: string[] = [id]
@@ -200,7 +189,7 @@ export async function POST(req: NextRequest) {
       entity_type: 'document',
       entity_id: id,
       action: 'cascade_delete_started',
-      detail: { snapshot, performed_by: ttUser.id, reason: reason.trim() },
+      detail: { snapshot, performed_by: guard.ttUserId, reason: reason.trim() },
     })
 
     // Hard delete items y links
@@ -235,7 +224,7 @@ export async function POST(req: NextRequest) {
       entity_type: 'document',
       entity_id: id,
       action: 'cascade_delete_completed',
-      detail: { result, performed_by: ttUser.id, reason: reason.trim() },
+      detail: { result, performed_by: guard.ttUserId, reason: reason.trim() },
     })
 
     return NextResponse.json({

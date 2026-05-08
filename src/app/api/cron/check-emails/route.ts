@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { google } from 'googleapis'
 import { getGmailTokens, setGmailTokens } from '@/lib/gmail-tokens'
+import { wrapCronHandler } from '@/lib/observability/with-cron-logging'
 
 export const runtime = 'nodejs'
 
@@ -34,13 +35,7 @@ async function getOAuth2Client() {
   return oauth2Client
 }
 
-export async function GET(req: NextRequest) {
-  // Verificar token de cron (Vercel lo provee automáticamente)
-  const authHeader = req.headers.get('authorization')
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}` && process.env.NODE_ENV !== 'development') {
-    return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
-  }
-
+const handler = async (_req: NextRequest): Promise<NextResponse> => {
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -165,3 +160,6 @@ export async function GET(req: NextRequest) {
     )
   }
 }
+
+export const GET = wrapCronHandler('check-emails', handler)
+export const POST = wrapCronHandler('check-emails', handler)

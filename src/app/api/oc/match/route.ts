@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient as createServiceClient } from '@supabase/supabase-js'
+import { getAdminClient } from '@/lib/supabase/admin'
+import { withCompanyFilter } from '@/lib/auth/with-company-filter'
 import { detectOCDiscrepancies, type ParsedOCItem } from '@/lib/ai/parse-oc-pdf'
 
 export const runtime = 'nodejs'
@@ -10,25 +11,48 @@ export const runtime = 'nodejs'
  *
  * Re-matchea una OC con una cotización (o la des-matchea pasando null).
  * Recalcula discrepancias y actualiza la fila de tt_oc_parsed.
+ *
+ * SECURITY (Fase 0.2):
+ * - withCompanyFilter() valida usuario autenticado.
+ * - assertAccess(oc.company_id) garantiza que el user pertenece a la
+ *   empresa de la OC.
+ * - Si quoteDocumentId está presente, se valida que la cotización
+ *   también es de la misma empresa accesible (impide matchear OC de
+ *   empresa A con cotización de empresa B).
  */
 export async function POST(req: NextRequest) {
   try {
     const { ocId, quoteDocumentId } = await req.json()
     if (!ocId) return NextResponse.json({ error: 'ocId requerido' }, { status: 400 })
 
-    const supabase = createServiceClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      { auth: { persistSession: false } }
-    )
+    const guard = await withCompanyFilter()
+    if (!guard.ok) return guard.response
 
-    // Traer la OC con sus items parseados
+    const supabase = getAdminClient()
+
+    // Traer la OC con sus items parseados + company_id para validar acceso
     const { data: oc, error: ocErr } = await supabase
       .from('tt_oc_parsed')
-      .select('id, parsed_items, document_id')
+      .select('id, parsed_items, document_id, company_id')
       .eq('id', ocId)
       .single()
     if (ocErr || !oc) return NextResponse.json({ error: 'OC no encontrada' }, { status: 404 })
+
+    if (!guard.assertAccess(oc.company_id as string | null)) {
+      return NextResponse.json({ error: 'Acceso denegado a esta OC' }, { status: 403 })
+    }
+
+    // Si se pasa quoteDocumentId, validar que es de empresa accesible
+    if (quoteDocumentId) {
+      const { data: quoteDoc } = await supabase
+        .from('tt_documents')
+        .select('company_id')
+        .eq('id', quoteDocumentId)
+        .maybeSingle()
+      if (!quoteDoc || !guard.assertAccess(quoteDoc.company_id as string | null)) {
+        return NextResponse.json({ error: 'Cotización no accesible' }, { status: 403 })
+      }
+    }
 
     const ocItems = (oc.parsed_items || []) as ParsedOCItem[]
 

@@ -1,37 +1,31 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import type { NextRequest } from 'next/server'
+import { getAdminClient } from '@/lib/supabase/admin'
 import { generateAlertsForCompany } from '@/lib/alerts/generate-alerts'
+import { withCronLogging } from '@/lib/observability/with-cron-logging'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
 
 /**
- * POST /api/cron/alerts
- * Ejecutable manualmente o por Vercel cron (schedule: 0 8 * * *).
+ * POST/GET /api/cron/alerts
+ * Schedule: 0 8 * * * (08:00 UTC).
  * Genera alertas para todas las empresas activas.
  *
- * Protegido con CRON_SECRET o por Authorization: Bearer <secret>.
+ * Envuelto en withCronLogging() — Fase 0.6:
+ * - Verifica CRON_SECRET automáticamente.
+ * - Logea start/success/failed en tt_cron_runs.
+ * - Captura errores con stack trace.
  */
-export async function POST(req: NextRequest) {
-  const authHeader = req.headers.get('authorization')
-  const cronSecret = process.env.CRON_SECRET
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { persistSession: false } }
-  )
+const handler = async (_req: NextRequest) => {
+  const supabase = getAdminClient()
 
   const { data: companies } = await supabase
     .from('tt_companies')
     .select('id, name')
     .eq('active', true)
 
-  const results = []
-  for (const c of (companies || []) as any[]) {
+  const results: Array<Record<string, unknown>> = []
+  for (const c of (companies || []) as Array<{ id: string; name: string }>) {
     try {
       const r = await generateAlertsForCompany(supabase, c.id)
       results.push({ company: c.name, ...r })
@@ -40,7 +34,8 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, results })
+  return { companies_processed: results.length, results }
 }
 
-export const GET = POST  // permitir GET desde Vercel cron
+export const POST = withCronLogging('alerts', handler)
+export const GET = withCronLogging('alerts', handler)

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAdminClient } from '@/lib/supabase/admin'
+import { withCompanyFilter } from '@/lib/auth/with-company-filter'
 
 export const runtime = 'nodejs'
 
@@ -7,13 +8,25 @@ export const runtime = 'nodejs'
  * PATCH /api/buscador-clientes/[id]
  * Aprueba o revoca el acceso de un cliente del buscador público.
  * Body: { approved: boolean }
- * Requiere autenticación de admin (server-side, service role).
+ *
+ * SECURITY (Fase 0.2): solo admin/super_admin (la tabla buscador_clientes
+ * es global no multi-empresa, pero modificar approval es acción
+ * sensible que afecta a quién puede ver datos públicos).
  */
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
+
+  const guard = await withCompanyFilter()
+  if (!guard.ok) return guard.response
+  if (!guard.isAdmin) {
+    return NextResponse.json(
+      { error: 'Solo admin puede aprobar/revocar accesos del buscador' },
+      { status: 403 }
+    )
+  }
 
   let body: { approved?: boolean }
   try {

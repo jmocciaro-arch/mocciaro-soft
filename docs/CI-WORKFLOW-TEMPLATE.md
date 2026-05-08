@@ -1,0 +1,109 @@
+# CI Workflow — template para `.github/workflows/ci.yml`
+
+> **Por qué este archivo no está en `.github/workflows/` directamente:**
+> el OAuth token de Claude Code no tiene `workflow` scope (limitación
+> de la app de GitHub). Vos copiás este archivo a su ubicación final
+> con tu propio terminal autenticado.
+>
+> ```bash
+> mkdir -p .github/workflows
+> cp docs/CI-WORKFLOW-TEMPLATE.yml .github/workflows/ci.yml
+> git add .github/workflows/ci.yml
+> git commit -m "ci: agregar workflow de quality gates (Fase 0.6)"
+> git push
+> ```
+>
+> Después en GitHub Settings → Branches → main → Branch protection
+> rules: requerir que el job `quality` pase antes de mergear.
+
+---
+
+# CI — typecheck + lint + tests E2E + build
+#
+# Bloquea merge a `main` si algo falla (configurar branch protection
+# en GitHub Settings → Branches → main → Require status checks).
+#
+# Ver Fase 0 del docs/PLAN-REFACTOR.md para contexto.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main, staging]
+  push:
+    branches: [main]
+
+jobs:
+  quality:
+    name: Quality gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build (Next.js)
+        run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL_STAGING }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY_STAGING }}
+
+      # ─────────────────────────────────────────────
+      # Smoke tests (anonymous, contra preview/staging)
+      # ─────────────────────────────────────────────
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: E2E smoke tests
+        run: npx playwright test tests/e2e/smoke.spec.ts
+        env:
+          E2E_BASE_URL: ${{ secrets.E2E_BASE_URL_STAGING || 'https://cotizador-torquetools.vercel.app' }}
+
+      # ─────────────────────────────────────────────
+      # Service role guard — no debe haber imports
+      # de service_role fuera de @/lib/supabase/admin
+      # ─────────────────────────────────────────────
+      - name: Service role import guard
+        run: |
+          # Falla si algún archivo fuera de src/lib/supabase/admin.ts importa SUPABASE_SERVICE_ROLE_KEY
+          violations=$(grep -rln "SUPABASE_SERVICE_ROLE_KEY" src \
+            --include="*.ts" --include="*.tsx" \
+            | grep -v "src/lib/supabase/admin.ts" || true)
+          if [ -n "$violations" ]; then
+            echo "❌ Archivos fuera de src/lib/supabase/admin.ts referencian SUPABASE_SERVICE_ROLE_KEY:"
+            echo "$violations"
+            echo ""
+            echo "service_role solo puede importarse desde @/lib/supabase/admin (ver CLAUDE.md §3.4)."
+            exit 1
+          fi
+          echo "✅ Service role import guard OK"
+
+      # ─────────────────────────────────────────────
+      # No-write-to-legacy guard
+      # ─────────────────────────────────────────────
+      - name: Legacy tables write guard
+        run: |
+          # Detecta INSERTS/UPDATES nuevos a tablas legacy en archivos modificados
+          legacy_tables="tt_quotes|tt_quote_items|tt_sales_orders|tt_so_items|tt_document_items"
+          violations=$(grep -rE "\.from\(['\"]($legacy_tables)['\"]\)\s*\.(insert|update|upsert)" src \
+            --include="*.ts" --include="*.tsx" || true)
+          if [ -n "$violations" ]; then
+            echo "❌ Detectada escritura en tabla legacy (CLAUDE.md §3.6):"
+            echo "$violations"
+            exit 1
+          fi
+          echo "✅ Legacy write guard OK"
