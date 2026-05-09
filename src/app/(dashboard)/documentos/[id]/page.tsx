@@ -378,12 +378,12 @@ export default function DocumentDetailPage() {
     const load = async () => {
       const sb = createClient()
 
-      // 1) Documento principal — vía endpoint API (service_role bypass de RLS).
-      //    Antes hacíamos sb.from('tt_documents').select(...).maybeSingle() pero
-      //    las RLS policies bloqueaban al cliente para docs creados por flujos
-      //    server-side (ej. cotización generada desde OC). El endpoint usa
-      //    requireAuth() + userHasCompanyAccess() para validar permisos.
+      // 1) Documento + lines + relations + events — vía endpoint API
+      //    (service_role bypass de RLS). El endpoint devuelve TODO en una
+      //    sola request, así evitamos RLS bloqueando items/relations.
       let docData: DocRow | null = null
+      let apiLines: DocItemRow[] = []
+      let apiRelations: LinkRow[] = []
       try {
         const res = await fetch(`/api/documents/${docId}`, { credentials: 'include' })
         if (cancelled) return
@@ -396,6 +396,14 @@ export default function DocumentDetailPage() {
         }
         const j = await res.json()
         docData = (j.document || null) as DocRow | null
+        apiLines = ((j.lines || []) as DocItemRow[])
+        // El endpoint devuelve relations_out (yo soy parent) y relations_in
+        // (yo soy child). Las concatenamos en formato LinkRow.
+        const relsOut = ((j.relations_out || []) as Array<{ id: string; source_document_id: string; target_document_id: string; relation_type: string; fulfillment_pct?: number | null }>)
+          .map(r => ({ id: r.id, parent_id: r.source_document_id, child_id: r.target_document_id, relation_type: r.relation_type, fulfillment_pct: r.fulfillment_pct ?? null }))
+        const relsIn = ((j.relations_in || []) as Array<{ id: string; source_document_id: string; target_document_id: string; relation_type: string; fulfillment_pct?: number | null }>)
+          .map(r => ({ id: r.id, parent_id: r.source_document_id, child_id: r.target_document_id, relation_type: r.relation_type, fulfillment_pct: r.fulfillment_pct ?? null }))
+        apiRelations = [...relsOut, ...relsIn]
       } catch (e) {
         if (cancelled) return
         setError(`Error de red: ${(e as Error).message}`)
@@ -411,14 +419,13 @@ export default function DocumentDetailPage() {
       }
 
       setDoc(docData)
+      // Ordenar lines por sort_order (el endpoint usa line_number; fallback a sort_order)
+      setItems(apiLines.slice().sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)))
 
-      // 2) En paralelo: items, client, company, links
-      const [itemsRes, clientRes, companyRes, linksRes] = await Promise.all([
-        sb
-          .from('tt_document_lines')
-          .select('*')
-          .eq('document_id', docId)
-          .order('sort_order', { ascending: true }),
+      // 2) En paralelo: client, company (no requieren API porque RLS de esas
+      //    tablas suele ser permisivo o el user tiene acceso multi-empresa).
+      //    linksRes = apiRelations ya cargado arriba.
+      const [clientRes, companyRes] = await Promise.all([
         docData.client_id
           ? sb
               .from('tt_clients')
@@ -433,16 +440,11 @@ export default function DocumentDetailPage() {
               .eq('id', docData.company_id)
               .maybeSingle()
           : Promise.resolve({ data: null, error: null }),
-        sb
-          .from('tt_document_relations')
-          .select('id, parent_id, child_id, relation_type, fulfillment_pct')
-          .or(`parent_id.eq.${docId},child_id.eq.${docId}`),
       ])
+      const linksRes = { data: apiRelations, error: null }
 
       if (cancelled) return
 
-      const itemsData = (itemsRes.data || []) as DocItemRow[]
-      setItems(itemsData)
       setClient((clientRes.data as ClientRow | null) || null)
       setCompany((companyRes.data as CompanyRow | null) || null)
 
@@ -567,9 +569,9 @@ export default function DocumentDetailPage() {
       }
 
       // 6) Stock snapshot por SKUs
-      const productIds = itemsData
-        .map((i) => i.product_id)
-        .filter((x): x is string => !!x)
+      const productIds = apiLines
+        .map((i: DocItemRow) => i.product_id)
+        .filter((x: string | null): x is string => !!x)
 
       if (productIds.length > 0) {
         try {
@@ -613,7 +615,7 @@ export default function DocumentDetailPage() {
           }
 
           const snapshot: StockSnapshotItem[] = productIds
-            .map((pid) => {
+            .map((pid: string) => {
               const meta = productsMap.get(pid)
               if (!meta) return null
               const st = stockAgg.get(pid) || { quantity: 0, reserved: 0 }
@@ -630,7 +632,7 @@ export default function DocumentDetailPage() {
                 indicator: stockSnapshotIndicator(available),
               } as StockSnapshotItem
             })
-            .filter((x): x is StockSnapshotItem => x !== null)
+            .filter((x: StockSnapshotItem | null): x is StockSnapshotItem => x !== null)
 
           if (!cancelled) setStockSnapshot(snapshot)
         } catch (e) {
