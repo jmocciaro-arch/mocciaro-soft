@@ -55,7 +55,8 @@ const navItems: NavItem[] = [
   // ── Ventas (flujo de venta) ──
   { label: 'Cotizador', href: '/cotizador', icon: FileText, badgeKey: 'quotes_draft', requiredPermissions: ['create_quote', 'edit_quote', 'view_sales_reports'] },
   { label: 'Pedidos', href: '/ventas?tab=pedidos', icon: ClipboardList, badgeKey: 'so_open', requiredPermissions: ['create_order', 'approve_order', 'view_sales_reports'] },
-  { label: 'Importar OC', href: '/ventas/importar-oc', icon: FileText, requiredPermissions: ['create_order'] },
+  // 'Importar OC' removido — ahora se sube desde Cotizador → botón "Importar OC".
+  // La ruta /ventas/importar-oc sigue funcionando (redirect) para no romper accesos viejos.
   { label: 'Albaranes', href: '/ventas?tab=albaranes', icon: Truck, requiredPermissions: ['create_order', 'view_sales_reports'] },
   { label: 'Facturas', href: '/ventas?tab=facturas', icon: CreditCard, requiredPermissions: ['view_financials', 'create_invoice'] },
   { label: 'Recurrentes', href: '/ventas/recurrentes', icon: RefreshCw, requiredPermissions: ['create_invoice'] },
