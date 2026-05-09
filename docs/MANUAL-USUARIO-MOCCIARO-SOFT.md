@@ -1,6 +1,6 @@
 # Manual de Usuario — Mocciaro Soft ERP
 
-**Version 2.1 — Abril 2026**
+**Version 2.2 — Mayo 2026**
 **Plataforma:** Aplicacion web (Next.js / Supabase)
 **URL de produccion:** https://mocciaro-soft.vercel.app
 
@@ -78,12 +78,26 @@ El sistema opera en modo **multi-empresa**. Las empresas actuales son:
 
 1. Abri tu navegador y accede a `mocciaro-soft.vercel.app`.
 2. Vas a ver la pantalla de login con el logo naranja "M" de Mocciaro Soft.
-3. Hace click en **"Iniciar sesion con Google"**.
-4. Selecciona tu cuenta de Google corporativa.
-5. Si tu email esta registrado en el sistema, entras directo al Dashboard.
-6. Si es tu primer ingreso, el admin ya te tiene que haber creado la cuenta desde Administracion.
+3. Tenes dos formas de entrar:
+   - **Iniciar sesion con Google** (lo mas comun) — usas tu cuenta corporativa de Google.
+   - **Email + contrasena** — para usuarios que no tienen cuenta Google asociada.
+4. Si tu email esta registrado en el sistema, entras directo al Dashboard.
+5. Si es tu primer ingreso, el admin ya te tiene que haber creado la cuenta desde Administracion.
 
-> **Nota:** El login se hace con Google OAuth. No hay usuario/contrasena propio del sistema.
+> **Nota:** Recomendamos Google OAuth porque es mas seguro y no tenes que recordar otra contrasena.
+
+#### Recovery de contrasena (¿Olvidaste tu contrasena?)
+
+Si entras con email + contrasena y te olvidaste:
+
+1. En la pantalla de login, debajo del formulario, hace click en el link **"¿Olvidaste tu contrasena?"**.
+2. Ingresa tu email registrado y hace click en **Enviar**.
+3. Vas a recibir un correo con un **link de recuperacion** (puede tardar unos minutos, revisa tambien spam).
+4. Hace click en el link → se abre la pagina para definir una nueva contrasena.
+5. Ingresa la nueva contrasena dos veces (debe tener minimo 8 caracteres).
+6. Hace click en **Restablecer**. Ya quedas logueado y listo para usar el sistema.
+
+> **Nota:** El link de recuperacion expira a las 24 horas. Si pasa mas tiempo, repeti el proceso.
 
 ### 2.2 Seleccionar empresa activa 🏢
 
@@ -102,10 +116,13 @@ El sistema opera en modo **multi-empresa**. Las empresas actuales son:
 
 - **Sidebar izquierdo:** Menu principal con todos los modulos. Fondo oscuro (#0A0D12), iconos en gris que se iluminan en naranja (#FF6600) cuando estan activos.
 - **Barra superior:** Boton de busqueda (Cmd+K), campana de alertas, selector de empresa, avatar del usuario.
+- **Boton "← Volver":** Arriba a la izquierda del titulo, despues del menu hamburguesa, vas a ver un boton con flecha izquierda y la palabra **"Volver"**. Aparece en **todas las paginas excepto el dashboard raiz**. Hace click y volves a la pagina anterior del historial del navegador (igual que el boton "atras" del navegador, pero siempre visible y a mano).
 - **Mobile:** La sidebar se oculta y aparece una **barra inferior** con los 5 modulos principales (Dashboard, Dashboard Ejecutivo, Hub IA, CRM, Cotizador).
 - **Colapsar sidebar:** Hace click en el boton "Contraer" al pie de la sidebar para pasar a modo iconos (72px ancho) y ganar espacio.
 
-[Screenshot: Layout general con sidebar expandida, topbar y area de contenido]
+[Screenshot: Layout general con sidebar expandida, topbar, boton "Volver" y area de contenido]
+
+> **Tip:** El boton "Volver" es muy util cuando entras a una ficha desde un buscador, KPI clickeable o link cruzado y queres regresar al listado donde estabas sin perder el filtro/scroll.
 
 ---
 
@@ -149,6 +166,24 @@ El dashboard principal usa un **grid configurable** (react-grid-layout) con widg
 | Progreso entregas | Barra de avance de entregas |
 
 > Cada badge naranja en la sidebar muestra conteos en tiempo real: cotizaciones en borrador, pedidos abiertos, PO pendientes y tickets SAT abiertos. Se refrescan cada 60 segundos.
+
+### KPIs clickeables (acceso rapido a cada modulo) ✨
+
+Los **9 KPIs principales** del dashboard ahora son **clickeables**: pasas el mouse por encima y vas a ver una **flechita ↗ naranja** que indica que el KPI navega a la seccion correspondiente. Hace click y entras directo al modulo, sin pasar por la sidebar.
+
+| KPI | A donde te lleva |
+|-----|------------------|
+| Productos | `/catalogo` |
+| Clientes activos | `/clientes` |
+| Cotizaciones del mes | `/cotizador` |
+| Pipeline CRM | `/crm` |
+| Entregas pendientes | `/ventas?tab=pedidos` |
+| Facturas pendientes | `/ventas?tab=remitos` |
+| Cobros pendientes | `/cobros` |
+| Alertas stock | `/stock` |
+| Pagos pendientes | `/compras` |
+
+> **Tip:** combinalo con el boton **"← Volver"** (ver seccion 2.3) y te moves super rapido entre el dashboard y cada modulo sin perder el contexto.
 
 ---
 
@@ -209,7 +244,7 @@ Es la vista de gerencia. Muestra en una sola pantalla todos los numeros clave de
 18. Al final hay una fila de 5 botones rapidos:
     - **Nueva cotizacion** → `/cotizador`
     - **Nuevo lead** → `/crm/leads`
-    - **Importar OC** → `/ventas/importar-oc`
+    - **Importar OC** → `/cotizador` (abre el cotizador con el modal de importar OC; ver seccion 6.3)
     - **Subir extracto** → `/cobros`
     - **Diagnostico** → `/admin/diagnostico`
 
@@ -398,8 +433,9 @@ Cada columna muestra: cantidad de oportunidades, valor total, y las tarjetas ind
 
 ### Vista general
 
-El cotizador tiene dos modos (toggle arriba a la derecha):
-- **Nueva** (PlusCircle) — crear cotizacion nueva
+El cotizador tiene dos modos (toggle arriba a la derecha) mas un boton de importacion:
+- **✨ ↑ Importar OC** (boton naranja a la izquierda del toggle) — sube el PDF de una OC del cliente y la IA crea la cotizacion automaticamente (ver seccion 6.3)
+- **Nueva** (PlusCircle) — crear cotizacion nueva manualmente
 - **Guardadas** (List) — ver historial de cotizaciones
 
 ---
@@ -501,10 +537,49 @@ El cotizador tiene dos modos (toggle arriba a la derecha):
 
 ---
 
+### 6.3 Importar OC del cliente desde el cotizador 🤖✨
+
+**URL:** `/cotizador` → boton **"✨ ↑ Importar OC"**
+**Permisos:** `create_quote`
+
+Esta es la forma rapida de cargar un pedido cuando el cliente te manda directamente su **Orden de Compra (OC) en PDF**, en vez de pedirte una cotizacion previa. La IA lee el PDF y te crea la cotizacion lista para guardar.
+
+> **Importante:** Antes habia un item separado "Importar OC" en la sidebar y una pagina propia (`/ventas/importar-oc`). Eso **se unifico**: ahora el upload se hace **solo desde el cotizador**. Si tenes links viejos a `/ventas/importar-oc`, el sistema te redirige automaticamente al cotizador, asi que no se rompe nada.
+
+#### Paso a paso
+
+1. Andate a **Cotizador** en la sidebar.
+2. Arriba a la derecha, al lado de los botones **Nueva** y **Guardadas**, vas a ver el boton naranja **"✨ ↑ Importar OC"**.
+3. Hace click → se abre el **modal de importacion de OC**.
+4. Arrastra el PDF de la OC del cliente a la zona indicada o hace click en **Seleccionar archivo**.
+5. La **IA procesa el PDF** 🤖 y extrae automaticamente:
+   - **Numero de OC** y **fecha**
+   - **Cliente** (razon social, CIF/CUIT)
+   - **Proveedor** (la empresa emisora — se matchea con tus empresas configuradas)
+   - **Condicion de pago** e **Incoterm**
+   - **Direccion de entrega**
+   - **Moneda**
+   - **Items**: SKU, descripcion, cantidad, precio unitario, IVA por linea
+   - **Totales** (subtotal, IVA, total)
+6. Vas a ver una **vista previa** con todos los datos extraidos. Revisalos:
+   - Si algun campo no se detecto bien, podes editarlo en el modal antes de confirmar.
+   - Si el cliente no existe, el sistema te ofrece crearlo en el momento.
+7. Hace click en **Confirmar** (o **Crear cotizacion**).
+8. Se crea **automaticamente una cotizacion** en el sistema (con su codigo COT-2026-XXXX) cargada con todos los datos de la OC.
+9. La cotizacion queda **vinculada bidireccionalmente** con el PDF original de la OC para trazabilidad: desde la cotizacion podes abrir la OC y viceversa.
+
+[Screenshot: Modal de importar OC con PDF subido y vista previa de items extraidos por IA]
+
+> **Tip:** Despues de confirmar, podes seguir editando la cotizacion como cualquier otra (cambiar precios, agregar/quitar items, ajustar condiciones) antes de convertirla en pedido.
+
+---
+
 ## 7. Ventas
 
 **URL:** `/ventas`
-**Sidebar:** Pedidos, Importar OC, Albaranes, Facturas (items separados)
+**Sidebar:** Pedidos, Albaranes, Facturas (items separados)
+
+> **Cambio reciente:** El item "Importar OC" del sidebar **fue eliminado**. La importacion de OC del cliente ahora se hace **desde el cotizador** (ver seccion 6.3). La URL vieja `/ventas/importar-oc` sigue funcionando: redirige automaticamente al cotizador.
 
 ### Estructura
 
@@ -536,38 +611,15 @@ La pagina de Ventas tiene **5 tabs**:
 
 ### 7.2 Importar OC del cliente 🤖
 
-**URL:** `/ventas/importar-oc`
-**Sidebar:** Importar OC (icono FileText)
-**Permisos:** `create_order`
-
-1. Hace click en **Importar OC** en la sidebar.
-2. Vas a ver la pagina con:
-   - **Barra de proceso**: muestra el flujo OC recibida → Parseada → Comparada → Pedido creado
-   - Lista de OCs ya importadas
-   - Lista de cotizaciones abiertas para comparar
-
-#### Subir PDF de OC
-
-3. Hace click en **Subir OC** (boton con icono Upload).
-4. Se abre el modal **OCParserModal**.
-5. Arrastra o selecciona el PDF de la orden de compra del cliente.
-6. La **IA parsea automaticamente** 🤖 el PDF:
-   - Extrae: numero de OC, cliente, items, cantidades, precios, condiciones
-   - Detecta el proveedor de IA usado (nombre del servicio)
-   - Calcula un **score de confianza** (0-100%)
-
-#### Comparar con cotizacion
-
-7. La IA compara automaticamente la OC con la cotizacion vinculada.
-8. Si hay **discrepancias** (diferencias de precio, cantidad, items), se muestran con severidad:
-   - 🟢 **Low** — diferencias menores
-   - 🟡 **Medium** — requiere revision
-   - 🔴 **High** — discrepancia critica
-
-9. Revisas cada discrepancia y decides si continuar.
-10. Hace click en **Crear pedido** para convertir la OC en un pedido de venta.
-
-[Screenshot: Modal de importacion de OC con IA parseando PDF y mostrando discrepancias]
+> **Movido al Cotizador.** Toda la importacion de OC del cliente ahora vive en `/cotizador → boton "✨ ↑ Importar OC"`. Consulta la **seccion 6.3** de este manual para el paso a paso completo.
+>
+> Resumen del flujo nuevo:
+> 1. Subis el PDF de la OC desde el cotizador.
+> 2. La IA extrae cliente, items, condiciones, totales.
+> 3. Se crea automaticamente una **cotizacion** vinculada a la OC.
+> 4. Desde la cotizacion convertis a **pedido** como siempre (boton "Convertir a pedido").
+>
+> Si hay discrepancias entre la OC y una cotizacion previa, podes compararlas desde el detalle de la cotizacion creada (la IA marca diferencias de precio/cantidad con severidad Low / Medium / High).
 
 ---
 
@@ -787,7 +839,7 @@ Pantalla completa de gestion de inventario con tabs.
 **Sidebar:** Clientes (icono Users)
 **Permisos:** `view_clients`
 
-### Estructura (6 tabs)
+### Estructura (6 tabs en la pagina principal)
 
 | Tab | Funcion |
 |-----|---------|
@@ -798,6 +850,8 @@ Pantalla completa de gestion de inventario con tabs.
 | Contactos | Personas de contacto asociadas |
 | Duplicados | Deteccion y merge de duplicados |
 
+> Cuando entras a la **ficha de un cliente** (haciendo click en una fila) se abre un drawer lateral con sus propios tabs internos: Datos, Contactos, Relacionadas, OC Recibidas, **Productos**, Historial, Documentos. Ver seccion 11.2.
+
 ### 11.1 Lista de clientes
 
 1. Hace click en **Clientes** en la sidebar.
@@ -805,16 +859,39 @@ Pantalla completa de gestion de inventario con tabs.
 3. Busca por nombre, razon social, CIF/CUIT o email.
 4. Hace click en un cliente para ver el detalle.
 
-### 11.2 Detalle del cliente
+### 11.2 Detalle del cliente (drawer con tabs)
 
-5. En el detalle vas a ver:
-   - Datos generales: nombre, razon social, CIF, email, telefono, direccion, pais
-   - **Contactos** asociados (personas de la empresa)
-   - **Empresas relacionadas** (RelatedCompanies)
-   - **Historial de documentos** vinculados (cotizaciones, pedidos, facturas)
-   - **Log de actividad**
-   - Botones: Editar, Marcar favorito, WhatsApp, Email, Telefono
-   - Vinculo a la ficha de StelOrder (si fue migrado)
+5. Al hacer click en un cliente se abre un **drawer lateral** con la ficha completa del cliente, organizada en **tabs**:
+
+| Tab | Contenido |
+|-----|-----------|
+| Datos | Nombre, razon social, CIF/CUIT, email, telefono, direccion, pais, condiciones |
+| Contactos | Personas de contacto asociadas a la empresa |
+| Relacionadas | Empresas relacionadas (RelatedCompanies) |
+| OC Recibidas | Ordenes de compra que envio el cliente |
+| **Productos** ✨ | Productos que compro este cliente (ver 11.2.1) |
+| Historial | Log cronologico de actividad |
+| Documentos | Cotizaciones, pedidos, albaranes, facturas vinculados |
+
+6. Botones de accion en el header del drawer: Editar, Marcar favorito, WhatsApp, Email, Telefono.
+7. Vinculo a la ficha de StelOrder (si fue migrado).
+
+#### 11.2.1 Tab "Productos" del cliente ✨
+
+Esta tab te muestra **que productos te compro este cliente** y con que recurrencia, para preparar reordenes, detectar oportunidades de cross-selling o validar precios historicos.
+
+8. Hace click en la tab **Productos** dentro del drawer del cliente.
+9. Vas a ver una tabla con una fila por producto comprado, con las siguientes columnas:
+   - **Producto** (SKU + descripcion)
+   - **Cantidad total acumulada** (suma de todas las compras)
+   - **Importe total acumulado**
+   - **Ultimo precio pactado** (el de la operacion mas reciente)
+   - **Primera compra** (fecha)
+   - **Ultima compra** (fecha)
+10. La tabla se ordena por defecto por **importe total** descendente (los productos donde el cliente mas gasto van arriba).
+11. **Hace click en cualquier producto** y se abre la **ficha del producto** con cross-link → desde la ficha vas a ver tambien que otros clientes compraron ese mismo producto (ver seccion 12.4).
+
+> **Tip:** Si el cliente nunca te compro nada, la tab muestra un mensaje vacio invitandote a crear la primera cotizacion.
 
 ### 11.3 Crear cliente
 
@@ -870,6 +947,41 @@ El catalogo completo de productos con dos modos de visualizacion: **Grilla** (Gr
 8. **Crear producto** — boton + para agregar un producto manualmente.
 
 [Screenshot: Catalogo en modo grilla con imagenes, precios y filtros por marca]
+
+---
+
+### 12.4 Ficha del producto y trazabilidad producto ↔ cliente ✨
+
+Cuando haces click en un producto (desde el catalogo, desde la tab Productos de un cliente, o desde un buscador) se abre la **ficha del producto** con un modal extendido que tiene varias tabs.
+
+#### Como abrir la ficha
+
+- **Desde el catalogo:** click en la tarjeta o fila del producto.
+- **Desde la ficha de un cliente:** tab Productos → click en cualquier producto comprado.
+- **Desde un documento:** click en el SKU dentro de una linea de cotizacion/pedido/factura.
+
+#### Tab "Clientes" del producto ✨
+
+Esta tab te dice **quienes compraron este producto** y a que precio. Es la contraparte de la tab Productos en la ficha de cliente (ver 11.2.1).
+
+1. Dentro de la ficha del producto, hace click en la tab **Clientes**.
+2. Vas a ver una tabla con una fila por cliente que compro el producto, con:
+   - **Cliente** (nombre + CIF/CUIT)
+   - **Cantidad total comprada**
+   - **Importe total acumulado**
+   - **Ultimo precio pactado**
+   - **Primera compra** (fecha)
+   - **Ultima compra** (fecha)
+   - **Ranking** (posicion del cliente en compras de este producto)
+3. Por defecto se ordena por **importe total** descendente (los mejores compradores arriba).
+4. **Hace click en cualquier cliente** y volves a la ficha del cliente (cross-link bidireccional).
+
+> **Para que sirve:**
+> - Ver rapido el **mejor precio historico** que diste por ese producto.
+> - Detectar a **quien deberias contactar** para una reorden cuando llega stock nuevo.
+> - Validar precios antes de cotizar a un cliente nuevo (¿que precio tienen los demas?).
+
+[Screenshot: Ficha de producto con tab Clientes mostrando ranking de compradores]
 
 ---
 
@@ -1188,6 +1300,39 @@ En cada paso podes ver:
 
 ---
 
+### 17.12 Linea de tiempo del documento ✨
+
+**Donde:** En el **detalle de cualquier documento** (`/documentos/[id]`), en el sidebar derecho.
+
+Cada documento (cotizacion, pedido, albaran, factura, OC, etc.) ahora tiene una card titulada **"LINEA DE TIEMPO"** que muestra **cronologicamente todos los eventos** que le pasaron al documento, del mas reciente al mas antiguo.
+
+#### Que vas a ver
+
+Cada evento de la linea de tiempo se muestra con:
+- **Icono y color** segun el tipo de evento (creacion, derivacion, cambio de estado, edicion de lineas, envio por email, etc.).
+- **Descripcion corta** del evento (ej: "Cotizacion creada", "Estado cambiado a Aprobada", "Linea agregada: SKU FIAM-12345").
+- **Autor**: si es un usuario, aparece nombre y avatar; si es un proceso automatico del sistema, aparece etiqueta **"Sistema"**.
+- **Timestamp relativo** ("hace 5 minutos", "ayer 14:30") + fecha completa al pasar el mouse.
+
+#### Tipos de eventos comunes
+
+| Tipo | Cuando aparece |
+|------|----------------|
+| Creacion | El documento se creo |
+| Edicion de cabecera | Cambiaste cliente, fechas, condiciones, notas |
+| Edicion de lineas | Agregaste/quitaste/modificaste items |
+| Cambio de estado | Pasaste de Borrador a Enviada, etc. |
+| Derivacion | El documento genero otro (ej: cotizacion → pedido, pedido → albaran) |
+| Envio | Se mando por email/WhatsApp al cliente |
+| Pago / Cobro | Se registro un movimiento bancario asociado |
+| Eventos de sistema | Auto-asignaciones, migracion, recalculos |
+
+> **Diferencia con el Historial:** el log de actividad del CRM (seccion 5.3) muestra eventos a nivel global del sistema. La **linea de tiempo** muestra solo lo que le paso a **este documento puntual**, mucho mas detallado.
+
+[Screenshot: Detalle de documento con sidebar derecho mostrando card "LINEA DE TIEMPO" con eventos coloreados]
+
+---
+
 ## 18. Informes
 
 **URL:** `/informes`
@@ -1390,19 +1535,21 @@ Cada vendedor puede tener asignadas **especialidades** que permiten la auto-asig
 |---------|-------------------|-----------------|
 | COT | Cotizacion / Presupuesto | `tt_quotes` |
 | PED | Pedido de venta (Sales Order) | `tt_sales_orders` / `tt_documents` |
-| ALB | Albaran / Nota de entrega | `tt_documents` (type: albaran) |
-| FAC | Factura | `tt_documents` (type: factura) |
-| NC | Nota de credito | `tt_documents` (type: nota_credito) |
-| ND | Nota de debito | `tt_documents` (type: nota_debito) |
+| ALB | Albaran / Nota de entrega | `tt_documents` (doc_type: albaran) |
+| FAC | Factura | `tt_documents` (doc_type: factura) |
+| NC | Nota de credito | `tt_documents` (doc_type: nota_credito) |
+| ND | Nota de debito | `tt_documents` (doc_type: nota_debito) |
 | OC | Orden de compra (del cliente) | `tt_client_purchase_orders` |
 | PCK | Packing list | `tt_documents` |
 | REM | Remito | `tt_documents` |
 | REC | Recibo de cobro | `tt_bank_statement_lines` |
-| GAS | Gasto | `tt_documents` (type: gasto) |
+| GAS | Gasto | `tt_documents` (doc_type: gasto) |
 | LEAD | Lead comercial | `tt_leads` |
 | OPP | Oportunidad comercial | `tt_opportunities` |
 | NTT | Numero de trabajo tecnico (SAT) | `tt_sat_tickets` |
 | PC | Pedido de compra (a proveedor) | `tt_purchase_orders` |
+
+> **Nota tecnica:** las lineas de cada documento se almacenan en la tabla `tt_document_lines`. La columna que diferencia el tipo de documento es `doc_type`.
 
 ---
 
@@ -1447,35 +1594,38 @@ Este ejemplo recorre **todo el flujo del ERP** de punta a punta.
 #### Paso 4: Cliente envia OC
 
 15. Karin acepta la cotizacion y envia su Orden de Compra (PDF).
-16. Vas a **Importar OC** → subis el PDF.
-17. La IA parsea la OC 🤖 y la compara con COT-2026-0042.
-18. No hay discrepancias → haces click en **Crear pedido**.
-19. Se crea PED-2026-0089.
+16. Vas a **Cotizador** y haces click en el boton **"✨ ↑ Importar OC"** (arriba a la derecha).
+17. Subis el PDF en el modal y la IA parsea la OC 🤖 (cliente, items, condiciones, totales).
+18. La cotizacion previa COT-2026-0042 queda vinculada a la OC importada.
+19. Si hay discrepancias entre la OC y la cotizacion (precios, cantidades), las revisas en el detalle.
+20. Convertis la cotizacion a **pedido** → se crea PED-2026-0089.
 
 #### Paso 5: Entrega
 
-20. Preparas la mercaderia.
-21. Desde el pedido, creas el **Albaran** ALB-2026-0067.
-22. El stock se descuenta automaticamente.
+21. Preparas la mercaderia.
+22. Desde el pedido, creas el **Albaran** ALB-2026-0067.
+23. El stock se descuenta automaticamente.
 
 #### Paso 6: Facturacion
 
-23. Desde el albaran, emitis la **Factura** FAC-2026-0123.
-24. Como es TORQUETOOLS SL (Espana), la factura se genera localmente.
+24. Desde el albaran, emitis la **Factura** FAC-2026-0123.
+25. Como es TORQUETOOLS SL (Espana), la factura se genera localmente.
 
 #### Paso 7: Cobro
 
-25. A los 30 dias, el banco notifica el pago.
-26. Vas a **Cobros** → subis el extracto bancario.
-27. La IA matchea automaticamente 🤖 el movimiento con FAC-2026-0123.
-28. Confirmas el match → factura marcada como **Cobrada**.
+26. A los 30 dias, el banco notifica el pago.
+27. Vas a **Cobros** → subis el extracto bancario.
+28. La IA matchea automaticamente 🤖 el movimiento con FAC-2026-0123.
+29. Confirmas el match → factura marcada como **Cobrada**.
 
 #### Paso 8: Verificacion en Dashboard Ejecutivo
 
-29. Vas al **Dashboard Ejecutivo**.
-30. Verificas que ME Elecmetal aparece en **Top 5 clientes del mes**.
-31. El **Flujo de ventas** muestra el progreso completo.
-32. El **Aging** ya no tiene esa factura pendiente.
+30. Vas al **Dashboard** principal y haces click en el **KPI "Cobros pendientes"** (✨ ahora es clickeable, ver seccion 3) — se abre `/cobros` y verificas que el cobro quedo registrado.
+31. Vas al **Dashboard Ejecutivo**.
+32. Verificas que ME Elecmetal aparece en **Top 5 clientes del mes**.
+33. El **Flujo de ventas** muestra el progreso completo.
+34. El **Aging** ya no tiene esa factura pendiente.
+35. Abris el detalle de FAC-2026-0123 y en el sidebar derecho ves la **Linea de tiempo** ✨ (seccion 17.12) con todos los eventos: emision → envio → cobro registrado.
 
 ---
 
