@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
 
       // Crear doc tipo OC en tt_documents
       const systemCode = `OC-${Date.now()}-${Math.floor(Math.random() * 1000)}`
-      const { data: doc } = await supabase
+      const { data: doc, error: docErr } = await supabase
         .from('tt_documents')
         .insert({
           doc_type: 'orden_compra',
@@ -97,11 +97,17 @@ export async function POST(req: NextRequest) {
         })
         .select('id')
         .single()
+      if (docErr || !doc) {
+        return NextResponse.json(
+          { error: `No se pudo crear el documento OC: ${docErr?.message || 'unknown'}` },
+          { status: 500 }
+        )
+      }
 
-      const { data: ocp } = await supabase
+      const { data: ocp, error: ocpErr } = await supabase
         .from('tt_oc_parsed')
         .insert({
-          document_id: doc?.id,
+          document_id: doc.id,
           file_url: pdfUrl,
           file_name: file.name,
           parsed_at: new Date().toISOString(),
@@ -115,7 +121,16 @@ export async function POST(req: NextRequest) {
         })
         .select('id')
         .single()
-      ocParsedId = ocp?.id
+      if (ocpErr || !ocp) {
+        return NextResponse.json(
+          {
+            error: `Documento OC creado pero el registro tt_oc_parsed fallo: ${ocpErr?.message || 'unknown'}`,
+            documentId: doc.id,
+          },
+          { status: 500 }
+        )
+      }
+      ocParsedId = ocp.id
 
       // Link OC → cotización
       if (quoteDocumentId && doc?.id) {
