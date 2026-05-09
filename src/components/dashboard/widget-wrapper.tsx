@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, type ReactNode } from 'react'
-import { GripVertical, Settings, Minimize2, Maximize2, X } from 'lucide-react'
+import Link from 'next/link'
+import { GripVertical, Settings, Minimize2, Maximize2, X, ArrowUpRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface WidgetWrapperProps {
@@ -12,6 +13,8 @@ interface WidgetWrapperProps {
   onMinimize?: () => void
   children: ReactNode
   className?: string
+  /** Si está, la card del dashboard navega a esta URL al click (fuera de modo edición) */
+  href?: string
 }
 
 export function WidgetWrapper({
@@ -22,15 +25,19 @@ export function WidgetWrapper({
   onMinimize,
   children,
   className,
+  href,
 }: WidgetWrapperProps) {
   const [showSettings, setShowSettings] = useState(false)
+  // Navegable solo si tiene href Y no estamos editando el layout (sino se confunde con drag)
+  const isNavigable = !!href && !editing
 
   return (
     <div
       className={cn(
-        'h-full rounded-xl bg-[#141820] border border-[#1E2330] overflow-hidden flex flex-col',
-        'transition-shadow duration-200',
+        'h-full rounded-xl bg-[#141820] border border-[#1E2330] overflow-hidden flex flex-col group/widget',
+        'transition-all duration-200',
         editing && 'hover:border-[#2A3040] hover:shadow-lg hover:shadow-black/20',
+        isNavigable && 'hover:border-[#FF6600]/50 hover:shadow-lg hover:shadow-[#FF6600]/5 cursor-pointer',
         className
       )}
     >
@@ -46,8 +53,15 @@ export function WidgetWrapper({
           </div>
         )}
 
-        <span className="text-sm font-medium text-[#9CA3AF] flex-1 truncate select-none">
+        <span className="text-sm font-medium text-[#9CA3AF] flex-1 truncate select-none flex items-center gap-1.5">
           {title}
+          {isNavigable && (
+            <ArrowUpRight
+              size={12}
+              className="text-[#4B5563] opacity-0 group-hover/widget:opacity-100 group-hover/widget:text-[#FF6600] transition-all"
+              aria-hidden
+            />
+          )}
         </span>
 
         <div className={cn(
@@ -91,11 +105,29 @@ export function WidgetWrapper({
         </div>
       </div>
 
-      {/* Content */}
+      {/* Content — si tiene href y no editando, todo el área es un link.
+          Si NO, queda como div normal (el grid usa drag&drop en modo editing). */}
       {!minimized && (
-        <div className="flex-1 overflow-auto p-3">
-          {children}
-        </div>
+        isNavigable ? (
+          <Link
+            href={href!}
+            className="flex-1 overflow-auto p-3 block focus:outline-none focus-visible:ring-2 focus-visible:ring-[#FF6600] focus-visible:ring-inset rounded-b-xl"
+            onClick={(e) => {
+              // Si el click vino de un botón interno (ej. dentro de una sub-acción),
+              // no seguir el link. La regla: solo el wrapper navega.
+              const t = e.target as HTMLElement
+              if (t.closest('button, a, input, select, [role="button"]')) {
+                e.preventDefault()
+              }
+            }}
+          >
+            {children}
+          </Link>
+        ) : (
+          <div className="flex-1 overflow-auto p-3">
+            {children}
+          </div>
+        )
       )}
     </div>
   )

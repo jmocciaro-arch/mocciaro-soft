@@ -12,6 +12,8 @@ export interface WidgetDefinition {
   minH?: number
   maxW?: number
   maxH?: number
+  /** Si está, la card del dashboard lleva a esta URL al click (fuera de modo edición) */
+  href?: string
 }
 
 export const WIDGET_REGISTRY: WidgetDefinition[] = [
@@ -26,6 +28,7 @@ export const WIDGET_REGISTRY: WidgetDefinition[] = [
     defaultH: 1,
     minW: 2,
     minH: 1,
+    href: '/catalogo',
   },
   {
     id: 'kpi-clients',
@@ -37,6 +40,7 @@ export const WIDGET_REGISTRY: WidgetDefinition[] = [
     defaultH: 1,
     minW: 2,
     minH: 1,
+    href: '/clientes',
   },
   {
     id: 'kpi-quotes-month',
@@ -48,6 +52,7 @@ export const WIDGET_REGISTRY: WidgetDefinition[] = [
     defaultH: 1,
     minW: 2,
     minH: 1,
+    href: '/cotizador',
   },
   {
     id: 'kpi-pipeline',
@@ -59,6 +64,7 @@ export const WIDGET_REGISTRY: WidgetDefinition[] = [
     defaultH: 1,
     minW: 2,
     minH: 1,
+    href: '/crm',
   },
   {
     id: 'kpi-pending-delivery',
@@ -70,6 +76,7 @@ export const WIDGET_REGISTRY: WidgetDefinition[] = [
     defaultH: 1,
     minW: 2,
     minH: 1,
+    href: '/ventas?tab=pedidos',
   },
   {
     id: 'kpi-pending-invoices',
@@ -81,6 +88,7 @@ export const WIDGET_REGISTRY: WidgetDefinition[] = [
     defaultH: 1,
     minW: 2,
     minH: 1,
+    href: '/ventas?tab=remitos',
   },
   {
     id: 'kpi-pending-collection',
@@ -92,6 +100,7 @@ export const WIDGET_REGISTRY: WidgetDefinition[] = [
     defaultH: 1,
     minW: 2,
     minH: 1,
+    href: '/cobros',
   },
   {
     id: 'kpi-stock-alerts',
@@ -103,6 +112,7 @@ export const WIDGET_REGISTRY: WidgetDefinition[] = [
     defaultH: 1,
     minW: 2,
     minH: 1,
+    href: '/stock',
   },
   {
     id: 'kpi-pending-payments',
@@ -114,6 +124,7 @@ export const WIDGET_REGISTRY: WidgetDefinition[] = [
     defaultH: 1,
     minW: 2,
     minH: 1,
+    href: '/compras',
   },
   // Listas
   {
