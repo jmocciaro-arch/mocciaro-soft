@@ -2,7 +2,7 @@
 
 import { useState, useEffect, createContext, useContext, useCallback } from 'react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import {
   LayoutDashboard, FileText, Package, Users, Warehouse, Target,
   ShoppingCart, Receipt, Wrench, Calendar, Mail, Settings,
@@ -10,7 +10,7 @@ import {
   Truck, CreditCard, Building2, BarChart3,
   Cpu, Box, Layers, BookOpen, Pause, History,
   Banknote, Sparkles, TrendingUp, GitBranch, FormInput, Bot,
-  RefreshCw, Zap, Globe, MessageCircle,
+  RefreshCw, Zap, Globe, MessageCircle, ArrowLeft,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
@@ -385,8 +385,14 @@ function getModuleTitle(pathname: string): { section: string; title: string } {
 
 export function TopBar({ userName }: { userName?: string }) {
   const { setMobileOpen } = useSidebar()
+  const router = useRouter()
   const pathname = usePathname()
   const { section, title } = getModuleTitle(pathname || '/')
+
+  // Botón "Volver" en todas las páginas excepto raíz/dashboard.
+  // Usa router.back() para volver a la página previa del historial del usuario.
+  const isRoot = !pathname || pathname === '/' || pathname === '/dashboard'
+  const canGoBack = !isRoot
 
   return (
     <header className="h-[72px] bg-[#0A0D12]/80 backdrop-blur-xl border-b border-[#1E2330] flex items-center justify-between px-4 lg:px-6 sticky top-0 z-30 print:hidden">
@@ -394,9 +400,22 @@ export function TopBar({ userName }: { userName?: string }) {
         <button
           onClick={() => setMobileOpen(true)}
           className="p-2 rounded-lg hover:bg-[#1E2330] text-[#9CA3AF] lg:hidden"
+          aria-label="Abrir menú"
         >
           <Menu size={22} />
         </button>
+        {/* Botón Volver — visible en todas las páginas excepto el dashboard raíz */}
+        {canGoBack && (
+          <button
+            onClick={() => router.back()}
+            className="p-2 rounded-lg hover:bg-[#1E2330] text-[#9CA3AF] hover:text-[#FF6600] transition-colors flex items-center gap-1 shrink-0"
+            title="Volver atrás"
+            aria-label="Volver a la página anterior"
+          >
+            <ArrowLeft size={18} />
+            <span className="text-sm hidden sm:inline">Volver</span>
+          </button>
+        )}
         {/* Breadcrumb + título del módulo */}
         <div className="min-w-0">
           <div className="text-[11px] text-[#6B7280] leading-tight truncate">
