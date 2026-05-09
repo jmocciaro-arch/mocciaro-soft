@@ -19,11 +19,12 @@ export async function GET(req: NextRequest, { params }: Ctx) {
   const { searchParams } = new URL(req.url)
   const limit = Math.min(500, Number(searchParams.get('limit') ?? '100'))
 
-  // tt_users tiene full_name + short_name (no `name`). El join nombrado
-  // requiere el FK con nombre exacto (ver migration-v65).
+  // tt_users tiene: id, auth_id, username, full_name, email, gmail, whatsapp,
+  // phone (verificado con information_schema). NO tiene `name` ni `short_name`.
+  // El join nombrado requiere el FK con nombre exacto (ver migration-v65).
   const { data, error } = await admin
     .from('tt_document_events')
-    .select('*, actor:tt_users!tt_document_events_actor_id_fkey(id, full_name, short_name, email)')
+    .select('*, actor:tt_users!tt_document_events_actor_id_fkey(id, username, full_name, email)')
     .eq('document_id', id)
     .order('created_at', { ascending: false })
     .limit(limit)
