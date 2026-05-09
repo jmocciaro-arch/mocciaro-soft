@@ -10,7 +10,7 @@ import {
   Truck, CreditCard, Building2, BarChart3,
   Cpu, Box, Layers, BookOpen, Pause, History,
   Banknote, Sparkles, TrendingUp, GitBranch, FormInput, Bot,
-  RefreshCw, Zap, Globe, MessageCircle, ArrowLeft,
+  RefreshCw, Zap, Globe, MessageCircle, ArrowLeft, HelpCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
@@ -445,6 +445,17 @@ export function TopBar({ userName }: { userName?: string }) {
         >
           <span>Buscar</span>
           <kbd className="text-[10px] border px-1 rounded" style={{ borderColor: '#2A3040' }}>⌘K</kbd>
+        </button>
+
+        {/* Asistente IA del manual — abre modal con preguntas/respuestas */}
+        <button
+          type="button"
+          onClick={() => window.dispatchEvent(new CustomEvent('open-help'))}
+          className="p-2 rounded-lg hover:bg-[#1E2330] text-[#9CA3AF] hover:text-[#FF6600] transition-colors"
+          title="Asistente IA — preguntale al soft (manual)"
+          aria-label="Abrir asistente de ayuda"
+        >
+          <HelpCircle size={18} />
         </button>
 
         {/* Toggle tema oscuro / gris */}
