@@ -378,25 +378,39 @@ export default function DocumentDetailPage() {
     const load = async () => {
       const sb = createClient()
 
-      // 1) Documento principal
-      const { data: docData, error: docErr } = await sb
-        .from('tt_documents')
-        .select('*')
-        .eq('id', docId)
-        .maybeSingle()
+      // 1) Documento principal — vía endpoint API (service_role bypass de RLS).
+      //    Antes hacíamos sb.from('tt_documents').select(...).maybeSingle() pero
+      //    las RLS policies bloqueaban al cliente para docs creados por flujos
+      //    server-side (ej. cotización generada desde OC). El endpoint usa
+      //    requireAuth() + userHasCompanyAccess() para validar permisos.
+      let docData: DocRow | null = null
+      try {
+        const res = await fetch(`/api/documents/${docId}`, { credentials: 'include' })
+        if (cancelled) return
+        if (!res.ok) {
+          if (res.status === 403) setError('No tenés acceso a este documento.')
+          else if (res.status === 404) setError('Documento no encontrado.')
+          else setError(`No se pudo cargar el documento (HTTP ${res.status}).`)
+          setLoading(false)
+          return
+        }
+        const j = await res.json()
+        docData = (j.document || null) as DocRow | null
+      } catch (e) {
+        if (cancelled) return
+        setError(`Error de red: ${(e as Error).message}`)
+        setLoading(false)
+        return
+      }
 
       if (cancelled) return
-
-      if (docErr) {
-        console.warn('tt_documents query error:', docErr)
-      }
       if (!docData) {
         setError('No se pudo cargar el documento solicitado.')
         setLoading(false)
         return
       }
 
-      setDoc(docData as DocRow)
+      setDoc(docData)
 
       // 2) En paralelo: items, client, company, links
       const [itemsRes, clientRes, companyRes, linksRes] = await Promise.all([
