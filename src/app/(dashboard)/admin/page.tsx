@@ -447,7 +447,7 @@ export default function AdminPage() {
     setSavingUser(true)
     try {
       if (editingUserId) {
-        // Update existing user — server merges permissions JSONB and sets default_company_id
+        // Update existing user — server merges permissions JSONB and mirrors company_id
         const { permissions: _ignored, rbac_role_ids: _ignored2, rbac_team_ids: _ignored3, ...formFields } = userForm
         const res = await fetch('/api/admin/users', {
           method: 'PUT',

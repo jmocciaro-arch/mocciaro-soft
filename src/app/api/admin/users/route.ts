@@ -120,8 +120,9 @@ export async function PUT(req: NextRequest) {
       updateData.permissions = merged
     }
 
+    // Mirror first company_id into the legacy single-company column for compatibility
     if (Array.isArray(updates.company_ids)) {
-      updateData.default_company_id = updates.company_ids[0] || null
+      updateData.company_id = updates.company_ids[0] || null
     }
 
     updateData.updated_at = new Date().toISOString()
