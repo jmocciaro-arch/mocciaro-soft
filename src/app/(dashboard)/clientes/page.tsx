@@ -31,6 +31,8 @@ import { RelatedCompanies } from '@/components/clients/related-companies'
 import { SyncContactsButton } from '@/components/clients/sync-contacts-button'
 import { ContactCard } from '@/components/clients/contact-card'
 import { ClientDetailModal } from '@/components/clientes/client-detail-modal'
+import { ClientProductsHistory } from '@/components/clientes/client-products-history'
+import { ProductDetailModal } from '@/components/catalogo/product-detail-modal'
 import { BulkImportClientsModal } from '@/components/clientes/bulk-import-modal'
 import { BulkActionsBar, BulkCheckbox, COMMON_BULK_ACTIONS } from '@/components/ui/bulk-actions-bar'
 import { SavedViews } from '@/components/ui/saved-views'
@@ -154,6 +156,8 @@ function CompanyDetail({ company, onClose, onUpdate }: {
   const [savingContact, setSavingContact] = useState(false)
   const [editingContact, setEditingContact] = useState<string | null>(null)
   const [editContactData, setEditContactData] = useState<Partial<ClientContact>>({})
+  // Sprint 2B — modal de ficha producto al click en un producto del tab Productos
+  const [openProductId, setOpenProductId] = useState<string | null>(null)
 
   // Get all client_ids for this company (for querying related data)
   const allClientIds = useMemo(() => company.records.map(r => r.id), [company])
@@ -362,6 +366,7 @@ function CompanyDetail({ company, onClose, onUpdate }: {
     { id: 'contactos', label: `Contactos (${allContacts.length})` },
     { id: 'relacionadas', label: 'Relacionadas' },
     { id: 'oc_glosario', label: `OC Recibidas (${clientOCs.length})` },
+    { id: 'productos', label: 'Productos' },
     { id: 'historial', label: 'Historial' },
     { id: 'documentos', label: `Documentos (${documents.length})` },
   ]
@@ -625,6 +630,32 @@ function CompanyDetail({ company, onClose, onUpdate }: {
                   </table>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* TAB: Productos (Sprint 2B — trazabilidad cliente <-> producto) */}
+          {activeDetailTab === 'productos' && (
+            <div className="space-y-3">
+              <div>
+                <h3 className="text-sm font-semibold text-[#F0F2F5]">Productos comprados — trazabilidad histórica</h3>
+                <p className="text-xs text-[#9CA3AF] mt-1">
+                  Lista de productos que esta empresa compró alguna vez (cotizaciones, pedidos, remitos y facturas no canceladas), con totales acumulados, último precio pactado y frecuencia. Click en un producto para ver su ficha.
+                </p>
+              </div>
+              {/* Multi-tenant: una empresa puede tener varios client_ids agrupados.
+                  Por ahora mostramos el primer client_id; si hay más, futuro: tabs o concat. */}
+              {allClientIds[0] ? (
+                <ClientProductsHistory
+                  clientId={allClientIds[0]}
+                  onProductClick={(pid) => setOpenProductId(pid)}
+                />
+              ) : (
+                <Card><p className="text-center text-[#6B7280] py-6">Esta empresa no tiene client_id asociado.</p></Card>
+              )}
+              <ProductDetailModal
+                productId={openProductId}
+                onClose={() => setOpenProductId(null)}
+              />
             </div>
           )}
 
