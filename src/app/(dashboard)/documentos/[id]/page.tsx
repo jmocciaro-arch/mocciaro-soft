@@ -397,12 +397,10 @@ export default function DocumentDetailPage() {
         const j = await res.json()
         docData = (j.document || null) as DocRow | null
         apiLines = ((j.lines || []) as DocItemRow[])
-        // El endpoint devuelve relations_out (yo soy parent) y relations_in
-        // (yo soy child). Las concatenamos en formato LinkRow.
-        const relsOut = ((j.relations_out || []) as Array<{ id: string; source_document_id: string; target_document_id: string; relation_type: string; fulfillment_pct?: number | null }>)
-          .map(r => ({ id: r.id, parent_id: r.source_document_id, child_id: r.target_document_id, relation_type: r.relation_type, fulfillment_pct: r.fulfillment_pct ?? null }))
-        const relsIn = ((j.relations_in || []) as Array<{ id: string; source_document_id: string; target_document_id: string; relation_type: string; fulfillment_pct?: number | null }>)
-          .map(r => ({ id: r.id, parent_id: r.source_document_id, child_id: r.target_document_id, relation_type: r.relation_type, fulfillment_pct: r.fulfillment_pct ?? null }))
+        // El endpoint devuelve relations con shape directo de tt_document_relations:
+        // { id, parent_id, child_id, relation_type, fulfillment_pct }
+        const relsOut = ((j.relations_out || []) as LinkRow[])
+        const relsIn = ((j.relations_in || []) as LinkRow[])
         apiRelations = [...relsOut, ...relsIn]
       } catch (e) {
         if (cancelled) return

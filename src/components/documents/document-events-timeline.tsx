@@ -31,7 +31,9 @@ interface DocumentEvent {
   payload: Record<string, unknown>
   notes: string | null
   created_at: string
-  actor?: { id: string; name?: string; email?: string } | null
+  // tt_users: full_name + short_name (no name). Mantenemos `name` por
+  // compatibilidad si algún backend antiguo lo devuelve.
+  actor?: { id: string; full_name?: string; short_name?: string; name?: string; email?: string } | null
 }
 
 interface Props {
@@ -132,7 +134,7 @@ export function DocumentEventsTimeline({ documentId, limit = 50, compact = false
           const desc = eventDescriptor(ev)
           const Icon = desc.icon
           const actor = ev.actor
-          const actorLabel = actor?.name || actor?.email || (ev.actor_id ? 'Usuario' : 'Sistema')
+          const actorLabel = actor?.short_name || actor?.full_name || actor?.name || actor?.email || (ev.actor_id ? 'Usuario' : 'Sistema')
           const isSystem = !ev.actor_id
           return (
             <li key={ev.id} className="relative">

@@ -25,12 +25,14 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   const canAccess = await userHasCompanyAccess(auth.ttUserId, auth.role, doc.company_id as string)
   if (!canAccess) return NextResponse.json({ error: 'Sin acceso' }, { status: 403 })
 
+  // Lines: ordenar por sort_order (la columna real; line_number no existe en
+  // este modelo). Relations: select simple — el nested join a tt_documents
+  // requiere FKs nombrados específicos que no están todos creados, mejor
+  // resolverlos en el cliente cuando haga falta.
   const [lines, relOut, relIn, events] = await Promise.all([
-    admin.from('tt_document_lines').select('*').eq('document_id', id).order('line_number'),
-    admin.from('tt_document_relations').select('*, target:tt_documents!tt_document_relations_target_document_id_fkey(id, doc_type, doc_code, status, doc_date)')
-      .eq('source_document_id', id),
-    admin.from('tt_document_relations').select('*, source:tt_documents!tt_document_relations_source_document_id_fkey(id, doc_type, doc_code, status, doc_date)')
-      .eq('target_document_id', id),
+    admin.from('tt_document_lines').select('*').eq('document_id', id).order('sort_order', { ascending: true }),
+    admin.from('tt_document_relations').select('*').eq('parent_id', id),
+    admin.from('tt_document_relations').select('*').eq('child_id', id),
     admin.from('tt_document_events').select('*').eq('document_id', id).order('created_at', { ascending: false }).limit(50),
   ])
 
