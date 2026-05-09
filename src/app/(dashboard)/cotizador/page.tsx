@@ -94,6 +94,8 @@ export default function CotizadorPage() {
   // Importar OC del cliente como entrada de cotización (Sprint 1)
   const [ocParserOpen, setOcParserOpen] = useState(false)
   const [convertingOc, setConvertingOc] = useState(false)
+  // Marca que la cotización actual fue precargada desde una OC (para mostrar banner guía)
+  const [ocImportSource, setOcImportSource] = useState<{ ocNumber: string | null; ocParsedId: string | null } | null>(null)
 
   // Pre-carga desde URL params (viene del Lead o de otra pantalla)
   const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
@@ -155,38 +157,133 @@ export default function CotizadorPage() {
   }, [visibleCompanies.length, activeCompanyId])
 
   // ════════════════════════════════════════════════════════════════════
-  // Sprint 1: OC del cliente como entrada de cotización
-  // Recibe { ocParsedId } del OCParserModal, llama /api/oc/create-quote
-  // que crea tt_documents(doc_type='quote') con líneas matcheadas y
-  // metadata.oc_parsed con discrepancias. Después redirige al detalle.
+  // Importar OC del cliente: precarga el cotizador con datos del PDF.
+  //
+  // Flow nuevo (UX-fix): en vez de redirigir a /documentos/[id] (vista
+  // solo lectura), CARGAMOS los items + cabecera en el state del
+  // cotizador para que el user vea todo, edite precios/cantidades/cliente
+  // y después guarde con el botón "Guardar cotización" normal.
   // ════════════════════════════════════════════════════════════════════
-  const handleOCParsed = useCallback(async (result: { ocParsedId?: string; discrepancies?: unknown[] }) => {
-    if (!result.ocParsedId) {
-      addToast({ type: 'error', title: 'No se pudo identificar la OC parseada' })
+  const handleOCParsed = useCallback(async (result: {
+    ocParsedId?: string
+    discrepancies?: unknown[]
+    data?: {
+      numero_oc?: string
+      fecha?: string
+      emisor_razon_social?: string
+      emisor_cuit?: string
+      condicion_pago?: string
+      condicion_entrega?: string
+      direccion_entrega?: string
+      moneda?: string
+      observaciones?: string
+      items?: Array<{
+        codigo?: string
+        descripcion: string
+        cantidad: number
+        precio_unitario?: number
+        subtotal?: number
+        observaciones?: string
+      }>
+    }
+  }) => {
+    const data = result.data
+    if (!data || !data.items || data.items.length === 0) {
+      addToast({ type: 'error', title: 'La OC no tiene items parseados' })
       return
     }
+
     setConvertingOc(true)
     try {
-      const res = await fetch('/api/oc/create-quote', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ocId: result.ocParsedId }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Error creando cotización desde OC')
+      // 1. Cargar items en el cotizador
+      const newItems: QuoteLineItem[] = data.items.map((it) => ({
+        id: Math.random().toString(36).slice(2),
+        product_id: null,
+        sku: it.codigo || '',
+        description: it.descripcion || '',
+        quantity: it.cantidad || 1,
+        unitPrice: it.precio_unitario || 0,
+        discount: 0,
+        notes: it.observaciones || '',
+      }))
+      setItems(newItems)
+
+      // 2. Pre-cargar moneda
+      if (data.moneda) {
+        const m = data.moneda.toUpperCase()
+        if (m === 'EUR' || m === 'ARS' || m === 'USD') setCurrency(m)
+      }
+
+      // 3. Pre-cargar incoterm (si matchea con la lista)
+      if (data.condicion_entrega) {
+        const inco = data.condicion_entrega.trim().toUpperCase().split(/\s+/)[0]
+        if ((INCOTERMS as readonly string[]).includes(inco)) setIncoterm(inco)
+      }
+
+      // 4. Pre-cargar condición de pago (texto libre)
+      if (data.condicion_pago) {
+        setPaymentTerms(data.condicion_pago)
+        setPaymentTermsType('custom')
+      }
+
+      // 5. Pre-cargar notas con referencia a la OC original
+      const ocRef = data.numero_oc ? `OC ${data.numero_oc}` : 'OC del cliente'
+      const ocFecha = data.fecha ? ` (${data.fecha})` : ''
+      const newNotes = `Cotización generada desde ${ocRef}${ocFecha}`
+      setNotes((prev) => prev ? prev : newNotes)
+
+      // 6. Pre-cargar internal notes con datos del cliente para trazar
+      const internalParts: string[] = []
+      if (data.emisor_razon_social) internalParts.push(`Cliente OC: ${data.emisor_razon_social}`)
+      if (data.emisor_cuit) internalParts.push(`CUIT/CIF: ${data.emisor_cuit}`)
+      if (data.direccion_entrega) internalParts.push(`Entrega: ${data.direccion_entrega}`)
+      if (result.ocParsedId) internalParts.push(`OC ID: ${result.ocParsedId}`)
+      if (internalParts.length > 0) {
+        setInternalNotes((prev) => prev || internalParts.join(' · '))
+      }
+
+      // 7. Buscar cliente en DB por CIF/CUIT (best effort)
+      if (data.emisor_cuit) {
+        try {
+          const supabase = createClient()
+          const { data: clientFound } = await supabase
+            .from('tt_clients')
+            .select('*')
+            .eq('tax_id', data.emisor_cuit)
+            .limit(1)
+            .maybeSingle()
+          if (clientFound) {
+            setSelectedClient(clientFound as Client)
+          } else {
+            // Sugerir crear/buscar manualmente
+            setClientSearch(data.emisor_razon_social || '')
+          }
+        } catch {
+          /* ignore */
+        }
+      } else if (data.emisor_razon_social) {
+        setClientSearch(data.emisor_razon_social)
+      }
+
+      // 8. Cerrar modal y mensaje guía
+      setOcParserOpen(false)
       const discCount = (result.discrepancies || []).length
       addToast({
         type: 'success',
-        title: `Cotización ${data.quoteCode} creada desde OC${discCount > 0 ? ` (${discCount} discrepancia${discCount !== 1 ? 's' : ''} detectada${discCount !== 1 ? 's' : ''})` : ''}`,
+        title: `OC ${data.numero_oc || ''} cargada — ${newItems.length} items. Revisá precios y cliente, después click "Guardar cotización"${discCount > 0 ? ` · ${discCount} discrepancia${discCount !== 1 ? 's' : ''}` : ''}`,
       })
-      setOcParserOpen(false)
-      router.push(`/documentos/${data.quoteId}`)
+
+      // Marcar que esta cotización vino de una OC (para mostrar banner guía)
+      setOcImportSource({ ocNumber: data.numero_oc || null, ocParsedId: result.ocParsedId || null })
+
+      // 9. Scroll al inicio del cotizador para que vea los items
+      window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (err) {
       addToast({ type: 'error', title: (err as Error).message })
     } finally {
       setConvertingOc(false)
     }
-  }, [addToast, router])
+  }, [addToast])
 
   useEffect(() => {
     generateQuoteNumber()
@@ -407,7 +504,7 @@ export default function CotizadorPage() {
       if (itemsError) throw itemsError
       await supabase.from('tt_activity_log').insert({ entity_type: 'quote', entity_id: quoteData.id, action: 'Cotizacion creada', detail: `${quoteNumber} - ${selectedClient?.name || 'Sin cliente'} - ${formatCurrency(total, currency)}` })
       addToast({ type: 'success', title: 'Cotizacion guardada', message: quoteNumber })
-      setItems([]); setNotes(''); setInternalNotes(''); setSelectedClient(null); setIrpfEnabled(false); setIrpfRate(0); setReEnabled(false); setReRate(0); generateQuoteNumber(); loadSavedQuotes()
+      setItems([]); setNotes(''); setInternalNotes(''); setSelectedClient(null); setIrpfEnabled(false); setIrpfRate(0); setReEnabled(false); setReRate(0); setOcImportSource(null); generateQuoteNumber(); loadSavedQuotes()
     } catch (err) {
       console.error('Error guardando cotizacion:', err)
       // Exponemos el error real al toast — si es un PostgrestError, trae message/code/details/hint
@@ -718,6 +815,82 @@ export default function CotizadorPage() {
       {/* CREATE VIEW */}
       {viewMode === 'create' && (
         <>
+          {/* ══════════════════════════════════════════════════════════════
+              Banner guía cuando se importó una OC: muestra próximos pasos
+              ══════════════════════════════════════════════════════════════ */}
+          {ocImportSource && items.length > 0 && (
+            <div className="rounded-xl border border-[#FF6600]/30 bg-gradient-to-r from-[#FF6600]/10 to-[#FF6600]/5 p-4">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-lg bg-[#FF6600]/20 flex items-center justify-center shrink-0">
+                  <Sparkles size={18} className="text-[#FF6600]" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-[#F0F2F5]">
+                    OC {ocImportSource.ocNumber || 'del cliente'} cargada · {items.length} items extraídos por IA
+                  </p>
+                  <p className="text-xs text-[#9CA3AF] mt-0.5">Próximos pasos para terminar:</p>
+                  <ol className="mt-2 space-y-1.5 text-xs text-[#D1D5DB]">
+                    <li className="flex items-start gap-2">
+                      <span className={`shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${selectedClient ? 'bg-emerald-500/20 text-emerald-400' : 'bg-[#FF6600]/30 text-[#FF6600]'}`}>
+                        {selectedClient ? '✓' : '1'}
+                      </span>
+                      <span>
+                        <strong>Cliente:</strong>{' '}
+                        {selectedClient ? (
+                          <span className="text-emerald-400">{selectedClient.name} ✓</span>
+                        ) : (
+                          <span className="text-[#FF6600]">Buscá y seleccioná el cliente abajo (lo intenté por CUIT pero no lo encontré)</span>
+                        )}
+                      </span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className={`shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${items.every(i => i.unitPrice > 0) ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}`}>
+                        {items.every(i => i.unitPrice > 0) ? '✓' : '2'}
+                      </span>
+                      <span>
+                        <strong>Precios:</strong>{' '}
+                        {items.every(i => i.unitPrice > 0) ? (
+                          <span className="text-emerald-400">Todos cargados ✓</span>
+                        ) : (
+                          <span className="text-amber-400">{items.filter(i => i.unitPrice === 0).length} items con precio en 0 — revisá la tabla de items</span>
+                        )}
+                      </span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className={`shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${incoterm && paymentTerms ? 'bg-emerald-500/20 text-emerald-400' : 'bg-[#1E2330] text-[#6B7280]'}`}>
+                        {incoterm && paymentTerms ? '✓' : '3'}
+                      </span>
+                      <span>
+                        <strong>Condiciones:</strong>{' '}
+                        {incoterm && paymentTerms ? (
+                          <span className="text-emerald-400">{incoterm} · {paymentTerms} ✓</span>
+                        ) : (
+                          <span className="text-[#9CA3AF]">Verificá incoterm y condición de pago abajo</span>
+                        )}
+                      </span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold bg-[#FF6600] text-white">
+                        4
+                      </span>
+                      <span>
+                        <strong>Click <span className="text-[#FF6600]">"Guardar cotización"</span></strong> abajo a la derecha cuando esté todo OK
+                      </span>
+                    </li>
+                  </ol>
+                </div>
+                <button
+                  onClick={() => setOcImportSource(null)}
+                  className="text-[#6B7280] hover:text-[#F0F2F5] p-1 shrink-0"
+                  title="Cerrar guía"
+                  aria-label="Cerrar guía"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* ══════════════════════════════════════════════════════════════
               REGLA FUNDAMENTAL: Barra sticky con código + stepper + alertas
               ══════════════════════════════════════════════════════════════ */}
