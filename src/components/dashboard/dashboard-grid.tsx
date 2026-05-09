@@ -358,6 +358,8 @@ export function DashboardGrid({ userId = USER_ID }: DashboardGridProps) {
           {widgets.map(widget => {
             const Component = WIDGET_COMPONENTS[widget.widgetType]
             const title = WIDGET_TITLES[widget.widgetType] || widget.widgetType
+            // Sprint 2C — href de la card desde el registry para navegación
+            const href = WIDGET_REGISTRY.find(w => w.id === widget.widgetType)?.href
 
             return (
               <div key={widget.i} className="group">
@@ -367,6 +369,7 @@ export function DashboardGrid({ userId = USER_ID }: DashboardGridProps) {
                   minimized={widget.minimized}
                   onRemove={() => handleRemoveWidget(widget.i)}
                   onMinimize={() => handleMinimizeWidget(widget.i)}
+                  href={href}
                 >
                   {Component ? <Component /> : <div className="text-xs text-[#4B5563]">Widget no encontrado</div>}
                 </WidgetWrapper>
