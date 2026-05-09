@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, type ReactNode } from 'react'
-import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { GripVertical, Settings, Minimize2, Maximize2, X, ArrowUpRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -27,12 +27,28 @@ export function WidgetWrapper({
   className,
   href,
 }: WidgetWrapperProps) {
+  const router = useRouter()
   const [showSettings, setShowSettings] = useState(false)
   // Navegable solo si tiene href Y no estamos editando el layout (sino se confunde con drag)
   const isNavigable = !!href && !editing
 
+  // Navegación programática (no usamos <Link> porque react-grid-layout
+  // intercepta mousedown para iniciar drag y cancela el click del <a>).
+  // onMouseUp dispara después del mousedown del rgl, así llega al onClick.
+  const handleNavClick = (e: React.MouseEvent) => {
+    if (!isNavigable) return
+    const t = e.target as HTMLElement
+    // Respeta clicks sobre botones/links/inputs internos
+    if (t.closest('button, a, input, select, textarea, [role="button"]')) return
+    // Si el usuario está arrastrando (rgl agrega .react-draggable-dragging), no navegar
+    if (t.closest('.react-draggable-dragging')) return
+    e.preventDefault()
+    router.push(href!)
+  }
+
   return (
     <div
+      onClick={handleNavClick}
       className={cn(
         'h-full rounded-xl bg-[#141820] border border-[#1E2330] overflow-hidden flex flex-col group/widget',
         'transition-all duration-200',
@@ -40,6 +56,9 @@ export function WidgetWrapper({
         isNavigable && 'hover:border-[#FF6600]/50 hover:shadow-lg hover:shadow-[#FF6600]/5 cursor-pointer',
         className
       )}
+      role={isNavigable ? 'link' : undefined}
+      tabIndex={isNavigable ? 0 : undefined}
+      onKeyDown={isNavigable ? (e) => { if (e.key === 'Enter') router.push(href!) } : undefined}
     >
       {/* Header bar */}
       <div className={cn(
@@ -105,29 +124,13 @@ export function WidgetWrapper({
         </div>
       </div>
 
-      {/* Content — si tiene href y no editando, todo el área es un link.
-          Si NO, queda como div normal (el grid usa drag&drop en modo editing). */}
+      {/* Content — la navegación se maneja con onClick en el wrapper raíz
+          (router.push) porque react-grid-layout intercepta mousedown y
+          cancela el click natural de un <a>. */}
       {!minimized && (
-        isNavigable ? (
-          <Link
-            href={href!}
-            className="flex-1 overflow-auto p-3 block focus:outline-none focus-visible:ring-2 focus-visible:ring-[#FF6600] focus-visible:ring-inset rounded-b-xl"
-            onClick={(e) => {
-              // Si el click vino de un botón interno (ej. dentro de una sub-acción),
-              // no seguir el link. La regla: solo el wrapper navega.
-              const t = e.target as HTMLElement
-              if (t.closest('button, a, input, select, [role="button"]')) {
-                e.preventDefault()
-              }
-            }}
-          >
-            {children}
-          </Link>
-        ) : (
-          <div className="flex-1 overflow-auto p-3">
-            {children}
-          </div>
-        )
+        <div className="flex-1 overflow-auto p-3">
+          {children}
+        </div>
       )}
     </div>
   )
