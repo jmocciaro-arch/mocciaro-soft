@@ -447,11 +447,17 @@ export default function AdminPage() {
     setSavingUser(true)
     try {
       if (editingUserId) {
-        // Update existing user
+        // Update existing user — server merges permissions JSONB and sets default_company_id
+        const { permissions: _ignored, rbac_role_ids: _ignored2, rbac_team_ids: _ignored3, ...formFields } = userForm
         const res = await fetch('/api/admin/users', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: editingUserId, ...userForm }),
+          body: JSON.stringify({
+            id: editingUserId,
+            ...formFields,
+            email_personal: userForm.email_personal || null,
+            whatsapp_empresa: userForm.whatsapp_empresa || null,
+          }),
         })
         const result = await res.json()
         if (!res.ok) {
@@ -464,18 +470,6 @@ export default function AdminPage() {
               userForm.rbac_role_ids.map(rid => ({ user_id: editingUserId, role_id: rid }))
             )
           }
-          // Save specialties + extra fields in permissions JSONB
-          const existingPerms = (usersData.find(u => (u as Row).id === editingUserId) as Row)?.permissions as Record<string, unknown> || {}
-          await supabase.from('tt_users').update({
-            permissions: {
-              ...existingPerms,
-              specialties: userForm.specialties,
-              company_ids: userForm.company_ids,
-              email_personal: userForm.email_personal || null,
-              whatsapp_empresa: userForm.whatsapp_empresa || null,
-            },
-            default_company_id: userForm.company_ids[0] || null,
-          }).eq('id', editingUserId)
           addToast({ type: 'success', title: 'Usuario actualizado' })
           setShowUserModal(false)
           loadUsers()
@@ -1658,10 +1652,24 @@ export default function AdminPage() {
 
             {/* Multi-company & status */}
             <div>
-              <p className="text-xs font-medium text-[#6B7280] uppercase tracking-wider mb-3">
-                Empresas asignadas
-                <span className="text-[10px] font-normal normal-case ml-2 text-[#4B5563]">(puede pertenecer a varias)</span>
-              </p>
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs font-medium text-[#6B7280] uppercase tracking-wider">
+                  Empresas asignadas
+                  <span className="text-[10px] font-normal normal-case ml-2 text-[#4B5563]">(puede pertenecer a varias)</span>
+                </p>
+                <div className="flex gap-2">
+                  <button type="button"
+                    onClick={() => setUserForm(prev => ({ ...prev, company_ids: companies.map(c => c.id as string) }))}
+                    className="text-[10px] uppercase tracking-wider px-2 py-1 rounded border border-[#1E2330] text-[#9CA3AF] hover:border-[#FF6600]/40 hover:text-[#FF6600] transition-all">
+                    Todos
+                  </button>
+                  <button type="button"
+                    onClick={() => setUserForm(prev => ({ ...prev, company_ids: [] }))}
+                    className="text-[10px] uppercase tracking-wider px-2 py-1 rounded border border-[#1E2330] text-[#9CA3AF] hover:border-red-500/40 hover:text-red-400 transition-all">
+                    Ninguno
+                  </button>
+                </div>
+              </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {companies.map(c => {
                   const cid = c.id as string
@@ -1699,12 +1707,26 @@ export default function AdminPage() {
             {/* RBAC Roles */}
             {/* Specialties */}
             <div>
-              <p className="text-xs font-medium text-[#6B7280] uppercase tracking-wider mb-3">
-                Especialidades
-                <span className="text-[10px] font-normal normal-case ml-2 text-[#4B5563]">
-                  (determina que leads/avisos recibe este usuario)
-                </span>
-              </p>
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs font-medium text-[#6B7280] uppercase tracking-wider">
+                  Especialidades
+                  <span className="text-[10px] font-normal normal-case ml-2 text-[#4B5563]">
+                    (determina que leads/avisos recibe este usuario)
+                  </span>
+                </p>
+                <div className="flex gap-2">
+                  <button type="button"
+                    onClick={() => setUserForm(prev => ({ ...prev, specialties: STAFF_SPECIALTIES.map(s => s.value) }))}
+                    className="text-[10px] uppercase tracking-wider px-2 py-1 rounded border border-[#1E2330] text-[#9CA3AF] hover:border-[#FF6600]/40 hover:text-[#FF6600] transition-all">
+                    Todas
+                  </button>
+                  <button type="button"
+                    onClick={() => setUserForm(prev => ({ ...prev, specialties: [] }))}
+                    className="text-[10px] uppercase tracking-wider px-2 py-1 rounded border border-[#1E2330] text-[#9CA3AF] hover:border-red-500/40 hover:text-red-400 transition-all">
+                    Ninguna
+                  </button>
+                </div>
+              </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {STAFF_SPECIALTIES.map(spec => {
                   const isSelected = userForm.specialties.includes(spec.value)
@@ -1733,18 +1755,54 @@ export default function AdminPage() {
             </div>
 
             <div>
-              <p className="text-xs font-medium text-[#6B7280] uppercase tracking-wider mb-3">
-                Roles RBAC
-                <span className="text-[10px] font-normal normal-case ml-2 text-[#4B5563]">
-                  (los permisos se derivan automaticamente de los roles asignados)
-                </span>
-              </p>
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs font-medium text-[#6B7280] uppercase tracking-wider">
+                  Roles RBAC
+                  <span className="text-[10px] font-normal normal-case ml-2 text-[#4B5563]">
+                    (los permisos se derivan automaticamente de los roles asignados)
+                  </span>
+                </p>
+                <div className="flex gap-2">
+                  <button type="button"
+                    onClick={() => {
+                      const allIds = rbacRoles.map(r => r.id)
+                      setUserForm(prev => ({ ...prev, rbac_role_ids: allIds }))
+                      setUserEffectivePerms(computeEffectivePerms(allIds))
+                    }}
+                    className="text-[10px] uppercase tracking-wider px-2 py-1 rounded border border-[#1E2330] text-[#9CA3AF] hover:border-[#FF6600]/40 hover:text-[#FF6600] transition-all">
+                    Todos
+                  </button>
+                  <button type="button"
+                    onClick={() => {
+                      setUserForm(prev => ({ ...prev, rbac_role_ids: [] }))
+                      setUserEffectivePerms([])
+                    }}
+                    className="text-[10px] uppercase tracking-wider px-2 py-1 rounded border border-[#1E2330] text-[#9CA3AF] hover:border-red-500/40 hover:text-red-400 transition-all">
+                    Ninguno
+                  </button>
+                </div>
+              </div>
               {(['internal', 'external_client', 'external_supplier'] as const).map(category => {
                 const categoryRoles = rbacRoles.filter(r => r.category === category)
                 if (categoryRoles.length === 0) return null
+                const categoryRoleIds = categoryRoles.map(r => r.id)
+                const allCategorySelected = categoryRoleIds.every(id => userForm.rbac_role_ids.includes(id))
                 return (
                   <div key={category} className="mb-3">
-                    <p className="text-[10px] font-semibold text-[#4B5563] uppercase mb-2">{CATEGORY_LABELS[category]}</p>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-[10px] font-semibold text-[#4B5563] uppercase">{CATEGORY_LABELS[category]}</p>
+                      <button type="button"
+                        onClick={() => {
+                          const newIds = allCategorySelected
+                            ? userForm.rbac_role_ids.filter(id => !categoryRoleIds.includes(id))
+                            : Array.from(new Set([...userForm.rbac_role_ids, ...categoryRoleIds]))
+                          setUserForm(prev => ({ ...prev, rbac_role_ids: newIds }))
+                          setUserEffectivePerms(computeEffectivePerms(newIds))
+                        }}
+                        className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded border border-[#1E2330] text-[#6B7280] hover:border-[#FF6600]/40 hover:text-[#FF6600] transition-all">
+                        {allCategorySelected ? 'Quitar todos' : 'Marcar todos'}
+                      </button>
+                    </div>
                     <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
                       {categoryRoles.map(role => {
                         const isSelected = userForm.rbac_role_ids.includes(role.id)

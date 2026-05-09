@@ -94,12 +94,36 @@ export async function PUT(req: NextRequest) {
 
     // Build update object filtering out undefined values
     const updateData: Record<string, unknown> = {}
-    const fields = ['username', 'full_name', 'email', 'gmail', 'whatsapp', 'phone', 'role', 'company_id', 'active', 'permissions']
+    const fields = ['username', 'full_name', 'email', 'gmail', 'whatsapp', 'phone', 'role', 'company_id', 'active']
     for (const f of fields) {
       if (updates[f] !== undefined) {
         updateData[f] = updates[f]
       }
     }
+
+    // Merge permissions JSONB: read existing, layer updates on top.
+    // Granular fields (specialties, company_ids, email_personal, whatsapp_empresa) live inside permissions.
+    const permissionFields = ['specialties', 'company_ids', 'email_personal', 'whatsapp_empresa']
+    const hasPermissionUpdate = updates.permissions !== undefined || permissionFields.some(f => updates[f] !== undefined)
+    if (hasPermissionUpdate) {
+      const { data: current } = await admin
+        .from('tt_users')
+        .select('permissions')
+        .eq('id', id)
+        .single()
+      const existingPerms = (current?.permissions as Record<string, unknown>) || {}
+      const incomingPerms = (updates.permissions as Record<string, unknown>) || {}
+      const merged: Record<string, unknown> = { ...existingPerms, ...incomingPerms }
+      for (const f of permissionFields) {
+        if (updates[f] !== undefined) merged[f] = updates[f]
+      }
+      updateData.permissions = merged
+    }
+
+    if (Array.isArray(updates.company_ids)) {
+      updateData.default_company_id = updates.company_ids[0] || null
+    }
+
     updateData.updated_at = new Date().toISOString()
 
     const { data, error } = await admin
