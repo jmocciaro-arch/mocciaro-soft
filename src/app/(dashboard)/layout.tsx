@@ -5,6 +5,7 @@ import { ToastProvider } from '@/components/ui/toast'
 import { CompanyProvider } from '@/lib/company-context'
 import { AIAssistant } from '@/components/ai/ai-assistant'
 import { CommandPalette } from '@/components/command-palette'
+import { HelpAssistant } from '@/components/help/help-assistant'
 import { cn } from '@/lib/utils'
 
 function DashboardInner({ children }: { children: React.ReactNode }) {
@@ -27,6 +28,7 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
       <MobileNav />
       <AIAssistant />
       <CommandPalette />
+      <HelpAssistant />
     </div>
   )
 }
