@@ -462,8 +462,8 @@ export function TopBar({ userName }: { userName?: string }) {
           <HelpCircle size={18} />
         </button>
 
-        {/* Toggle tema oscuro / gris */}
-        <ThemeToggle compact />
+        {/* Toggle tema (Oscuro / Claro / Brillante / Gris) */}
+        <ThemeToggle />
 
         {/* Alertas */}
         <AlertsBell />
