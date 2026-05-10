@@ -7,13 +7,18 @@ interface BadgeProps {
   className?: string
 }
 
+/**
+ * Badge — usa variables CSS semánticas (definidas en globals.css por tema)
+ * para que los estados Pendiente/Cerrado/etc tengan contraste correcto en
+ * los 4 temas (Oscuro, Claro, Brillante, Gris).
+ */
 const variants = {
-  default: 'bg-[#1E2330] text-[#9CA3AF] border-[#2A3040]',
-  success: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-  warning: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
-  danger: 'bg-red-500/10 text-red-400 border-red-500/20',
-  info: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-  orange: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
+  default: 'status-neutral',
+  success: 'status-success',
+  warning: 'status-warning',
+  danger:  'status-danger',
+  info:    'status-info',
+  orange:  'bg-[#FF6600]/10 text-[#FF6600] border-[#FF6600]/30',
 }
 
 export function Badge({ children, variant = 'default', size = 'sm', className }: BadgeProps) {

@@ -478,3 +478,182 @@ html[data-theme="gray"] .to-\[\#141820\]      { --tw-gradient-to: #3C3F46 var(--
 html[data-theme="gray"] .from-\[\#0B0E13\]    { --tw-gradient-from: #2E3138 var(--tw-gradient-from-position) !important; }
 html[data-theme="gray"] .to-\[\#0B0E13\]      { --tw-gradient-to: #2E3138 var(--tw-gradient-to-position) !important; }
 
+/* ════════════════════════════════════════════════════════════════════
+   STATUS SEMAFORO — Variables semánticas por tema
+   Asegura que badges Pendiente/En curso/Cerrado tengan colores
+   consistentes y contrastados en los 4 temas.
+   Uso: <span class="status-warning">Pendiente</span>
+   ════════════════════════════════════════════════════════════════════ */
+:root, html[data-theme="dark"] {
+  --status-success-bg:  rgba(34, 197, 94, 0.15);
+  --status-success-fg:  #4ADE80;
+  --status-success-bd:  rgba(34, 197, 94, 0.30);
+  --status-warning-bg:  rgba(251, 191, 36, 0.15);
+  --status-warning-fg:  #FCD34D;
+  --status-warning-bd:  rgba(251, 191, 36, 0.30);
+  --status-danger-bg:   rgba(239, 68, 68, 0.15);
+  --status-danger-fg:   #F87171;
+  --status-danger-bd:   rgba(239, 68, 68, 0.30);
+  --status-info-bg:     rgba(59, 130, 246, 0.15);
+  --status-info-fg:     #60A5FA;
+  --status-info-bd:     rgba(59, 130, 246, 0.30);
+  --status-neutral-bg:  #1E2330;
+  --status-neutral-fg:  #9CA3AF;
+  --status-neutral-bd:  #2A3040;
+}
+
+html[data-theme="light"] {
+  --status-success-bg:  #DCFCE7;
+  --status-success-fg:  #15803D;
+  --status-success-bd:  #86EFAC;
+  --status-warning-bg:  #FEF3C7;
+  --status-warning-fg:  #92400E;
+  --status-warning-bd:  #FCD34D;
+  --status-danger-bg:   #FEE2E2;
+  --status-danger-fg:   #991B1B;
+  --status-danger-bd:   #FCA5A5;
+  --status-info-bg:     #DBEAFE;
+  --status-info-fg:     #1E40AF;
+  --status-info-bd:     #93C5FD;
+  --status-neutral-bg:  #F3F4F6;
+  --status-neutral-fg:  #4B5563;
+  --status-neutral-bd:  #E5E7EB;
+}
+
+html[data-theme="bright"] {
+  --status-success-bg:  #DCFCE7;
+  --status-success-fg:  #15803D;
+  --status-success-bd:  #86EFAC;
+  --status-warning-bg:  #FEF3C7;
+  --status-warning-fg:  #92400E;
+  --status-warning-bd:  #FCD34D;
+  --status-danger-bg:   #FEE2E2;
+  --status-danger-fg:   #991B1B;
+  --status-danger-bd:   #FCA5A5;
+  --status-info-bg:     #DBEAFE;
+  --status-info-fg:     #1E40AF;
+  --status-info-bd:     #93C5FD;
+  --status-neutral-bg:  #F3F4F6;
+  --status-neutral-fg:  #4B5563;
+  --status-neutral-bd:  #E5E7EB;
+}
+
+html[data-theme="gray"] {
+  --status-success-bg:  rgba(34, 197, 94, 0.20);
+  --status-success-fg:  #86EFAC;
+  --status-success-bd:  rgba(34, 197, 94, 0.40);
+  --status-warning-bg:  rgba(251, 191, 36, 0.20);
+  --status-warning-fg:  #FDE68A;
+  --status-warning-bd:  rgba(251, 191, 36, 0.40);
+  --status-danger-bg:   rgba(239, 68, 68, 0.20);
+  --status-danger-fg:   #FCA5A5;
+  --status-danger-bd:   rgba(239, 68, 68, 0.40);
+  --status-info-bg:     rgba(59, 130, 246, 0.20);
+  --status-info-fg:     #93C5FD;
+  --status-info-bd:     rgba(59, 130, 246, 0.40);
+  --status-neutral-bg:  #4F525A;
+  --status-neutral-fg:  #DCDFE4;
+  --status-neutral-bd:  #5C5F67;
+}
+
+.status-success { background-color: var(--status-success-bg); color: var(--status-success-fg); border-color: var(--status-success-bd); }
+.status-warning { background-color: var(--status-warning-bg); color: var(--status-warning-fg); border-color: var(--status-warning-bd); }
+.status-danger  { background-color: var(--status-danger-bg);  color: var(--status-danger-fg);  border-color: var(--status-danger-bd);  }
+.status-info    { background-color: var(--status-info-bg);    color: var(--status-info-fg);    border-color: var(--status-info-bd);    }
+.status-neutral { background-color: var(--status-neutral-bg); color: var(--status-neutral-fg); border-color: var(--status-neutral-bd); }
+
+/* ════════════════════════════════════════════════════════════════════
+   USER PREFERENCES — Tamaño de texto + accent color
+   Aplicados como data attributes en <html> (data-text-size, data-accent).
+   ════════════════════════════════════════════════════════════════════ */
+:root {
+  --accent: #FF6600;
+  --accent-hover: #E55A00;
+}
+
+html[data-accent="blue"]   { --accent: #2563EB; --accent-hover: #1D4ED8; }
+html[data-accent="green"]  { --accent: #16A34A; --accent-hover: #15803D; }
+html[data-accent="purple"] { --accent: #9333EA; --accent-hover: #7E22CE; }
+html[data-accent="rose"]   { --accent: #E11D48; --accent-hover: #BE123C; }
+html[data-accent="teal"]   { --accent: #0D9488; --accent-hover: #0F766E; }
+
+/* Tamaño de texto base — escala todo el árbol */
+html[data-text-size="sm"]     { font-size: 14px; }
+html[data-text-size="normal"] { font-size: 16px; }
+html[data-text-size="lg"]     { font-size: 18px; }
+html[data-text-size="xl"]     { font-size: 20px; }
+
+/* ════════════════════════════════════════════════════════════════════
+   CONTRASTE — Colores Tailwind claros (text-*-400/500) que en temas
+   light/bright quedan ilegibles sobre fondo blanco. Los oscurecemos.
+   No tocan zonas data-theme-scope="dark" (header/sidebar) en light;
+   en bright aplica a todo (no hay zona oscura).
+   ════════════════════════════════════════════════════════════════════ */
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-emerald-400,
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-emerald-500,
+html[data-theme="bright"] .text-emerald-400,
+html[data-theme="bright"] .text-emerald-500 { color: #15803D !important; }
+
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-green-400,
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-green-500,
+html[data-theme="bright"] .text-green-400,
+html[data-theme="bright"] .text-green-500 { color: #15803D !important; }
+
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-amber-400,
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-amber-500,
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-yellow-400,
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-yellow-500,
+html[data-theme="bright"] .text-amber-400,
+html[data-theme="bright"] .text-amber-500,
+html[data-theme="bright"] .text-yellow-400,
+html[data-theme="bright"] .text-yellow-500 { color: #92400E !important; }
+
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-red-400,
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-red-500,
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-rose-400,
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-rose-500,
+html[data-theme="bright"] .text-red-400,
+html[data-theme="bright"] .text-red-500,
+html[data-theme="bright"] .text-rose-400,
+html[data-theme="bright"] .text-rose-500 { color: #991B1B !important; }
+
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-blue-400,
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-blue-500,
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-sky-400,
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-sky-500,
+html[data-theme="bright"] .text-blue-400,
+html[data-theme="bright"] .text-blue-500,
+html[data-theme="bright"] .text-sky-400,
+html[data-theme="bright"] .text-sky-500 { color: #1E40AF !important; }
+
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-purple-400,
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-purple-500,
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-violet-400,
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-violet-500,
+html[data-theme="bright"] .text-purple-400,
+html[data-theme="bright"] .text-purple-500,
+html[data-theme="bright"] .text-violet-400,
+html[data-theme="bright"] .text-violet-500 { color: #6B21A8 !important; }
+
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-orange-400,
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-orange-500,
+html[data-theme="bright"] .text-orange-400,
+html[data-theme="bright"] .text-orange-500 { color: #C2410C !important; }
+
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-pink-400,
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-pink-500,
+html[data-theme="bright"] .text-pink-400,
+html[data-theme="bright"] .text-pink-500 { color: #9D174D !important; }
+
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-cyan-400,
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-cyan-500,
+html[data-theme="bright"] .text-cyan-400,
+html[data-theme="bright"] .text-cyan-500 { color: #0E7490 !important; }
+
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-teal-400,
+html[data-theme="light"] :not([data-theme-scope="dark"] *).text-teal-500,
+html[data-theme="bright"] .text-teal-400,
+html[data-theme="bright"] .text-teal-500 { color: #0F766E !important; }
+
+/* CTAs/buttons con bg-*-500/600 — se mantienen, ya tienen text-white */
+

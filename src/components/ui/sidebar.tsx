@@ -443,12 +443,11 @@ export function TopBar({ userName }: { userName?: string }) {
             const ev = new KeyboardEvent('keydown', { key: 'k', metaKey: true, ctrlKey: true, bubbles: true })
             window.dispatchEvent(ev)
           }}
-          className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs opacity-60 hover:opacity-100"
-          style={{ background: '#1E2330', border: '1px solid #2A3040' }}
+          className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs opacity-70 hover:opacity-100 bg-[#1E2330] border border-[#2A3040] text-[#9CA3AF]"
           title="Abrir buscador"
         >
           <span>Buscar</span>
-          <kbd className="text-[10px] border px-1 rounded" style={{ borderColor: '#2A3040' }}>⌘K</kbd>
+          <kbd className="text-[10px] border border-[#2A3040] px-1 rounded">⌘K</kbd>
         </button>
 
         {/* Asistente IA del manual — abre modal con preguntas/respuestas */}

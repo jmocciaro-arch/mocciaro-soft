@@ -59,11 +59,11 @@ export default function RootLayout({
           rel="apple-touch-startup-image"
           href="/icons/icon-512.png"
         />
-        {/* Theme bootstrap — evita FOUC al alternar entre los 4 temas.
-            Valores válidos: dark | light | bright | gray. */}
+        {/* Apariencia bootstrap — aplica tema, tamaño de texto y accent
+            antes del primer paint para evitar FOUC. */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem('theme');if(t!=='light'&&t!=='dark'&&t!=='bright'&&t!=='gray')t='dark';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();`,
+            __html: `(function(){try{var d=document.documentElement;var t=localStorage.getItem('theme');if(['light','dark','bright','gray'].indexOf(t)<0)t='dark';d.setAttribute('data-theme',t);var s=localStorage.getItem('textSize');if(['sm','normal','lg','xl'].indexOf(s)<0)s='normal';d.setAttribute('data-text-size',s);var a=localStorage.getItem('accent');if(['orange','blue','green','purple','rose','teal'].indexOf(a)<0)a='orange';d.setAttribute('data-accent',a);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();`,
           }}
         />
       </head>
