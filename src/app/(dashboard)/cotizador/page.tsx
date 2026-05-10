@@ -769,12 +769,12 @@ export default function CotizadorPage() {
               title={!activeCompanyId
                 ? 'Seleccioná una empresa primero'
                 : 'Subí el PDF de la OC del cliente y la IA crea la cotización automáticamente'}
-              className="px-3 py-1.5 rounded-md border border-[#FF6600]/40 hover:bg-[#FF6600]/10 disabled:opacity-50 disabled:cursor-not-allowed text-[#FF6600] text-xs font-semibold transition flex items-center gap-1.5"
+              className="px-4 py-2.5 rounded-lg bg-[#FF6600] hover:bg-[#FF8533] disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-bold transition flex items-center gap-2 shadow-lg shadow-[#FF6600]/30 ring-2 ring-[#FF6600]/20 hover:ring-[#FF6600]/50"
             >
               {convertingOc ? (
-                <><Loader2 size={14} className="animate-spin" /> Creando…</>
+                <><Loader2 size={16} className="animate-spin" /> Creando cotización…</>
               ) : (
-                <><Sparkles size={12} /> <Upload size={14} /> Importar OC</>
+                <><Sparkles size={14} /> <Upload size={16} /> Importar OC del cliente (PDF)</>
               )}
             </button>
           )}
