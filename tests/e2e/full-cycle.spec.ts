@@ -10,7 +10,7 @@
  *
  * REQUIERE:
  * - DB con seed reproducible (`npm run seed:test` antes).
- * - Credenciales E2E_USER_A_*/B_* en .env.local.
+ * - Credenciales E2E_USER_A_* y E2E_USER_B_* en .env.local.
  * - E2E_BASE_URL apuntando a staging (no producción).
  *
  * Si falta seed o credenciales, los tests se skipean y log warning.

@@ -107,6 +107,8 @@ export function DocumentActions({
   const [paymentMethod, setPaymentMethod] = useState('transferencia')
   const [paymentRef, setPaymentRef] = useState('')
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0])
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [deleteReason, setDeleteReason] = useState('')
 
   const docId = document.id as string
   const status = ((document.status as string) || '').toLowerCase()
@@ -329,9 +331,6 @@ export function DocumentActions({
   }
 
   // Delete handler — con motivo obligatorio
-  const [showDeleteModal, setShowDeleteModal] = useState(false)
-  const [deleteReason, setDeleteReason] = useState('')
-
   const handleDelete = async () => {
     if (!deleteReason.trim()) { addToast({ type: 'warning', title: 'Ingresa el motivo de eliminacion' }); return }
     setLoading('delete')

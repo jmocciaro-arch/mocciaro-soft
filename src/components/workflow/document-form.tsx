@@ -2840,112 +2840,9 @@ export function DocumentForm({
         )}
 
         {/* ====== TAB: ADJUNTOS ====== */}
-        {activeTab === 'adjuntos' && (() => {
-          const [attachments, setAttachments] = useState<Array<{ name: string; url: string; type: string; size: number; uploaded_at: string }>>([])
-          const [uploading, setUploading] = useState(false)
-          const existingAttachments = ((doc?.metadata as Row)?.attachments as Array<{ name: string; url: string; type: string; size: number; uploaded_at: string }>) || []
-
-          const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-            const files = e.target.files
-            if (!files || files.length === 0) return
-            setUploading(true)
-            const supabase = createClient()
-            const newAttachments = [...existingAttachments]
-
-            for (const file of Array.from(files)) {
-              const safeName = file.name.replace(/[^\w.-]/g, '_')
-              const path = `documents/${documentId}/${Date.now()}_${safeName}`
-              const { error } = await supabase.storage.from('attachments').upload(path, file, { upsert: true })
-              if (error) {
-                console.warn('[document-form attachments] upload error:', error.message)
-                addToast({ type: 'error', title: `No se pudo subir ${file.name}`, message: error.message })
-                continue
-              }
-              // Bucket privado: signed URL larga (1 año). Re-firmar al leer si caduca.
-              const { data: signed } = await supabase.storage
-                .from('attachments')
-                .createSignedUrl(path, 60 * 60 * 24 * 365)
-              if (!signed?.signedUrl) {
-                console.warn('[document-form attachments] no signed URL for', path)
-                continue
-              }
-              newAttachments.push({
-                name: file.name,
-                url: signed.signedUrl,
-                type: file.type,
-                size: file.size,
-                uploaded_at: new Date().toISOString(),
-              })
-            }
-
-            // Save to metadata
-            await supabase.from('tt_documents').update({
-              metadata: { ...(doc?.metadata || {}), attachments: newAttachments }
-            }).eq('id', documentId)
-
-            setAttachments(newAttachments)
-            addToast({ type: 'success', title: `${files.length} archivo(s) subido(s)` })
-            setUploading(false)
-          }
-
-          const allAttachments = attachments.length > 0 ? attachments : existingAttachments
-
-          return (
-            <div className="bg-[#141820] rounded-xl border border-[#2A3040] p-5 space-y-4">
-              {/* OC del cliente - prominente */}
-              <div className="p-4 rounded-lg bg-[#FF6600]/5 border border-[#FF6600]/20">
-                <div className="flex items-center gap-2 mb-2">
-                  <FileText size={16} className="text-[#FF6600]" />
-                  <h4 className="text-sm font-semibold text-[#FF6600]">Orden de Compra del Cliente</h4>
-                </div>
-                <p className="text-xs text-[#6B7280] mb-3">Subi el PDF de la OC del cliente para vincularla a este documento y armar el glosario de OC.</p>
-                <div className="flex items-center gap-3">
-                  <span className="text-sm text-[#F0F2F5] font-mono">{(doc?.metadata as Row)?.client_reference as string || 'Sin referencia OC'}</span>
-                  {allAttachments.filter(a => a.name.toLowerCase().includes('oc') || a.name.toLowerCase().includes('orden') || a.name.toLowerCase().includes('po')).map((a, i) => (
-                    <a key={i} href={a.url} target="_blank" rel="noopener noreferrer" className="text-xs text-[#FF6600] hover:underline flex items-center gap-1">
-                      <Paperclip size={12} /> {a.name}
-                    </a>
-                  ))}
-                </div>
-              </div>
-
-              {/* Upload area */}
-              <div className="border-2 border-dashed border-[#2A3040] rounded-xl p-6 text-center hover:border-[#FF6600]/30 transition-colors">
-                <input type="file" multiple onChange={handleUpload} className="hidden" id="file-upload" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.txt" />
-                <label htmlFor="file-upload" className="cursor-pointer">
-                  {uploading ? (
-                    <Loader2 size={32} className="mx-auto mb-2 text-[#FF6600] animate-spin" />
-                  ) : (
-                    <Paperclip size={32} className="mx-auto mb-2 text-[#4B5563]" />
-                  )}
-                  <p className="text-sm text-[#9CA3AF]">{uploading ? 'Subiendo...' : 'Click para subir archivos'}</p>
-                  <p className="text-xs text-[#4B5563] mt-1">PDF, Word, Excel, imagenes (max 10MB)</p>
-                </label>
-              </div>
-
-              {/* Attachments list */}
-              {allAttachments.length > 0 && (
-                <div className="space-y-2">
-                  <h4 className="text-xs font-semibold text-[#6B7280] uppercase tracking-wider">Archivos adjuntos ({allAttachments.length})</h4>
-                  {allAttachments.map((att, i) => (
-                    <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-[#0F1218] border border-[#1E2330]">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-[#FF6600]/10 flex items-center justify-center">
-                          <FileText size={14} className="text-[#FF6600]" />
-                        </div>
-                        <div>
-                          <a href={att.url} target="_blank" rel="noopener noreferrer" className="text-sm text-[#F0F2F5] hover:text-[#FF6600] transition-colors">{att.name}</a>
-                          <p className="text-[10px] text-[#4B5563]">{(att.size / 1024).toFixed(0)} KB — {formatDate(att.uploaded_at)}</p>
-                        </div>
-                      </div>
-                      <a href={att.url} target="_blank" rel="noopener noreferrer" className="text-xs text-[#FF6600] hover:underline">Descargar</a>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )
-        })()}
+        {activeTab === 'adjuntos' && (
+          <AttachmentsTab doc={doc} documentId={documentId} />
+        )}
 
         {/* ====== TAB: FIRMA ====== */}
         {activeTab === 'firma' && (
@@ -3946,6 +3843,118 @@ function FieldRow({
         {label}
       </label>
       {children}
+    </div>
+  )
+}
+
+// ===============================================================
+// ATTACHMENTS TAB — extraído del IIFE para cumplir rules-of-hooks
+// ===============================================================
+type AttachmentMeta = { name: string; url: string; type: string; size: number; uploaded_at: string }
+
+function AttachmentsTab({ doc, documentId }: { doc: DocumentData | null; documentId: string }) {
+  const { addToast } = useToast()
+  const [attachments, setAttachments] = useState<AttachmentMeta[]>([])
+  const [uploading, setUploading] = useState(false)
+  const existingAttachments = ((doc?.metadata as Row)?.attachments as AttachmentMeta[]) || []
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files || files.length === 0) return
+    setUploading(true)
+    const supabase = createClient()
+    const newAttachments = [...existingAttachments]
+
+    for (const file of Array.from(files)) {
+      const safeName = file.name.replace(/[^\w.-]/g, '_')
+      const path = `documents/${documentId}/${Date.now()}_${safeName}`
+      const { error } = await supabase.storage.from('attachments').upload(path, file, { upsert: true })
+      if (error) {
+        console.warn('[document-form attachments] upload error:', error.message)
+        addToast({ type: 'error', title: `No se pudo subir ${file.name}`, message: error.message })
+        continue
+      }
+      // Bucket privado: signed URL larga (1 año). Re-firmar al leer si caduca.
+      const { data: signed } = await supabase.storage
+        .from('attachments')
+        .createSignedUrl(path, 60 * 60 * 24 * 365)
+      if (!signed?.signedUrl) {
+        console.warn('[document-form attachments] no signed URL for', path)
+        continue
+      }
+      newAttachments.push({
+        name: file.name,
+        url: signed.signedUrl,
+        type: file.type,
+        size: file.size,
+        uploaded_at: new Date().toISOString(),
+      })
+    }
+
+    await supabase.from('tt_documents').update({
+      metadata: { ...(doc?.metadata || {}), attachments: newAttachments }
+    }).eq('id', documentId)
+
+    setAttachments(newAttachments)
+    addToast({ type: 'success', title: `${files.length} archivo(s) subido(s)` })
+    setUploading(false)
+  }
+
+  const allAttachments = attachments.length > 0 ? attachments : existingAttachments
+
+  return (
+    <div className="bg-[#141820] rounded-xl border border-[#2A3040] p-5 space-y-4">
+      {/* OC del cliente - prominente */}
+      <div className="p-4 rounded-lg bg-[#FF6600]/5 border border-[#FF6600]/20">
+        <div className="flex items-center gap-2 mb-2">
+          <FileText size={16} className="text-[#FF6600]" />
+          <h4 className="text-sm font-semibold text-[#FF6600]">Orden de Compra del Cliente</h4>
+        </div>
+        <p className="text-xs text-[#6B7280] mb-3">Subi el PDF de la OC del cliente para vincularla a este documento y armar el glosario de OC.</p>
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-[#F0F2F5] font-mono">{(doc?.metadata as Row)?.client_reference as string || 'Sin referencia OC'}</span>
+          {allAttachments.filter(a => a.name.toLowerCase().includes('oc') || a.name.toLowerCase().includes('orden') || a.name.toLowerCase().includes('po')).map((a, i) => (
+            <a key={i} href={a.url} target="_blank" rel="noopener noreferrer" className="text-xs text-[#FF6600] hover:underline flex items-center gap-1">
+              <Paperclip size={12} /> {a.name}
+            </a>
+          ))}
+        </div>
+      </div>
+
+      {/* Upload area */}
+      <div className="border-2 border-dashed border-[#2A3040] rounded-xl p-6 text-center hover:border-[#FF6600]/30 transition-colors">
+        <input type="file" multiple onChange={handleUpload} className="hidden" id="file-upload" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.txt" />
+        <label htmlFor="file-upload" className="cursor-pointer">
+          {uploading ? (
+            <Loader2 size={32} className="mx-auto mb-2 text-[#FF6600] animate-spin" />
+          ) : (
+            <Paperclip size={32} className="mx-auto mb-2 text-[#4B5563]" />
+          )}
+          <p className="text-sm text-[#9CA3AF]">{uploading ? 'Subiendo...' : 'Click para subir archivos'}</p>
+          <p className="text-xs text-[#4B5563] mt-1">PDF, Word, Excel, imagenes (max 10MB)</p>
+        </label>
+      </div>
+
+      {/* Attachments list */}
+      {allAttachments.length > 0 && (
+        <div className="space-y-2">
+          <h4 className="text-xs font-semibold text-[#6B7280] uppercase tracking-wider">Archivos adjuntos ({allAttachments.length})</h4>
+          {allAttachments.map((att, i) => (
+            <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-[#0F1218] border border-[#1E2330]">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-[#FF6600]/10 flex items-center justify-center">
+                  <FileText size={14} className="text-[#FF6600]" />
+                </div>
+                <div>
+                  <a href={att.url} target="_blank" rel="noopener noreferrer" className="text-sm text-[#F0F2F5] hover:text-[#FF6600] transition-colors">{att.name}</a>
+                  <p className="text-[10px] text-[#4B5563]">{(att.size / 1024).toFixed(0)} KB — {formatDate(att.uploaded_at)}</p>
+                </div>
+              </div>
+              <a href={att.url} target="_blank" rel="noopener noreferrer" className="text-xs text-[#FF6600] hover:underline">Descargar</a>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
