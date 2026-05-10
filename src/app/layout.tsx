@@ -59,11 +59,11 @@ export default function RootLayout({
           rel="apple-touch-startup-image"
           href="/icons/icon-512.png"
         />
-        {/* Theme bootstrap — evita FOUC al alternar tema oscuro / gris.
-            Lee localStorage.theme y aplica data-theme al <html> antes del paint. */}
+        {/* Theme bootstrap — evita FOUC al alternar entre los 4 temas.
+            Valores válidos: dark | light | bright | gray. */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem('theme');if(t!=='light'&&t!=='dark')t='dark';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();`,
+            __html: `(function(){try{var t=localStorage.getItem('theme');if(t!=='light'&&t!=='dark'&&t!=='bright'&&t!=='gray')t='dark';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();`,
           }}
         />
       </head>

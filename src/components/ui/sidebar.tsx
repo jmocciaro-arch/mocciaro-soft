@@ -11,6 +11,7 @@ import {
   Cpu, Box, Layers, BookOpen, Pause, History,
   Banknote, Sparkles, TrendingUp, GitBranch, FormInput, Bot,
   RefreshCw, Zap, Globe, MessageCircle, ArrowLeft, HelpCircle,
+  Inbox, Workflow,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
@@ -47,8 +48,10 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
+  { label: 'Inicio', href: '/inicio', icon: Inbox },
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { label: 'Dashboard ejecutivo', href: '/dashboard/ejecutivo', icon: BarChart3 },
+  { label: 'Workflows', href: '/workflows', icon: Workflow },
   { label: 'Hub IA', href: '/ai-hub', icon: Sparkles },
   // ── CRM (un solo bloque con tabs: Leads IA | Pipeline | Actividades | Informes) ──
   { label: 'CRM', href: '/crm', icon: Target, requiredPermissions: ['view_crm'] },
@@ -158,6 +161,7 @@ export function Sidebar() {
 
       {/* Sidebar */}
       <aside
+        data-theme-scope="dark"
         className={cn(
           'fixed top-0 left-0 z-50 h-full bg-[#0A0D12] border-r border-[#1E2330] flex flex-col transition-all duration-300 print:hidden',
           collapsed ? 'w-[72px]' : 'w-[224px]',
@@ -303,7 +307,7 @@ export function MobileNav() {
   }
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-40 bg-[#0A0D12] border-t border-[#1E2330] lg:hidden safe-area-pb print:hidden">
+    <nav data-theme-scope="dark" className="fixed bottom-0 left-0 right-0 z-40 bg-[#0A0D12] border-t border-[#1E2330] lg:hidden safe-area-pb print:hidden">
       <div className="flex items-stretch justify-around px-2 pt-2 pb-1">
         {mobileBottomItems.map((item) => {
           const Icon = item.icon
@@ -396,7 +400,7 @@ export function TopBar({ userName }: { userName?: string }) {
   const canGoBack = !isRoot
 
   return (
-    <header className="h-[72px] bg-[#0A0D12]/80 backdrop-blur-xl border-b border-[#1E2330] flex items-center justify-between px-4 lg:px-6 sticky top-0 z-30 print:hidden">
+    <header data-theme-scope="dark" className="h-[72px] bg-[#0A0D12]/80 backdrop-blur-xl border-b border-[#1E2330] flex items-center justify-between px-4 lg:px-6 sticky top-0 z-30 print:hidden">
       <div className="flex items-center gap-3 min-w-0 flex-1">
         <button
           onClick={() => setMobileOpen(true)}
