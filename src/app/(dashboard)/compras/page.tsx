@@ -2209,6 +2209,34 @@ function FacturasCompraTab() {
     setSaving(false)
   }
 
+  // Build combined DataTable rows from local invoices + historical docs
+  // (declarado antes del early return para no violar rules-of-hooks)
+  const tableRows = useMemo(() => {
+    const localRows = filtered.map((inv) => {
+      const ds = getInvoiceDisplayStatus(inv)
+      const sName = (inv.supplier as Supplier | undefined)?.name || 'Proveedor'
+      return {
+        id: inv.id,
+        referencia: inv.number || '-',
+        proveedor: sName,
+        ref_proveedor: inv.supplier_invoice_number || '',
+        estado: INVOICE_STATUS[ds]?.label || ds,
+        fecha: inv.created_at,
+        importe: inv.total || 0,
+        moneda: inv.currency || 'EUR',
+        fecha_vencimiento: inv.due_date,
+        _raw: inv,
+        _source: 'local',
+      }
+    })
+    const docRows = histDocs.map((d) => {
+      const r = documentToTableRow(d)
+      r.proveedor = r.cliente
+      return r
+    })
+    return [...localRows, ...docRows]
+  }, [filtered, histDocs])
+
   // Invoice detail view
   if (selectedInvoice) {
     const ds = getInvoiceDisplayStatus(selectedInvoice)
@@ -2306,33 +2334,6 @@ function FacturasCompraTab() {
       </div>
     )
   }
-
-  // Build combined DataTable rows from local invoices + historical docs
-  const tableRows = useMemo(() => {
-    const localRows = filtered.map((inv) => {
-      const ds = getInvoiceDisplayStatus(inv)
-      const sName = (inv.supplier as Supplier | undefined)?.name || 'Proveedor'
-      return {
-        id: inv.id,
-        referencia: inv.number || '-',
-        proveedor: sName,
-        ref_proveedor: inv.supplier_invoice_number || '',
-        estado: INVOICE_STATUS[ds]?.label || ds,
-        fecha: inv.created_at,
-        importe: inv.total || 0,
-        moneda: inv.currency || 'EUR',
-        fecha_vencimiento: inv.due_date,
-        _raw: inv,
-        _source: 'local',
-      }
-    })
-    const docRows = histDocs.map((d) => {
-      const r = documentToTableRow(d)
-      r.proveedor = r.cliente
-      return r
-    })
-    return [...localRows, ...docRows]
-  }, [filtered, histDocs])
 
   const FC_COLS: DataTableColumn[] = [
     { key: 'referencia', label: 'Referencia', sortable: true, searchable: true, width: '140px' },
