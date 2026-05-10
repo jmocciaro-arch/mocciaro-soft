@@ -38,7 +38,7 @@ export default function WorkflowsPage() {
 
   const [newName, setNewName] = useState('')
   const [newScope, setNewScope] = useState<WorkflowScope>('custom')
-  const [newFromTemplate, setNewFromTemplate] = useState<string>('')
+  const [newFromTemplate, setNewFromTemplate] = useState<string>('00000000-0000-0000-0000-000000000002')
   const [creating, setCreating] = useState(false)
 
   const reload = useCallback(async () => {
@@ -187,11 +187,11 @@ export default function WorkflowsPage() {
               value={newFromTemplate}
               onChange={(e) => setNewFromTemplate(e.target.value)}
               options={[
-                { value: '', label: 'Vacío — agregar nodos manualmente' },
+                { value: '', label: 'Vacío — sin nodos (canvas en blanco)' },
                 ...templates.map(t => ({ value: t.id, label: `📋 ${t.name}` })),
               ]}
             />
-            <p className="text-[10px] text-[#6B7280] mt-1">Si dejás vacío, se crea con el flujo Lead-to-Cash estándar (8 nodos).</p>
+            <p className="text-[10px] text-[#6B7280] mt-1">Elegí una plantilla para arrancar con nodos pre-armados, o &quot;Vacío&quot; para diseñar desde cero.</p>
           </div>
 
           <div className="flex justify-end gap-2 pt-2">
