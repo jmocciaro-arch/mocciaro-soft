@@ -104,6 +104,7 @@ function groupClientsByCompany(clients: Client[]): GroupedCompany[] {
     const bestCity = records.find(r => r.city)?.city || null
     const bestCategory = records.find(r => r.category)?.category || null
     const bestPaymentTerms = records.find(r => r.payment_terms)?.payment_terms || null
+    const pick = <K extends keyof Client>(k: K) => records.find(r => r[k] !== null && r[k] !== undefined && r[k] !== '')?.[k]
 
     companies.push({
       id: primary.id,
@@ -122,6 +123,38 @@ function groupClientsByCompany(clients: Client[]): GroupedCompany[] {
       payment_terms: bestPaymentTerms,
       credit_limit: primary.credit_limit,
       source: primary.source,
+      // ── condiciones comerciales ──
+      currency: (pick('currency') as string | null) ?? null,
+      sale_condition: (pick('sale_condition') as string | null) ?? null,
+      payment_method: (pick('payment_method') as string | null) ?? null,
+      payment_terms_days: (pick('payment_terms_days') as number | null) ?? null,
+      bank_account: (pick('bank_account') as string | null) ?? null,
+      delivery_address: (pick('delivery_address') as string | null) ?? null,
+      delivery_city: (pick('delivery_city') as string | null) ?? null,
+      delivery_state: (pick('delivery_state') as string | null) ?? null,
+      delivery_postal_code: (pick('delivery_postal_code') as string | null) ?? null,
+      delivery_country: (pick('delivery_country') as string | null) ?? null,
+      delivery_contact: (pick('delivery_contact') as string | null) ?? null,
+      delivery_phone: (pick('delivery_phone') as string | null) ?? null,
+      incoterm: (pick('incoterm') as string | null) ?? null,
+      delivery_method: (pick('delivery_method') as string | null) ?? null,
+      delivery_terms: (pick('delivery_terms') as string | null) ?? null,
+      delivery_notes: (pick('delivery_notes') as string | null) ?? null,
+      fiscal_condition: (pick('fiscal_condition') as string | null) ?? null,
+      tax_id_type: (pick('tax_id_type') as string | null) ?? null,
+      subject_iva: primary.subject_iva,
+      iva_rate: primary.iva_rate,
+      subject_irpf: primary.subject_irpf,
+      irpf_rate: primary.irpf_rate,
+      subject_re: primary.subject_re,
+      re_rate: primary.re_rate,
+      subject_iibb: primary.subject_iibb,
+      iibb_rate: primary.iibb_rate,
+      iibb_jurisdiction: (pick('iibb_jurisdiction') as string | null) ?? null,
+      subject_ganancias: primary.subject_ganancias,
+      ganancias_rate: primary.ganancias_rate,
+      commercial_notes: (pick('commercial_notes') as string | null) ?? null,
+      preferred_language: (pick('preferred_language') as string | null) ?? null,
       records,
       inlineContacts,
       contactCount: inlineContacts.length,
@@ -213,6 +246,7 @@ function CompanyDetail({ company, onClose, onUpdate }: {
     setEditData({
       legal_name: company.legal_name,
       tax_id: company.tax_id,
+      tax_id_type: company.tax_id_type,
       email: company.email,
       phone: company.phone,
       address: company.address,
@@ -221,8 +255,42 @@ function CompanyDetail({ company, onClose, onUpdate }: {
       postal_code: company.postal_code,
       country: company.country,
       category: company.category,
+      // pago
       payment_terms: company.payment_terms,
+      payment_terms_days: company.payment_terms_days ?? 0,
+      payment_method: company.payment_method,
+      sale_condition: company.sale_condition,
+      bank_account: company.bank_account,
       credit_limit: company.credit_limit,
+      currency: company.currency || 'EUR',
+      // entrega
+      delivery_address: company.delivery_address,
+      delivery_city: company.delivery_city,
+      delivery_state: company.delivery_state,
+      delivery_postal_code: company.delivery_postal_code,
+      delivery_country: company.delivery_country,
+      delivery_contact: company.delivery_contact,
+      delivery_phone: company.delivery_phone,
+      incoterm: company.incoterm,
+      delivery_method: company.delivery_method,
+      delivery_terms: company.delivery_terms,
+      delivery_notes: company.delivery_notes,
+      // fiscal
+      fiscal_condition: company.fiscal_condition,
+      subject_iva: company.subject_iva ?? true,
+      iva_rate: company.iva_rate ?? 21,
+      subject_irpf: company.subject_irpf ?? false,
+      irpf_rate: company.irpf_rate ?? 15,
+      subject_re: company.subject_re ?? false,
+      re_rate: company.re_rate ?? 5.2,
+      subject_iibb: company.subject_iibb ?? false,
+      iibb_rate: company.iibb_rate ?? 0,
+      iibb_jurisdiction: company.iibb_jurisdiction,
+      subject_ganancias: company.subject_ganancias ?? false,
+      ganancias_rate: company.ganancias_rate ?? 0,
+      // otros
+      commercial_notes: company.commercial_notes,
+      preferred_language: company.preferred_language || 'es',
     })
   }
 
@@ -234,6 +302,7 @@ function CompanyDetail({ company, onClose, onUpdate }: {
         await supabase.from('tt_clients').update({
           legal_name: editData.legal_name,
           tax_id: editData.tax_id,
+          tax_id_type: editData.tax_id_type,
           email: editData.email,
           phone: editData.phone,
           address: editData.address,
@@ -243,7 +312,37 @@ function CompanyDetail({ company, onClose, onUpdate }: {
           country: editData.country,
           category: editData.category,
           payment_terms: editData.payment_terms,
+          payment_terms_days: editData.payment_terms_days,
+          payment_method: editData.payment_method,
+          sale_condition: editData.sale_condition,
+          bank_account: editData.bank_account,
           credit_limit: editData.credit_limit,
+          currency: editData.currency,
+          delivery_address: editData.delivery_address,
+          delivery_city: editData.delivery_city,
+          delivery_state: editData.delivery_state,
+          delivery_postal_code: editData.delivery_postal_code,
+          delivery_country: editData.delivery_country,
+          delivery_contact: editData.delivery_contact,
+          delivery_phone: editData.delivery_phone,
+          incoterm: editData.incoterm,
+          delivery_method: editData.delivery_method,
+          delivery_terms: editData.delivery_terms,
+          delivery_notes: editData.delivery_notes,
+          fiscal_condition: editData.fiscal_condition,
+          subject_iva: editData.subject_iva,
+          iva_rate: editData.iva_rate,
+          subject_irpf: editData.subject_irpf,
+          irpf_rate: editData.irpf_rate,
+          subject_re: editData.subject_re,
+          re_rate: editData.re_rate,
+          subject_iibb: editData.subject_iibb,
+          iibb_rate: editData.iibb_rate,
+          iibb_jurisdiction: editData.iibb_jurisdiction,
+          subject_ganancias: editData.subject_ganancias,
+          ganancias_rate: editData.ganancias_rate,
+          commercial_notes: editData.commercial_notes,
+          preferred_language: editData.preferred_language,
           updated_at: new Date().toISOString(),
         }).eq('id', rec.id)
       }
@@ -417,10 +516,14 @@ function CompanyDetail({ company, onClose, onUpdate }: {
           <Card>
             <h3 className="text-xs font-semibold text-[#6B7280] uppercase mb-3">Condiciones</h3>
             <div className="space-y-2">
-              <div className="flex justify-between text-xs"><span className="text-[#6B7280]">Pago</span><span className="text-[#F0F2F5]">{company.payment_terms || '-'}</span></div>
-              <div className="flex justify-between text-xs"><span className="text-[#6B7280]">Limite credito</span><span className="text-[#F0F2F5]">{company.credit_limit ? formatCurrency(company.credit_limit, 'EUR') : '-'}</span></div>
+              <div className="flex justify-between text-xs"><span className="text-[#6B7280]">Moneda</span><span className="text-[#F0F2F5]">{company.currency || 'EUR'}</span></div>
+              <div className="flex justify-between text-xs"><span className="text-[#6B7280]">Venta</span><span className="text-[#F0F2F5] capitalize">{(company.sale_condition || '-').replace(/_/g, ' ')}</span></div>
+              <div className="flex justify-between text-xs"><span className="text-[#6B7280]">Pago</span><span className="text-[#F0F2F5] capitalize">{(company.payment_method || '-').replace(/_/g, ' ')}</span></div>
+              <div className="flex justify-between text-xs"><span className="text-[#6B7280]">Plazo</span><span className="text-[#F0F2F5]">{company.payment_terms_days != null ? `${company.payment_terms_days} dias` : (company.payment_terms || '-')}</span></div>
+              <div className="flex justify-between text-xs"><span className="text-[#6B7280]">Limite credito</span><span className="text-[#F0F2F5]">{company.credit_limit ? formatCurrency(company.credit_limit, (company.currency || 'EUR') as 'EUR' | 'ARS' | 'USD') : '-'}</span></div>
+              <div className="flex justify-between text-xs"><span className="text-[#6B7280]">Incoterm</span><span className="text-[#F0F2F5]">{company.incoterm || '-'}</span></div>
+              <div className="flex justify-between text-xs"><span className="text-[#6B7280]">Fiscal</span><span className="text-[#F0F2F5] capitalize">{(company.fiscal_condition || '-').replace(/_/g, ' ')}</span></div>
               <div className="flex justify-between text-xs"><span className="text-[#6B7280]">Categoria</span><span className="text-[#F0F2F5] capitalize">{company.category || '-'}</span></div>
-              <div className="flex justify-between text-xs"><span className="text-[#6B7280]">Origen</span><span className="text-[#F0F2F5]">{company.source || '-'}</span></div>
             </div>
           </Card>
 
@@ -478,9 +581,188 @@ function CompanyDetail({ company, onClose, onUpdate }: {
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <Select label="Pais" value={editData.country || 'ES'} onChange={(e) => setEditData({ ...editData, country: e.target.value })} options={Object.entries(countryNames).map(([k, v]) => ({ value: k, label: v }))} />
-                      <Input label="Condiciones de pago" value={editData.payment_terms || ''} onChange={(e) => setEditData({ ...editData, payment_terms: e.target.value })} />
+                      <Select label="Tipo de identificacion fiscal" value={editData.tax_id_type || ''} onChange={(e) => setEditData({ ...editData, tax_id_type: e.target.value })} options={[
+                        { value: '', label: '— sin definir —' },
+                        { value: 'CIF', label: 'CIF (ES — empresa)' },
+                        { value: 'NIF', label: 'NIF (ES — persona)' },
+                        { value: 'NIE', label: 'NIE (ES — extranjero)' },
+                        { value: 'CUIT', label: 'CUIT (AR — empresa)' },
+                        { value: 'CUIL', label: 'CUIL (AR — persona)' },
+                        { value: 'RUT', label: 'RUT (CL/UY)' },
+                        { value: 'EIN', label: 'EIN (US)' },
+                        { value: 'otro', label: 'Otro' },
+                      ]} />
                     </div>
-                    <Input label="Limite de credito" type="number" value={String(editData.credit_limit || 0)} onChange={(e) => setEditData({ ...editData, credit_limit: Number(e.target.value) })} />
+
+                    {/* ── Comerciales: moneda / pago / venta ── */}
+                    <div className="pt-4 border-t border-[#1E2330]">
+                      <h4 className="text-xs font-semibold text-[#FF6600] uppercase mb-3">Condiciones comerciales</h4>
+                      <div className="grid grid-cols-3 gap-4">
+                        <Select label="Moneda" value={editData.currency || 'EUR'} onChange={(e) => setEditData({ ...editData, currency: e.target.value })} options={[
+                          { value: 'EUR', label: 'EUR — Euro' },
+                          { value: 'USD', label: 'USD — Dolar US' },
+                          { value: 'ARS', label: 'ARS — Peso AR' },
+                          { value: 'BRL', label: 'BRL — Real' },
+                          { value: 'CLP', label: 'CLP — Peso CL' },
+                          { value: 'UYU', label: 'UYU — Peso UY' },
+                          { value: 'MXN', label: 'MXN — Peso MX' },
+                          { value: 'GBP', label: 'GBP — Libra' },
+                        ]} />
+                        <Select label="Condicion de venta" value={editData.sale_condition || ''} onChange={(e) => setEditData({ ...editData, sale_condition: e.target.value })} options={[
+                          { value: '', label: '— sin definir —' },
+                          { value: 'contado', label: 'Contado' },
+                          { value: 'cuenta_corriente', label: 'Cuenta corriente' },
+                          { value: 'anticipo', label: 'Con anticipo' },
+                          { value: 'contra_entrega', label: 'Contra entrega' },
+                          { value: 'mixto', label: 'Mixto (anticipo + saldo)' },
+                          { value: 'consignacion', label: 'Consignacion' },
+                        ]} />
+                        <Select label="Forma de pago" value={editData.payment_method || ''} onChange={(e) => setEditData({ ...editData, payment_method: e.target.value })} options={[
+                          { value: '', label: '— sin definir —' },
+                          { value: 'transferencia', label: 'Transferencia bancaria' },
+                          { value: 'efectivo', label: 'Efectivo' },
+                          { value: 'cheque', label: 'Cheque' },
+                          { value: 'tarjeta', label: 'Tarjeta' },
+                          { value: 'paypal', label: 'PayPal' },
+                          { value: 'mercado_pago', label: 'Mercado Pago' },
+                          { value: 'debito_automatico', label: 'Debito automatico' },
+                          { value: 'pagare', label: 'Pagare' },
+                        ]} />
+                      </div>
+                      <div className="grid grid-cols-3 gap-4 mt-4">
+                        <Input label="Plazo de pago (dias)" type="number" value={String(editData.payment_terms_days ?? 0)} onChange={(e) => setEditData({ ...editData, payment_terms_days: Number(e.target.value) })} />
+                        <Input label="Condicion de pago (descripcion)" value={editData.payment_terms || ''} onChange={(e) => setEditData({ ...editData, payment_terms: e.target.value })} />
+                        <Input label="Limite de credito" type="number" value={String(editData.credit_limit || 0)} onChange={(e) => setEditData({ ...editData, credit_limit: Number(e.target.value) })} />
+                      </div>
+                      <Input label="Cuenta bancaria (IBAN / CBU)" value={editData.bank_account || ''} onChange={(e) => setEditData({ ...editData, bank_account: e.target.value })} />
+                    </div>
+
+                    {/* ── Entrega ── */}
+                    <div className="pt-4 border-t border-[#1E2330]">
+                      <h4 className="text-xs font-semibold text-[#FF6600] uppercase mb-3">Entrega</h4>
+                      <Input label="Direccion de entrega (si difiere de la fiscal)" value={editData.delivery_address || ''} onChange={(e) => setEditData({ ...editData, delivery_address: e.target.value })} />
+                      <div className="grid grid-cols-4 gap-4 mt-4">
+                        <Input label="Ciudad" value={editData.delivery_city || ''} onChange={(e) => setEditData({ ...editData, delivery_city: e.target.value })} />
+                        <Input label="Provincia" value={editData.delivery_state || ''} onChange={(e) => setEditData({ ...editData, delivery_state: e.target.value })} />
+                        <Input label="C.P." value={editData.delivery_postal_code || ''} onChange={(e) => setEditData({ ...editData, delivery_postal_code: e.target.value })} />
+                        <Select label="Pais" value={editData.delivery_country || ''} onChange={(e) => setEditData({ ...editData, delivery_country: e.target.value })} options={[{ value: '', label: 'Mismo que fiscal' }, ...Object.entries(countryNames).map(([k, v]) => ({ value: k, label: v }))]} />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4 mt-4">
+                        <Input label="Persona de contacto en entrega" value={editData.delivery_contact || ''} onChange={(e) => setEditData({ ...editData, delivery_contact: e.target.value })} />
+                        <Input label="Telefono de entrega" value={editData.delivery_phone || ''} onChange={(e) => setEditData({ ...editData, delivery_phone: e.target.value })} />
+                      </div>
+                      <div className="grid grid-cols-3 gap-4 mt-4">
+                        <Select label="Incoterm" value={editData.incoterm || ''} onChange={(e) => setEditData({ ...editData, incoterm: e.target.value })} options={[
+                          { value: '', label: '— no aplica —' },
+                          { value: 'EXW', label: 'EXW — Ex Works' },
+                          { value: 'FCA', label: 'FCA — Free Carrier' },
+                          { value: 'FOB', label: 'FOB — Free on Board' },
+                          { value: 'CFR', label: 'CFR — Cost and Freight' },
+                          { value: 'CIF', label: 'CIF — Cost, Insurance, Freight' },
+                          { value: 'CPT', label: 'CPT — Carriage Paid To' },
+                          { value: 'CIP', label: 'CIP — Carriage and Insurance Paid' },
+                          { value: 'DAP', label: 'DAP — Delivered at Place' },
+                          { value: 'DPU', label: 'DPU — Delivered at Place Unloaded' },
+                          { value: 'DDP', label: 'DDP — Delivered Duty Paid' },
+                        ]} />
+                        <Select label="Metodo de entrega" value={editData.delivery_method || ''} onChange={(e) => setEditData({ ...editData, delivery_method: e.target.value })} options={[
+                          { value: '', label: '— sin definir —' },
+                          { value: 'transporte_propio', label: 'Transporte propio' },
+                          { value: 'mensajeria', label: 'Mensajeria local' },
+                          { value: 'retira_cliente', label: 'Retira el cliente' },
+                          { value: 'agencia', label: 'Agencia de transporte' },
+                          { value: 'courier_internacional', label: 'Courier internacional' },
+                        ]} />
+                        <Input label="Plazo / condiciones" value={editData.delivery_terms || ''} onChange={(e) => setEditData({ ...editData, delivery_terms: e.target.value })} placeholder="ej: 48h habiles" />
+                      </div>
+                      <Input label="Instrucciones / notas de entrega" value={editData.delivery_notes || ''} onChange={(e) => setEditData({ ...editData, delivery_notes: e.target.value })} />
+                    </div>
+
+                    {/* ── Fiscal ── */}
+                    <div className="pt-4 border-t border-[#1E2330]">
+                      <h4 className="text-xs font-semibold text-[#FF6600] uppercase mb-3">Condicion fiscal e impuestos</h4>
+                      <Select label="Condicion fiscal" value={editData.fiscal_condition || ''} onChange={(e) => setEditData({ ...editData, fiscal_condition: e.target.value })} options={editData.country === 'AR' ? [
+                        { value: '', label: '— sin definir —' },
+                        { value: 'responsable_inscripto', label: 'Responsable Inscripto (AR)' },
+                        { value: 'monotributo', label: 'Monotributo (AR)' },
+                        { value: 'exento', label: 'Exento (AR)' },
+                        { value: 'consumidor_final', label: 'Consumidor Final (AR)' },
+                        { value: 'no_responsable', label: 'No Responsable (AR)' },
+                      ] : [
+                        { value: '', label: '— sin definir —' },
+                        { value: 'general', label: 'IVA general (ES)' },
+                        { value: 'intracomunitario', label: 'IVA intracomunitario (UE)' },
+                        { value: 'exento', label: 'Exento' },
+                        { value: 'exportacion', label: 'Exportacion (extracomunitario)' },
+                        { value: 'recargo_equivalencia', label: 'Recargo de equivalencia' },
+                      ]} />
+
+                      {/* IVA */}
+                      <div className="grid grid-cols-2 gap-4 mt-4">
+                        <label className="flex items-center gap-2 text-sm text-[#F0F2F5]">
+                          <input type="checkbox" checked={editData.subject_iva ?? true} onChange={(e) => setEditData({ ...editData, subject_iva: e.target.checked })} />
+                          Aplica IVA
+                        </label>
+                        <Input label="% IVA" type="number" value={String(editData.iva_rate ?? 21)} onChange={(e) => setEditData({ ...editData, iva_rate: Number(e.target.value) })} />
+                      </div>
+
+                      {/* IRPF (España) */}
+                      {editData.country !== 'AR' && (
+                        <div className="grid grid-cols-2 gap-4 mt-4">
+                          <label className="flex items-center gap-2 text-sm text-[#F0F2F5]">
+                            <input type="checkbox" checked={editData.subject_irpf ?? false} onChange={(e) => setEditData({ ...editData, subject_irpf: e.target.checked })} />
+                            Retencion IRPF
+                          </label>
+                          <Input label="% IRPF" type="number" value={String(editData.irpf_rate ?? 15)} onChange={(e) => setEditData({ ...editData, irpf_rate: Number(e.target.value) })} />
+                        </div>
+                      )}
+
+                      {/* Recargo de equivalencia (España) */}
+                      {editData.country !== 'AR' && (
+                        <div className="grid grid-cols-2 gap-4 mt-4">
+                          <label className="flex items-center gap-2 text-sm text-[#F0F2F5]">
+                            <input type="checkbox" checked={editData.subject_re ?? false} onChange={(e) => setEditData({ ...editData, subject_re: e.target.checked })} />
+                            Recargo de equivalencia
+                          </label>
+                          <Input label="% R.E." type="number" value={String(editData.re_rate ?? 5.2)} onChange={(e) => setEditData({ ...editData, re_rate: Number(e.target.value) })} />
+                        </div>
+                      )}
+
+                      {/* IIBB (Argentina) */}
+                      {editData.country === 'AR' && (
+                        <>
+                          <div className="grid grid-cols-3 gap-4 mt-4">
+                            <label className="flex items-center gap-2 text-sm text-[#F0F2F5]">
+                              <input type="checkbox" checked={editData.subject_iibb ?? false} onChange={(e) => setEditData({ ...editData, subject_iibb: e.target.checked })} />
+                              Retencion IIBB
+                            </label>
+                            <Input label="% IIBB" type="number" value={String(editData.iibb_rate ?? 0)} onChange={(e) => setEditData({ ...editData, iibb_rate: Number(e.target.value) })} />
+                            <Input label="Jurisdiccion" value={editData.iibb_jurisdiction || ''} onChange={(e) => setEditData({ ...editData, iibb_jurisdiction: e.target.value })} placeholder="CABA, BA, ..." />
+                          </div>
+                          <div className="grid grid-cols-2 gap-4 mt-4">
+                            <label className="flex items-center gap-2 text-sm text-[#F0F2F5]">
+                              <input type="checkbox" checked={editData.subject_ganancias ?? false} onChange={(e) => setEditData({ ...editData, subject_ganancias: e.target.checked })} />
+                              Retencion Ganancias
+                            </label>
+                            <Input label="% Ganancias" type="number" value={String(editData.ganancias_rate ?? 0)} onChange={(e) => setEditData({ ...editData, ganancias_rate: Number(e.target.value) })} />
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    {/* ── Otros ── */}
+                    <div className="pt-4 border-t border-[#1E2330]">
+                      <h4 className="text-xs font-semibold text-[#FF6600] uppercase mb-3">Otros</h4>
+                      <Select label="Idioma preferido" value={editData.preferred_language || 'es'} onChange={(e) => setEditData({ ...editData, preferred_language: e.target.value })} options={[
+                        { value: 'es', label: 'Espanol' },
+                        { value: 'en', label: 'Ingles' },
+                        { value: 'pt', label: 'Portugues' },
+                        { value: 'fr', label: 'Frances' },
+                        { value: 'it', label: 'Italiano' },
+                      ]} />
+                      <Input label="Notas comerciales (internas)" value={editData.commercial_notes || ''} onChange={(e) => setEditData({ ...editData, commercial_notes: e.target.value })} />
+                    </div>
+
                     <div className="flex gap-2 justify-end pt-2">
                       <Button variant="secondary" onClick={() => setEditing(false)}>Cancelar</Button>
                       <Button variant="primary" onClick={saveEdit} loading={saving}><Save size={14} /> Guardar</Button>
@@ -488,19 +770,85 @@ function CompanyDetail({ company, onClose, onUpdate }: {
                   </div>
                 </Card>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <InfoField label="Razon social" value={company.legal_name} />
-                  <InfoField label="CUIT / CIF" value={company.tax_id} mono />
-                  <InfoField label="Email" value={company.email} />
-                  <InfoField label="Telefono" value={company.phone} />
-                  <InfoField label="Direccion" value={[company.address, company.city, company.state].filter(Boolean).join(', ')} />
-                  <InfoField label="Pais" value={`${countryFlags[company.country] || ''} ${countryNames[company.country] || company.country}`} />
-                  <InfoField label="Codigo postal" value={company.postal_code} />
-                  <InfoField label="Condiciones de pago" value={company.payment_terms} />
-                  <InfoField label="Limite de credito" value={company.credit_limit ? formatCurrency(company.credit_limit, 'EUR') : null} />
-                  <InfoField label="Categoria" value={company.category} />
-                  <InfoField label="Origen" value={company.source} />
-                  <InfoField label="Registros vinculados" value={`${company.records.length} registro(s) en la base`} />
+                <div className="space-y-6">
+                  {/* Datos basicos */}
+                  <div>
+                    <h4 className="text-xs font-semibold text-[#FF6600] uppercase mb-3">Datos basicos</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <InfoField label="Razon social" value={company.legal_name} />
+                      <InfoField label={company.tax_id_type || 'Identificacion fiscal'} value={company.tax_id} mono />
+                      <InfoField label="Email" value={company.email} />
+                      <InfoField label="Telefono" value={company.phone} />
+                      <InfoField label="Direccion" value={[company.address, company.city, company.state].filter(Boolean).join(', ')} />
+                      <InfoField label="Pais" value={`${countryFlags[company.country] || ''} ${countryNames[company.country] || company.country}`} />
+                      <InfoField label="Codigo postal" value={company.postal_code} />
+                      <InfoField label="Categoria" value={company.category} />
+                      <InfoField label="Idioma" value={company.preferred_language} />
+                      <InfoField label="Origen" value={company.source} />
+                    </div>
+                  </div>
+
+                  {/* Comerciales */}
+                  <div>
+                    <h4 className="text-xs font-semibold text-[#FF6600] uppercase mb-3">Condiciones comerciales</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <InfoField label="Moneda" value={company.currency} />
+                      <InfoField label="Condicion de venta" value={company.sale_condition} />
+                      <InfoField label="Forma de pago" value={company.payment_method} />
+                      <InfoField label="Plazo de pago" value={company.payment_terms_days != null ? `${company.payment_terms_days} dias` : null} />
+                      <InfoField label="Condicion de pago (texto)" value={company.payment_terms} />
+                      <InfoField label="Limite de credito" value={company.credit_limit ? formatCurrency(company.credit_limit, (company.currency || 'EUR') as 'EUR' | 'ARS' | 'USD') : null} />
+                      <InfoField label="Cuenta bancaria" value={company.bank_account} mono />
+                    </div>
+                  </div>
+
+                  {/* Entrega */}
+                  <div>
+                    <h4 className="text-xs font-semibold text-[#FF6600] uppercase mb-3">Entrega</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <InfoField label="Direccion de entrega" value={[company.delivery_address, company.delivery_city, company.delivery_state].filter(Boolean).join(', ')} />
+                      <InfoField label="Pais de entrega" value={company.delivery_country ? (countryNames[company.delivery_country] || company.delivery_country) : null} />
+                      <InfoField label="Contacto de entrega" value={company.delivery_contact} />
+                      <InfoField label="Telefono de entrega" value={company.delivery_phone} />
+                      <InfoField label="Incoterm" value={company.incoterm} />
+                      <InfoField label="Metodo" value={company.delivery_method} />
+                      <InfoField label="Plazo / condiciones" value={company.delivery_terms} />
+                      <InfoField label="Notas" value={company.delivery_notes} />
+                    </div>
+                  </div>
+
+                  {/* Fiscal */}
+                  <div>
+                    <h4 className="text-xs font-semibold text-[#FF6600] uppercase mb-3">Condicion fiscal e impuestos</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <InfoField label="Condicion fiscal" value={company.fiscal_condition} />
+                      <InfoField label="IVA" value={company.subject_iva === false ? 'Exento' : `${company.iva_rate ?? 21}%`} />
+                      {company.country !== 'AR' && (
+                        <>
+                          <InfoField label="IRPF" value={company.subject_irpf ? `${company.irpf_rate ?? 15}%` : 'No retiene'} />
+                          <InfoField label="Recargo equivalencia" value={company.subject_re ? `${company.re_rate ?? 5.2}%` : 'No aplica'} />
+                        </>
+                      )}
+                      {company.country === 'AR' && (
+                        <>
+                          <InfoField label="IIBB" value={company.subject_iibb ? `${company.iibb_rate ?? 0}% — ${company.iibb_jurisdiction || '—'}` : 'No retiene'} />
+                          <InfoField label="Ganancias" value={company.subject_ganancias ? `${company.ganancias_rate ?? 0}%` : 'No retiene'} />
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Notas comerciales */}
+                  {company.commercial_notes && (
+                    <div>
+                      <h4 className="text-xs font-semibold text-[#FF6600] uppercase mb-3">Notas internas</h4>
+                      <p className="text-sm text-[#9CA3AF] whitespace-pre-wrap">{company.commercial_notes}</p>
+                    </div>
+                  )}
+
+                  <div className="text-xs text-[#6B7280] pt-2 border-t border-[#1E2330]">
+                    {company.records.length} registro(s) vinculado(s) en la base
+                  </div>
                 </div>
               )}
             </div>
@@ -1008,7 +1356,13 @@ function ClientesTab() {
     { key: 'city', label: 'Ciudad', sortable: true, searchable: true, type: 'text', defaultVisible: false },
     { key: '_country_display', label: 'Pais', sortable: true, type: 'text' },
     { key: 'category', label: 'Categoria', sortable: true, searchable: true, type: 'text' },
+    { key: 'currency', label: 'Moneda', sortable: true, type: 'text', defaultVisible: false },
+    { key: 'sale_condition', label: 'Cond. Venta', sortable: true, type: 'text', defaultVisible: false },
+    { key: 'payment_method', label: 'Forma Pago', sortable: true, type: 'text', defaultVisible: false },
     { key: 'payment_terms', label: 'Cond. Pago', sortable: true, type: 'text', defaultVisible: false },
+    { key: 'payment_terms_days', label: 'Plazo (dias)', sortable: true, type: 'number', defaultVisible: false },
+    { key: 'fiscal_condition', label: 'Cond. Fiscal', sortable: true, type: 'text', defaultVisible: false },
+    { key: 'incoterm', label: 'Incoterm', sortable: true, type: 'text', defaultVisible: false },
     { key: 'contactCount', label: 'Contactos', sortable: true, type: 'number', defaultVisible: false },
     // --- Facturacion ---
     { key: '_total_invoiced', label: 'Total Facturado', sortable: true, type: 'currency' },
@@ -1040,11 +1394,19 @@ function ClientesTab() {
     setSavingNew(true)
     const supabase = createClient()
     try {
+      // Defaults segun pais
+      const isAR = newClient.country === 'AR'
+      const isUS = newClient.country === 'US'
+      const defaultCurrency = isAR ? 'ARS' : isUS ? 'USD' : 'EUR'
+      const defaultTaxIdType = isAR ? 'CUIT' : newClient.country === 'ES' ? 'CIF' : null
+      const defaultFiscal = isAR ? 'responsable_inscripto' : 'general'
+
       // Create the main client record
       const { data: clientData, error } = await supabase.from('tt_clients').insert({
         name: newClient.contact_name || newClient.legal_name,
         legal_name: newClient.legal_name,
         tax_id: newClient.tax_id || null,
+        tax_id_type: defaultTaxIdType,
         country: newClient.country,
         city: newClient.city || null,
         email: newClient.email || null,
@@ -1053,7 +1415,14 @@ function ClientesTab() {
         category: newClient.category || null,
         active: true,
         payment_terms: 'contado',
+        payment_terms_days: 0,
+        sale_condition: 'contado',
         credit_limit: 0,
+        currency: defaultCurrency,
+        fiscal_condition: defaultFiscal,
+        subject_iva: true,
+        iva_rate: 21,
+        preferred_language: 'es',
       }).select('id').single()
       if (error) throw error
 
@@ -1122,7 +1491,13 @@ function ClientesTab() {
             { key: 'country', label: 'Pais' },
             { key: 'city', label: 'Ciudad' },
             { key: 'category', label: 'Categoria' },
+            { key: 'currency', label: 'Moneda' },
+            { key: 'sale_condition', label: 'Cond. Venta' },
+            { key: 'payment_method', label: 'Forma Pago' },
             { key: 'payment_terms', label: 'Condiciones Pago' },
+            { key: 'payment_terms_days', label: 'Plazo (dias)' },
+            { key: 'fiscal_condition', label: 'Cond. Fiscal' },
+            { key: 'incoterm', label: 'Incoterm' },
             { key: 'contactCount', label: 'Contactos' },
           ]}
         />
@@ -1141,7 +1516,17 @@ function ClientesTab() {
             { key: 'postal_code', label: 'Codigo postal' },
             { key: 'country', label: 'Pais' },
             { key: 'category', label: 'Categoria' },
+            { key: 'currency', label: 'Moneda' },
+            { key: 'sale_condition', label: 'Condicion de venta' },
+            { key: 'payment_method', label: 'Forma de pago' },
             { key: 'payment_terms', label: 'Condiciones pago' },
+            { key: 'payment_terms_days', label: 'Plazo pago (dias)', type: 'number' },
+            { key: 'fiscal_condition', label: 'Condicion fiscal' },
+            { key: 'tax_id_type', label: 'Tipo identificacion' },
+            { key: 'incoterm', label: 'Incoterm' },
+            { key: 'delivery_method', label: 'Metodo entrega' },
+            { key: 'delivery_address', label: 'Direccion entrega' },
+            { key: 'bank_account', label: 'Cuenta bancaria' },
             { key: 'notes', label: 'Observaciones' },
             { key: 'whatsapp', label: 'Web/WhatsApp' },
             { key: 'credit_limit', label: 'Descuento/Limite', type: 'number' },

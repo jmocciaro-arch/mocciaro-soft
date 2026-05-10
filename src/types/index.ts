@@ -191,6 +191,39 @@ export interface Client {
   last_order_date: string | null
   price_list_id: string | null
   default_discount: number
+  // ── v67 fiscal (España) ──
+  subject_iva?: boolean
+  iva_rate?: number
+  subject_irpf?: boolean
+  irpf_rate?: number
+  subject_re?: boolean
+  re_rate?: number
+  // ── v69 condiciones comerciales ──
+  currency?: string | null
+  sale_condition?: string | null
+  payment_method?: string | null
+  payment_terms_days?: number | null
+  bank_account?: string | null
+  delivery_address?: string | null
+  delivery_city?: string | null
+  delivery_state?: string | null
+  delivery_postal_code?: string | null
+  delivery_country?: string | null
+  delivery_contact?: string | null
+  delivery_phone?: string | null
+  incoterm?: string | null
+  delivery_method?: string | null
+  delivery_terms?: string | null
+  delivery_notes?: string | null
+  fiscal_condition?: string | null
+  tax_id_type?: string | null
+  subject_iibb?: boolean
+  iibb_rate?: number
+  iibb_jurisdiction?: string | null
+  subject_ganancias?: boolean
+  ganancias_rate?: number
+  commercial_notes?: string | null
+  preferred_language?: string | null
 }
 
 export interface ClientContact {
@@ -239,6 +272,38 @@ export interface GroupedCompany {
   payment_terms: string | null
   credit_limit: number
   source: string | null
+  // ── condiciones comerciales (v67 + v69) ──
+  currency?: string | null
+  sale_condition?: string | null
+  payment_method?: string | null
+  payment_terms_days?: number | null
+  bank_account?: string | null
+  delivery_address?: string | null
+  delivery_city?: string | null
+  delivery_state?: string | null
+  delivery_postal_code?: string | null
+  delivery_country?: string | null
+  delivery_contact?: string | null
+  delivery_phone?: string | null
+  incoterm?: string | null
+  delivery_method?: string | null
+  delivery_terms?: string | null
+  delivery_notes?: string | null
+  fiscal_condition?: string | null
+  tax_id_type?: string | null
+  subject_iva?: boolean
+  iva_rate?: number
+  subject_irpf?: boolean
+  irpf_rate?: number
+  subject_re?: boolean
+  re_rate?: number
+  subject_iibb?: boolean
+  iibb_rate?: number
+  iibb_jurisdiction?: string | null
+  subject_ganancias?: boolean
+  ganancias_rate?: number
+  commercial_notes?: string | null
+  preferred_language?: string | null
   /** All underlying tt_clients records for this company */
   records: Client[]
   /** Contacts extracted from duplicate records */
