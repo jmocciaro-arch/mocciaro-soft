@@ -392,6 +392,7 @@ export function DocumentActions({
               loading={isLoading}
               disabled={loading !== null && !isLoading}
               className={isPrimary ? 'shadow-lg shadow-orange-500/20' : ''}
+              data-doc-action={actionKey}
             >
               {!isLoading && config.icon}
               {config.label}

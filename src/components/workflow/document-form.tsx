@@ -10,6 +10,10 @@ import { useToast } from '@/components/ui/toast'
 import { formatCurrency, formatDate, formatRelative, INCOTERMS } from '@/lib/utils'
 import { mapStatus } from '@/lib/document-helpers'
 import { DocumentActions, type DocumentActionType } from './document-actions'
+import { NextStepPanel } from './next-step-panel'
+import { EntityWorkflowsCard } from '@/components/workflow-builder/entity-workflows-card'
+import { DocumentAttachments } from '@/components/documents/document-attachments'
+import type { AttachmentDocType } from '@/lib/document-attachments'
 import { SendDocumentModal } from './send-document-modal'
 import { DocumentProcessBar } from './document-process-bar'
 import { buildSteps, type DocumentType } from '@/lib/workflow-definitions'
@@ -289,6 +293,24 @@ const CURRENCY_OPTIONS = [
   { value: 'USD', label: 'USD' },
   { value: 'ARS', label: 'ARS' },
 ]
+
+// ===============================================================
+// HELPERS
+// ===============================================================
+
+/** Mapea el documentType del DocumentForm al tipo del sistema de adjuntos */
+function mapDocTypeToAttachmentType(docType: string): AttachmentDocType {
+  const t = (docType || '').toLowerCase()
+  if (t === 'coti' || t === 'presupuesto' || t === 'quote') return 'quote'
+  if (t === 'pedido' || t === 'sales_order') return 'sales_order'
+  if (t === 'delivery_note' || t === 'albaran' || t === 'remito') return 'delivery_note'
+  if (t === 'factura' || t === 'invoice') return 'invoice'
+  if (t === 'credit_note' || t === 'factura_abono') return 'credit_note'
+  if (t === 'pap' || t === 'purchase_order') return 'purchase_order'
+  if (t === 'factura_compra' || t === 'purchase_invoice') return 'purchase_invoice'
+  if (t === 'client_po') return 'client_po'
+  return 'quote'
+}
 
 // ===============================================================
 // COMPONENT
@@ -1709,6 +1731,27 @@ export function DocumentForm({
         </div>
       </div>
 
+      {/* ====== NEXT STEP PANEL (siguiente paso sugerido) ====== */}
+      {!editMode && (
+        <NextStepPanel
+          doc={doc as unknown as Row}
+          kind={documentType as DocumentActionType}
+          className="mb-3"
+          onAction={(actionKey) => {
+            // Buscar el botón equivalente en DocumentActions y dispararlo
+            const btn = window.document.querySelector<HTMLButtonElement>(
+              `[data-doc-action="${actionKey}"]`
+            )
+            if (btn) {
+              btn.click()
+            } else {
+              // Si no hay botón nativo, dispatch event para handlers custom
+              window.dispatchEvent(new CustomEvent('doc:next-step', { detail: { actionKey, docId: doc?.id } }))
+            }
+          }}
+        />
+      )}
+
       {/* ====== DOCUMENT ACTIONS (workflow buttons) ====== */}
       {!editMode && (
         <DocumentActions
@@ -1723,6 +1766,29 @@ export function DocumentForm({
             onUpdate?.()
           }}
         />
+      )}
+
+      {/* ====== ADJUNTOS DEL DOCUMENTO (OC original, pliegos, planos...) ====== */}
+      {doc?.id && (
+        <div className="mt-3 print:hidden">
+          <DocumentAttachments
+            documentId={doc.id as string}
+            documentType={mapDocTypeToAttachmentType(documentType)}
+            readOnly={editMode}
+          />
+        </div>
+      )}
+
+      {/* ====== VISUAL WORKFLOWS DEL DOCUMENTO ====== */}
+      {!editMode && doc?.id && (
+        <div className="mt-3 print:hidden">
+          <EntityWorkflowsCard
+            entityType="order"
+            entityId={doc.id as string}
+            entityName={(doc.display_ref || doc.system_code || doc.id) as string}
+            companyId={(doc.company_id as string) || undefined}
+          />
+        </div>
       )}
 
       {/* ====== CONVERT BUTTONS ====== */}

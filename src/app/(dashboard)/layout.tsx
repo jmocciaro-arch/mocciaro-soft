@@ -6,6 +6,7 @@ import { CompanyProvider } from '@/lib/company-context'
 import { AIAssistant } from '@/components/ai/ai-assistant'
 import { CommandPalette } from '@/components/command-palette'
 import { HelpAssistant } from '@/components/help/help-assistant'
+import { MultiCompanyBanner } from '@/components/ui/multi-company-banner'
 import { cn } from '@/lib/utils'
 
 function DashboardInner({ children }: { children: React.ReactNode }) {
@@ -21,6 +22,7 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
         )}
       >
         <TopBar userName="Juan" />
+        <MultiCompanyBanner />
         <main className="p-4 lg:p-6 pb-28 lg:pb-6">
           {children}
         </main>

@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useCompanyContext } from '@/lib/company-context'
 import { cn } from '@/lib/utils'
+import { getCompanyColor } from '@/lib/company-colors'
 import {
   Building2, ChevronDown, Check, Layers, Globe,
 } from 'lucide-react'
@@ -181,12 +182,18 @@ export function CompanySelector() {
     )
   }
 
+  // Derive brand color for the active company
+  const activeColor = getCompanyColor(activeCompany?.name)
+
   // If only 1 company, show static display
   if (companies.length === 1) {
     return (
-      <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#141820] border border-[#1E2330]">
+      <div className={cn(
+        'flex items-center gap-2 px-3 py-1.5 rounded-lg border',
+        activeColor.bg, activeColor.border,
+      )}>
         <span className="text-sm">{activeCompany?.flag}</span>
-        <span className="text-sm font-medium text-[#F0F2F5] hidden sm:block">
+        <span className={cn('text-sm font-semibold hidden sm:block', activeColor.text)}>
           {activeCompany?.name}
         </span>
         <span className={cn(
@@ -203,7 +210,7 @@ export function CompanySelector() {
 
   return (
     <div className="relative">
-      {/* Trigger button */}
+      {/* Trigger button — píldora con color de marca de la empresa activa */}
       <button
         ref={triggerRef}
         onClick={() => setOpen(!open)}
@@ -211,23 +218,29 @@ export function CompanySelector() {
           'flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all',
           open
             ? 'bg-[#1E2330] border-[#FF6600]/40 shadow-[0_0_12px_rgba(255,102,0,0.1)]'
-            : 'bg-[#141820] border-[#1E2330] hover:border-[#2A3040]',
+            : isMultiMode
+              ? 'bg-violet-500/10 border-violet-500/30 hover:border-violet-500/50'
+              : cn(activeColor.bg, activeColor.border, 'hover:brightness-110'),
         )}
+        style={!isMultiMode && !open ? { boxShadow: `0 0 0 1px ${activeColor.hex}22` } : undefined}
       >
         {isMultiMode ? (
           <>
             <Layers size={16} className="text-violet-400" />
-            <span className="text-sm font-medium text-[#F0F2F5] hidden sm:block">
+            <span className="text-sm font-semibold text-violet-300 hidden sm:block">
               Multi-empresa
             </span>
-            <span className="flex items-center justify-center w-5 h-5 rounded-full bg-violet-500/20 text-violet-400 text-[10px] font-bold">
+            <span className="flex items-center justify-center w-5 h-5 rounded-full bg-violet-500/30 text-violet-200 text-[10px] font-bold">
               {multiCount}
             </span>
           </>
         ) : (
           <>
             <span className="text-sm">{activeCompany?.flag}</span>
-            <span className="text-sm font-medium text-[#F0F2F5] hidden sm:block max-w-[140px] truncate">
+            <span className={cn(
+              'text-sm font-semibold hidden sm:block max-w-[140px] truncate',
+              activeColor.text
+            )}>
               {activeCompany?.name}
             </span>
             <span className={cn(

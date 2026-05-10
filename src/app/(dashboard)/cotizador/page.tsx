@@ -26,9 +26,10 @@ import { DocumentListCard } from '@/components/workflow/document-list-card'
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table'
 import { mapStatus } from '@/lib/document-helpers'
 import {
-  Plus, Minus, Trash2, Save, FileText,
+  Plus, Minus, Trash2, Save, FileText, Paperclip,
   MessageSquare, Building2, User, Search, X, Loader2, Printer, List, PlusCircle, Upload, Sparkles
 } from 'lucide-react'
+import { DocumentAttachments } from '@/components/documents/document-attachments'
 
 interface QuoteLineItem {
   id: string
@@ -120,12 +121,14 @@ export default function CotizadorPage() {
   const clientDebounceRef = useRef<NodeJS.Timeout | null>(null)
 
   // Quote
+  const [currentQuoteId, setCurrentQuoteId] = useState<string | null>(null)
   const [quoteNumber, setQuoteNumber] = useState('')
   const [docSubtype, setDocSubtype] = useState<'cotizacion' | 'presupuesto' | 'proforma' | 'packing_list' | 'oferta'>('cotizacion')
   const [items, setItems] = useState<QuoteLineItem[]>([])
   const [notes, setNotes] = useState('')
   const [internalNotes, setInternalNotes] = useState('')
   const [incoterm, setIncoterm] = useState('')
+  const [ivaEnabled, setIvaEnabled] = useState(true)
   const [taxRate, setTaxRate] = useState(21)
   const [irpfEnabled, setIrpfEnabled] = useState(false)
   const [irpfRate, setIrpfRate] = useState(0)
@@ -389,13 +392,23 @@ export default function CotizadorPage() {
     setShowClientDropdown(true)
   }
 
-  // Auto-apply IRPF/RE when client is selected
+  // Auto-apply IVA/IRPF/RE when client is selected — cada cliente trae su régimen fiscal
   useEffect(() => {
     if (!selectedClient) {
+      // Sin cliente → defaults razonables: IVA on, sin retenciones
+      setIvaEnabled(true); setTaxRate(21)
       setIrpfEnabled(false); setIrpfRate(0); setReEnabled(false); setReRate(0)
       return
     }
-    const c = selectedClient as Client & { subject_irpf?: boolean; irpf_rate?: number; subject_re?: boolean; re_rate?: number }
+    const c = selectedClient as Client & {
+      subject_iva?: boolean; iva_rate?: number;
+      subject_irpf?: boolean; irpf_rate?: number;
+      subject_re?: boolean; re_rate?: number;
+    }
+    // IVA: default true si no está definido (compatibilidad con clientes viejos)
+    const ivaOn = c.subject_iva !== false
+    setIvaEnabled(ivaOn)
+    setTaxRate(ivaOn ? (c.iva_rate ?? 21) : 0)
     if (c.subject_irpf) { setIrpfEnabled(true); setIrpfRate(c.irpf_rate || 15) }
     else { setIrpfEnabled(false); setIrpfRate(0) }
     if (c.subject_re) { setReEnabled(true); setReRate(c.re_rate || 5.2) }
@@ -483,7 +496,7 @@ export default function CotizadorPage() {
   function updateQuantity(id: string, delta: number) { setItems((prev) => prev.map((i) => (i.id === id ? { ...i, quantity: Math.max(1, i.quantity + delta) } : i))) }
 
   const subtotal = items.reduce((sum, i) => sum + i.quantity * i.unitPrice * (1 - i.discount / 100), 0)
-  const taxAmount = subtotal * (taxRate / 100)
+  const taxAmount = ivaEnabled ? subtotal * (taxRate / 100) : 0
   const irpfAmount = irpfEnabled ? subtotal * (irpfRate / 100) : 0
   const reAmount = reEnabled ? subtotal * (reRate / 100) : 0
   const total = subtotal + taxAmount - irpfAmount + reAmount
@@ -496,15 +509,18 @@ export default function CotizadorPage() {
     try {
       const { data: quoteData, error: quoteError } = await supabase
         .from('tt_quotes')
-        .insert({ number: quoteNumber, company_id: selectedCompanyId, client_id: selectedClient?.id || null, user_id: (await supabase.from('tt_users').select('id').eq('role', 'admin').limit(1).single()).data?.id || null, status: 'borrador', doc_subtype: docSubtype, notes, internal_notes: internalNotes, incoterm: incoterm || null, payment_terms: paymentTerms || null, payment_days: paymentDays || null, payment_terms_type: paymentTermsType || null, currency, subtotal, tax_rate: taxRate, tax_amount: taxAmount, irpf_rate: irpfEnabled ? irpfRate : 0, irpf_amount: irpfAmount, re_rate: reEnabled ? reRate : 0, re_amount: reAmount, total, valid_until: validUntil ? new Date(validUntil).toISOString() : null })
+        .insert({ number: quoteNumber, company_id: selectedCompanyId, client_id: selectedClient?.id || null, user_id: (await supabase.from('tt_users').select('id').eq('role', 'admin').limit(1).single()).data?.id || null, status: 'borrador', doc_subtype: docSubtype, notes, internal_notes: internalNotes, incoterm: incoterm || null, payment_terms: paymentTerms || null, payment_days: paymentDays || null, payment_terms_type: paymentTermsType || null, currency, subtotal, subject_iva: ivaEnabled, tax_rate: ivaEnabled ? taxRate : 0, tax_amount: taxAmount, irpf_rate: irpfEnabled ? irpfRate : 0, irpf_amount: irpfAmount, re_rate: reEnabled ? reRate : 0, re_amount: reAmount, total, valid_until: validUntil ? new Date(validUntil).toISOString() : null })
         .select('id').single()
       if (quoteError) throw quoteError
       const quoteItems = items.map((item, idx) => ({ quote_id: quoteData.id, product_id: item.product_id, sort_order: idx + 1, sku: item.sku, description: item.description, quantity: item.quantity, unit_price: item.unitPrice, discount_pct: item.discount, subtotal: item.quantity * item.unitPrice * (1 - item.discount / 100), notes: item.notes || null }))
       const { error: itemsError } = await supabase.from('tt_quote_items').insert(quoteItems)
       if (itemsError) throw itemsError
       await supabase.from('tt_activity_log').insert({ entity_type: 'quote', entity_id: quoteData.id, action: 'Cotizacion creada', detail: `${quoteNumber} - ${selectedClient?.name || 'Sin cliente'} - ${formatCurrency(total, currency)}` })
-      addToast({ type: 'success', title: 'Cotizacion guardada', message: quoteNumber })
-      setItems([]); setNotes(''); setInternalNotes(''); setSelectedClient(null); setIrpfEnabled(false); setIrpfRate(0); setReEnabled(false); setReRate(0); setOcImportSource(null); generateQuoteNumber(); loadSavedQuotes()
+      addToast({ type: 'success', title: 'Cotizacion guardada', message: 'Ahora podés adjuntar la OC, pliegos, etc.' })
+      // No reseteamos los datos — dejamos al usuario sobre la cotización recién creada
+      // para que pueda adjuntar archivos. setCurrentQuoteId expone el ID al panel de adjuntos.
+      setCurrentQuoteId(quoteData.id as string)
+      loadSavedQuotes()
     } catch (err) {
       console.error('Error guardando cotizacion:', err)
       // Exponemos el error real al toast — si es un PostgrestError, trae message/code/details/hint
@@ -764,7 +780,16 @@ export default function CotizadorPage() {
           )}
           <div className="flex bg-[#0B0E13] rounded-lg border border-[#2A3040] p-0.5">
             <button
-              onClick={() => setViewMode('create')}
+              onClick={() => {
+                // Si ya estamos en create y había una cotización cargada, limpiar todo
+                if (viewMode === 'create' && currentQuoteId) {
+                  setItems([]); setNotes(''); setInternalNotes(''); setSelectedClient(null)
+                  setIvaEnabled(true); setTaxRate(21); setIrpfEnabled(false); setIrpfRate(0)
+                  setReEnabled(false); setReRate(0); setOcImportSource(null)
+                  setCurrentQuoteId(null); generateQuoteNumber()
+                }
+                setViewMode('create')
+              }}
               className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${viewMode === 'create' ? 'bg-[#FF6600] text-white' : 'text-[#6B7280] hover:text-[#F0F2F5]'}`}
             >
               <PlusCircle size={14} className="inline mr-1" />
@@ -1154,16 +1179,51 @@ export default function CotizadorPage() {
               </CardContent>
             </Card>
 
+            {/* ============ ADJUNTOS DE LA COTIZACIÓN ============ */}
+            {currentQuoteId ? (
+              <DocumentAttachments
+                documentId={currentQuoteId}
+                documentType="quote"
+              />
+            ) : (
+              <div className="rounded-xl border border-dashed border-[#2A3040] bg-[#0F1218] p-4 text-center">
+                <Paperclip size={20} className="mx-auto text-[#6B7280] mb-1.5" />
+                <p className="text-xs text-[#9CA3AF]">
+                  💡 Guardá la cotización para adjuntar la <span className="text-[#FF6600] font-semibold">OC del cliente</span>, pliegos, planos o especificaciones.
+                </p>
+              </div>
+            )}
+
             <Card>
               <CardContent className="space-y-3">
                 <div className="flex justify-between text-sm"><span className="text-[#6B7280]">Subtotal ({items.length} items)</span><span className="text-[#D1D5DB]">{formatCurrency(subtotal, currency)}</span></div>
+
+                {/* IVA — toggle estilo IRPF / R.E. */}
                 <div className="flex items-center justify-between text-sm">
                   <div className="flex items-center gap-2">
-                    <span className="text-[#6B7280]">IVA</span>
-                    <input type="number" value={taxRate} onChange={(e) => setTaxRate(Number(e.target.value))} className="w-14 bg-[#0F1218] border border-[#1E2330] rounded px-2 py-0.5 text-center text-xs text-[#F0F2F5] print:border-none" />
-                    <span className="text-xs text-[#6B7280]">%</span>
+                    <button
+                      onClick={() => setIvaEnabled(!ivaEnabled)}
+                      className={`w-8 h-4 rounded-full transition-all relative shrink-0 ${ivaEnabled ? 'bg-emerald-500/40' : 'bg-[#2A3040]'}`}
+                      title={ivaEnabled ? 'Desactivar IVA (cliente exento)' : 'Aplicar IVA'}
+                    >
+                      <div className={`w-3 h-3 rounded-full bg-white absolute top-0.5 transition-all ${ivaEnabled ? 'right-0.5' : 'left-0.5'}`} />
+                    </button>
+                    <span className={`${ivaEnabled ? 'text-emerald-400' : 'text-[#4B5563]'}`}>IVA</span>
+                    {ivaEnabled && (
+                      <>
+                        <input
+                          type="number"
+                          value={taxRate}
+                          onChange={(e) => setTaxRate(Number(e.target.value))}
+                          className="w-14 bg-[#0F1218] border border-[#1E2330] rounded px-2 py-0.5 text-center text-xs text-[#F0F2F5] print:border-none"
+                        />
+                        <span className="text-xs text-[#6B7280]">%</span>
+                      </>
+                    )}
                   </div>
-                  <span className="text-[#D1D5DB]">{formatCurrency(taxAmount, currency)}</span>
+                  <span className={`${ivaEnabled ? 'text-[#D1D5DB]' : 'text-[#4B5563]'}`}>
+                    {ivaEnabled ? formatCurrency(taxAmount, currency) : '— exento'}
+                  </span>
                 </div>
 
                 {/* IRPF */}

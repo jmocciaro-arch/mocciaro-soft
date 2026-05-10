@@ -58,6 +58,13 @@ export interface ClientData {
   source?: string | null
   active?: boolean
   notes?: string | null
+  // Régimen fiscal — defaults que se aplican al cargar el cliente en una cotización
+  subject_iva?: boolean | null
+  iva_rate?: number | null
+  subject_irpf?: boolean | null
+  irpf_rate?: number | null
+  subject_re?: boolean | null
+  re_rate?: number | null
 }
 
 interface ClientStats {
@@ -244,6 +251,13 @@ export function ClientDetailModal({ open, onClose, client, onSaved }: Props) {
         default_discount_pct: form.default_discount_pct ? Number(form.default_discount_pct) : null,
         scoring: form.scoring ? Number(form.scoring) : null,
         source: form.source, active: form.active, notes: form.notes,
+        // Régimen fiscal
+        subject_iva: form.subject_iva !== false,
+        iva_rate: form.iva_rate ?? 21,
+        subject_irpf: form.subject_irpf === true,
+        irpf_rate: form.irpf_rate ?? 15,
+        subject_re: form.subject_re === true,
+        re_rate: form.re_rate ?? 5.2,
       }
       const { error } = await supabase.from('tt_clients').update(payload).eq('id', form.id)
       if (error) throw error
@@ -578,6 +592,100 @@ export function ClientDetailModal({ open, onClose, client, onSaved }: Props) {
                 onChange={e => update('credit_limit', e.target.value ? parseFloat(e.target.value) : null)}
                 placeholder="ej: 500000"
               />
+            </div>
+
+            {/* ============ RÉGIMEN FISCAL ============ */}
+            <SectionHeader icon={<Receipt size={14} />} title="Régimen fiscal — defaults para cotizaciones" />
+            <div className="rounded-lg bg-[#0F1218] border border-[#1E2330] p-3 space-y-3">
+              <p className="text-[11px] text-[#6B7280] leading-relaxed">
+                Estos valores se cargan automáticamente al seleccionar este cliente en una cotización.
+                El operador puede activarlos/desactivarlos puntualmente sin modificar al cliente.
+              </p>
+
+              {/* IVA */}
+              <div className="flex items-center justify-between gap-3 p-2 rounded-md bg-[#141820]">
+                <div className="flex items-center gap-2 flex-1">
+                  <button
+                    type="button"
+                    onClick={() => update('subject_iva', !(form.subject_iva !== false))}
+                    className={`w-9 h-5 rounded-full transition-all relative shrink-0 ${form.subject_iva !== false ? 'bg-emerald-500/60' : 'bg-[#2A3040]'}`}
+                  >
+                    <div className={`w-4 h-4 rounded-full bg-white absolute top-0.5 transition-all ${form.subject_iva !== false ? 'right-0.5' : 'left-0.5'}`} />
+                  </button>
+                  <span className={`text-sm font-medium ${form.subject_iva !== false ? 'text-emerald-400' : 'text-[#6B7280]'}`}>
+                    Sujeto a IVA
+                  </span>
+                </div>
+                {form.subject_iva !== false && (
+                  <select
+                    value={form.iva_rate ?? 21}
+                    onChange={e => update('iva_rate', parseFloat(e.target.value))}
+                    className="bg-[#1E2330] border border-[#2A3040] rounded px-2 py-1 text-xs text-[#F0F2F5]"
+                  >
+                    <option value={0}>0% (exento)</option>
+                    <option value={4}>4% (super reducido)</option>
+                    <option value={10}>10% (reducido)</option>
+                    <option value={21}>21% (general)</option>
+                  </select>
+                )}
+                {form.subject_iva === false && (
+                  <span className="text-[10px] text-[#6B7280] italic">Cliente exento (ej: extranjero / exportación)</span>
+                )}
+              </div>
+
+              {/* IRPF */}
+              <div className="flex items-center justify-between gap-3 p-2 rounded-md bg-[#141820]">
+                <div className="flex items-center gap-2 flex-1">
+                  <button
+                    type="button"
+                    onClick={() => update('subject_irpf', !form.subject_irpf)}
+                    className={`w-9 h-5 rounded-full transition-all relative shrink-0 ${form.subject_irpf ? 'bg-red-500/60' : 'bg-[#2A3040]'}`}
+                  >
+                    <div className={`w-4 h-4 rounded-full bg-white absolute top-0.5 transition-all ${form.subject_irpf ? 'right-0.5' : 'left-0.5'}`} />
+                  </button>
+                  <span className={`text-sm font-medium ${form.subject_irpf ? 'text-red-400' : 'text-[#6B7280]'}`}>
+                    Retención IRPF
+                  </span>
+                </div>
+                {form.subject_irpf && (
+                  <select
+                    value={form.irpf_rate ?? 15}
+                    onChange={e => update('irpf_rate', parseFloat(e.target.value))}
+                    className="bg-[#1E2330] border border-[#2A3040] rounded px-2 py-1 text-xs text-[#F0F2F5]"
+                  >
+                    <option value={7}>7% (reducido)</option>
+                    <option value={15}>15% (general)</option>
+                    <option value={19}>19%</option>
+                  </select>
+                )}
+              </div>
+
+              {/* Recargo de Equivalencia */}
+              <div className="flex items-center justify-between gap-3 p-2 rounded-md bg-[#141820]">
+                <div className="flex items-center gap-2 flex-1">
+                  <button
+                    type="button"
+                    onClick={() => update('subject_re', !form.subject_re)}
+                    className={`w-9 h-5 rounded-full transition-all relative shrink-0 ${form.subject_re ? 'bg-blue-500/60' : 'bg-[#2A3040]'}`}
+                  >
+                    <div className={`w-4 h-4 rounded-full bg-white absolute top-0.5 transition-all ${form.subject_re ? 'right-0.5' : 'left-0.5'}`} />
+                  </button>
+                  <span className={`text-sm font-medium ${form.subject_re ? 'text-blue-400' : 'text-[#6B7280]'}`}>
+                    Recargo de Equivalencia
+                  </span>
+                </div>
+                {form.subject_re && (
+                  <select
+                    value={form.re_rate ?? 5.2}
+                    onChange={e => update('re_rate', parseFloat(e.target.value))}
+                    className="bg-[#1E2330] border border-[#2A3040] rounded px-2 py-1 text-xs text-[#F0F2F5]"
+                  >
+                    <option value={0.5}>0.5%</option>
+                    <option value={1.4}>1.4%</option>
+                    <option value={5.2}>5.2% (general)</option>
+                  </select>
+                )}
+              </div>
             </div>
 
             {stats && (
