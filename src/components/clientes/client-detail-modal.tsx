@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/toast'
 import { createClient } from '@/lib/supabase/client'
+import { useCompanyContext } from '@/lib/company-context'
 import { ClientProductsHistory } from '@/components/clientes/client-products-history'
 import { ProductDetailModal } from '@/components/catalogo/product-detail-modal'
 import {
@@ -26,6 +27,19 @@ import {
   Save, Plus, Trash2, Star, AlertCircle, Mail, Phone, Globe2,
   TrendingUp, FileText, Receipt, Hash,
 } from 'lucide-react'
+
+// Override de IVA/IRPF/RE por par (cliente, empresa). Se persiste en
+// tt_client_company_tax_config (migración v70).
+export interface TaxOverrideRow {
+  company_id: string
+  subject_iva: boolean
+  iva_rate: number
+  subject_irpf: boolean
+  irpf_rate: number
+  subject_re: boolean
+  re_rate: number
+  notes: string | null
+}
 
 export interface ClientData {
   id: string
@@ -187,6 +201,7 @@ const validators = {
 export function ClientDetailModal({ open, onClose, client, onSaved }: Props) {
   const supabase = createClient()
   const { addToast } = useToast()
+  const { companies } = useCompanyContext()
 
   const [tab, setTab] = useState<'general' | 'address' | 'commercial' | 'contacts' | 'addresses' | 'products' | 'activity'>('general')
   const [form, setForm] = useState<ClientData | null>(null)
@@ -197,6 +212,10 @@ export function ClientDetailModal({ open, onClose, client, onSaved }: Props) {
   const [editingContact, setEditingContact] = useState<ClientContact | null>(null)
   const [editingAddress, setEditingAddress] = useState<ClientAddress | null>(null)
   const [saving, setSaving] = useState(false)
+
+  // Overrides de IVA/IRPF/RE por (cliente, empresa) — v70
+  const [overrides, setOverrides] = useState<TaxOverrideRow[]>([])
+  const [originalOverrides, setOriginalOverrides] = useState<TaxOverrideRow[]>([])
 
   // Sprint 2B — modal de ficha producto al hacer click en un producto del tab Productos
   const [openProductId, setOpenProductId] = useState<string | null>(null)
@@ -216,16 +235,55 @@ export function ClientDetailModal({ open, onClose, client, onSaved }: Props) {
       supabase.from('tt_client_contacts').select('*').eq('client_id', id).order('is_primary', { ascending: false }).order('full_name'),
       supabase.from('tt_client_addresses').select('*').eq('client_id', id).order('alias'),
       supabase.from('tt_activity_log').select('*').eq('entity_type', 'client').eq('entity_id', id).order('created_at', { ascending: false }).limit(50),
-    ]).then(([s, c, a, act]) => {
+      supabase.from('tt_client_company_tax_config').select('*').eq('client_id', id),
+    ]).then(([s, c, a, act, ov]) => {
       setStats((s.data || null) as ClientStats | null)
       setContacts((c.data || []) as ClientContact[])
       setAddresses((a.data || []) as ClientAddress[])
       setActivity((act.data || []) as ActivityEntry[])
+      const rows: TaxOverrideRow[] = ((ov.data || []) as Array<Record<string, unknown>>).map((r) => ({
+        company_id: String(r.company_id),
+        subject_iva: r.subject_iva !== false,
+        iva_rate: Number(r.iva_rate ?? 21),
+        subject_irpf: r.subject_irpf === true,
+        irpf_rate: Number(r.irpf_rate ?? 15),
+        subject_re: r.subject_re === true,
+        re_rate: Number(r.re_rate ?? 5.2),
+        notes: (r.notes as string | null) ?? null,
+      }))
+      setOverrides(rows)
+      setOriginalOverrides(rows)
     })
   }, [open, client, supabase])
 
   const update = useCallback((k: keyof ClientData, v: unknown) => {
     setForm(f => f ? { ...f, [k]: v as never } : f)
+  }, [])
+
+  // ===== Handlers de overrides =====
+  const addOverride = useCallback(() => {
+    // Sugerir la primera empresa que NO tenga override todavía
+    const usedIds = new Set(overrides.map(o => o.company_id))
+    const firstFree = companies.find(c => !usedIds.has(c.id))
+    if (!firstFree) {
+      addToast({ type: 'info', title: 'Ya hay un override por cada empresa disponible' })
+      return
+    }
+    setOverrides(prev => [...prev, {
+      company_id: firstFree.id,
+      subject_iva: true, iva_rate: 21,
+      subject_irpf: false, irpf_rate: 15,
+      subject_re: false, re_rate: 5.2,
+      notes: null,
+    }])
+  }, [overrides, companies, addToast])
+
+  const updateOverride = useCallback(<K extends keyof TaxOverrideRow>(idx: number, key: K, value: TaxOverrideRow[K]) => {
+    setOverrides(prev => prev.map((o, i) => i === idx ? { ...o, [key]: value } : o))
+  }, [])
+
+  const removeOverride = useCallback((idx: number) => {
+    setOverrides(prev => prev.filter((_, i) => i !== idx))
   }, [])
 
   const taxIdLabel = COUNTRIES.find(c => c.code === form?.country)?.taxIdLabel || 'Tax ID'
@@ -261,6 +319,54 @@ export function ClientDetailModal({ open, onClose, client, onSaved }: Props) {
       }
       const { error } = await supabase.from('tt_clients').update(payload).eq('id', form.id)
       if (error) throw error
+
+      // ===== Persistir overrides de IVA por empresa (v70) =====
+      // Diff simple: borrar las que estaban antes y ya no están, upsertear el resto.
+      // El PK (client_id, company_id) garantiza idempotencia del upsert.
+      const currentIds = new Set(overrides.map(o => o.company_id))
+      const removedIds = originalOverrides
+        .map(o => o.company_id)
+        .filter(id => !currentIds.has(id))
+
+      if (removedIds.length > 0) {
+        const { error: delErr } = await supabase
+          .from('tt_client_company_tax_config')
+          .delete()
+          .eq('client_id', form.id)
+          .in('company_id', removedIds)
+        if (delErr) throw delErr
+      }
+
+      // Validar que no haya company_id duplicados antes de upsert
+      const seenIds = new Set<string>()
+      for (const o of overrides) {
+        if (!o.company_id) {
+          throw new Error('Hay un override sin empresa seleccionada')
+        }
+        if (seenIds.has(o.company_id)) {
+          throw new Error('No podés tener dos overrides para la misma empresa')
+        }
+        seenIds.add(o.company_id)
+      }
+
+      if (overrides.length > 0) {
+        const upsertRows = overrides.map(o => ({
+          client_id: form.id,
+          company_id: o.company_id,
+          subject_iva: o.subject_iva,
+          iva_rate: o.iva_rate,
+          subject_irpf: o.subject_irpf,
+          irpf_rate: o.irpf_rate,
+          subject_re: o.subject_re,
+          re_rate: o.re_rate,
+          notes: o.notes,
+        }))
+        const { error: upErr } = await supabase
+          .from('tt_client_company_tax_config')
+          .upsert(upsertRows, { onConflict: 'client_id,company_id' })
+        if (upErr) throw upErr
+      }
+
       // Activity log
       await supabase.from('tt_activity_log').insert({
         entity_type: 'client', entity_id: form.id,
@@ -686,6 +792,147 @@ export function ClientDetailModal({ open, onClose, client, onSaved }: Props) {
                   </select>
                 )}
               </div>
+            </div>
+
+            {/* ============ OVERRIDES POR EMPRESA (v70) ============ */}
+            <SectionHeader icon={<Building2 size={14} />} title="Overrides fiscales por empresa" />
+            <div className="rounded-lg bg-[#0F1218] border border-[#1E2330] p-3 space-y-3">
+              <p className="text-[11px] text-[#6B7280] leading-relaxed">
+                Sobrescribe la config fiscal cuando este cliente opera con una empresa específica.
+                Ejemplo: <strong>Mirgor</strong> con empresa <strong>AR</strong> lleva IVA 21%, con
+                empresa <strong>USA</strong> o <strong>España</strong> va exento (export / intracomunitario).
+                Si no hay override para una empresa, se usan los defaults de arriba.
+              </p>
+
+              {overrides.length === 0 ? (
+                <p className="text-[11px] text-[#6B7280] italic">
+                  Sin overrides. Este cliente usa los defaults fiscales en todas las empresas.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {overrides.map((ov, idx) => {
+                    // Empresas disponibles en el dropdown: la actual + las que NO están en otros overrides
+                    const usedByOthers = new Set(
+                      overrides.filter((_, i) => i !== idx).map(o => o.company_id)
+                    )
+                    const availableCompanies = companies.filter(
+                      c => c.id === ov.company_id || !usedByOthers.has(c.id)
+                    )
+                    return (
+                      <div key={idx} className="rounded-md bg-[#141820] border border-[#2A3040] p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <select
+                            value={ov.company_id}
+                            onChange={e => updateOverride(idx, 'company_id', e.target.value)}
+                            className="flex-1 bg-[#1E2330] border border-[#2A3040] rounded px-2 py-1 text-xs text-[#F0F2F5]"
+                          >
+                            {availableCompanies.length === 0 && <option value="">— sin empresas disponibles —</option>}
+                            {availableCompanies.map(c => (
+                              <option key={c.id} value={c.id}>{c.flag} {c.name} ({c.country})</option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => removeOverride(idx)}
+                            className="text-[#6B7280] hover:text-red-400 transition-colors p-1"
+                            title="Quitar override"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                          {/* IVA override */}
+                          <div className="flex items-center gap-2 p-2 rounded bg-[#0F1218]">
+                            <button
+                              type="button"
+                              onClick={() => updateOverride(idx, 'subject_iva', !ov.subject_iva)}
+                              className={`w-8 h-4 rounded-full transition-all relative shrink-0 ${ov.subject_iva ? 'bg-emerald-500/60' : 'bg-[#2A3040]'}`}
+                            >
+                              <div className={`w-3 h-3 rounded-full bg-white absolute top-0.5 transition-all ${ov.subject_iva ? 'right-0.5' : 'left-0.5'}`} />
+                            </button>
+                            <span className={`text-xs font-medium ${ov.subject_iva ? 'text-emerald-400' : 'text-[#6B7280]'}`}>IVA</span>
+                            {ov.subject_iva && (
+                              <select
+                                value={ov.iva_rate}
+                                onChange={e => updateOverride(idx, 'iva_rate', parseFloat(e.target.value))}
+                                className="ml-auto bg-[#1E2330] border border-[#2A3040] rounded px-1 py-0.5 text-[10px] text-[#F0F2F5]"
+                              >
+                                <option value={0}>0%</option>
+                                <option value={4}>4%</option>
+                                <option value={10}>10%</option>
+                                <option value={21}>21%</option>
+                              </select>
+                            )}
+                          </div>
+
+                          {/* IRPF override */}
+                          <div className="flex items-center gap-2 p-2 rounded bg-[#0F1218]">
+                            <button
+                              type="button"
+                              onClick={() => updateOverride(idx, 'subject_irpf', !ov.subject_irpf)}
+                              className={`w-8 h-4 rounded-full transition-all relative shrink-0 ${ov.subject_irpf ? 'bg-red-500/60' : 'bg-[#2A3040]'}`}
+                            >
+                              <div className={`w-3 h-3 rounded-full bg-white absolute top-0.5 transition-all ${ov.subject_irpf ? 'right-0.5' : 'left-0.5'}`} />
+                            </button>
+                            <span className={`text-xs font-medium ${ov.subject_irpf ? 'text-red-400' : 'text-[#6B7280]'}`}>IRPF</span>
+                            {ov.subject_irpf && (
+                              <select
+                                value={ov.irpf_rate}
+                                onChange={e => updateOverride(idx, 'irpf_rate', parseFloat(e.target.value))}
+                                className="ml-auto bg-[#1E2330] border border-[#2A3040] rounded px-1 py-0.5 text-[10px] text-[#F0F2F5]"
+                              >
+                                <option value={7}>7%</option>
+                                <option value={15}>15%</option>
+                                <option value={19}>19%</option>
+                              </select>
+                            )}
+                          </div>
+
+                          {/* RE override */}
+                          <div className="flex items-center gap-2 p-2 rounded bg-[#0F1218]">
+                            <button
+                              type="button"
+                              onClick={() => updateOverride(idx, 'subject_re', !ov.subject_re)}
+                              className={`w-8 h-4 rounded-full transition-all relative shrink-0 ${ov.subject_re ? 'bg-blue-500/60' : 'bg-[#2A3040]'}`}
+                            >
+                              <div className={`w-3 h-3 rounded-full bg-white absolute top-0.5 transition-all ${ov.subject_re ? 'right-0.5' : 'left-0.5'}`} />
+                            </button>
+                            <span className={`text-xs font-medium ${ov.subject_re ? 'text-blue-400' : 'text-[#6B7280]'}`}>R.E.</span>
+                            {ov.subject_re && (
+                              <select
+                                value={ov.re_rate}
+                                onChange={e => updateOverride(idx, 're_rate', parseFloat(e.target.value))}
+                                className="ml-auto bg-[#1E2330] border border-[#2A3040] rounded px-1 py-0.5 text-[10px] text-[#F0F2F5]"
+                              >
+                                <option value={0.5}>0.5%</option>
+                                <option value={1.4}>1.4%</option>
+                                <option value={5.2}>5.2%</option>
+                              </select>
+                            )}
+                          </div>
+                        </div>
+
+                        <input
+                          type="text"
+                          value={ov.notes ?? ''}
+                          onChange={e => updateOverride(idx, 'notes', e.target.value || null)}
+                          placeholder="Notas opcionales (ej: Exportación según Art. 8 LIVA)"
+                          className="w-full bg-[#0F1218] border border-[#1E2330] rounded px-2 py-1 text-[11px] text-[#9CA3AF] placeholder:text-[#4B5563]"
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
+              <Button
+                size="sm"
+                onClick={addOverride}
+                disabled={overrides.length >= companies.length}
+              >
+                <Plus size={12} /> Agregar override por empresa
+              </Button>
             </div>
 
             {stats && (
