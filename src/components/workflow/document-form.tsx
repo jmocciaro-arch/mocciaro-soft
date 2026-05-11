@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { resolveTaxConfig, type TaxConfig } from '@/lib/tax-config'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
@@ -354,6 +355,12 @@ export function DocumentForm({
   // Edit state (copies for editing)
   const [editDoc, setEditDoc] = useState<Partial<DocumentData>>({})
   const [editItems, setEditItems] = useState<ItemData[]>([])
+
+  // Última fuente del régimen fiscal aplicado por el botón "Aplicar régimen
+  // del cliente". Se setea solo después de un click explícito; null mientras
+  // tanto. Sirve para mostrar un chip al lado del botón.
+  const [taxConfigSource, setTaxConfigSource] = useState<TaxConfig['source'] | null>(null)
+  const [applyingTax, setApplyingTax] = useState(false)
 
   // Client search
   const [clientSearch, setClientSearch] = useState('')
@@ -942,6 +949,52 @@ export function DocumentForm({
     }, 300)
     return () => { if (productDebounceRef.current) clearTimeout(productDebounceRef.current) }
   }, [productSearchQuery, supabase])
+
+  // ---------------------------------------------------------------
+  // APPLY CLIENT TAX CONFIG (paso 4 de v70 — botón explícito en edit mode)
+  // ---------------------------------------------------------------
+  // Resuelve el régimen fiscal del cliente x empresa con prioridad:
+  //   1. override en tt_client_company_tax_config (cliente, empresa)
+  //   2. defaults del cliente
+  //   3. fallback duro
+  // Se ejecuta SOLO cuando el operador clickea el botón. No auto-aplicamos
+  // al cargar el doc para no pisar valores históricos guardados.
+  // El modelo de DocumentData solo tiene subject_iva / subject_irpf / tax_rate;
+  // si la config trae subject_re / re_rate / irpf_rate, se ignoran (no
+  // existe el campo en este formulario).
+  const applyClientTaxConfig = useCallback(async () => {
+    if (!doc) return
+    const clientId = (editDoc.client_id ?? doc.client_id) || null
+    const companyId = (editDoc.company_id ?? doc.company_id) || null
+    if (!clientId) {
+      addToast({ type: 'warning', title: 'No hay cliente asignado a este documento' })
+      return
+    }
+    setApplyingTax(true)
+    try {
+      const cfg = await resolveTaxConfig(supabase, clientId, companyId)
+      setEditDoc({
+        ...editDoc,
+        subject_iva: cfg.subject_iva,
+        subject_irpf: cfg.subject_irpf,
+        tax_rate: cfg.subject_iva ? cfg.iva_rate : 0,
+      })
+      setTaxConfigSource(cfg.source)
+      const sourceLabel =
+        cfg.source === 'override' ? 'override por empresa' :
+        cfg.source === 'client_default' ? 'defaults del cliente' :
+        'fallback (sin config)'
+      addToast({
+        type: 'success',
+        title: 'Régimen fiscal aplicado',
+        message: `IVA ${cfg.subject_iva ? cfg.iva_rate + '%' : 'exento'}, IRPF ${cfg.subject_irpf ? 'sí' : 'no'} — fuente: ${sourceLabel}`,
+      })
+    } catch (e) {
+      addToast({ type: 'error', title: 'Error al resolver régimen', message: (e as Error).message })
+    } finally {
+      setApplyingTax(false)
+    }
+  }, [doc, editDoc, supabase, addToast])
 
   // ---------------------------------------------------------------
   // SAVE
@@ -2221,6 +2274,37 @@ export function DocumentForm({
                 onChange={(e) => setEditDoc({ ...editDoc, tax_rate: Number(e.target.value) })}
                 className="h-7 w-16 rounded bg-[#0B0E13] border border-[#FF6600] px-2 text-xs text-[#F0F2F5] focus:outline-none"
               />
+            </div>
+          )}
+
+          {/* Botón: aplicar régimen del cliente (v70 — solo si hay client_id, no PAP) */}
+          {editMode && (editDoc.client_id ?? doc.client_id) && documentType !== 'pap' && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={applyClientTaxConfig}
+                disabled={applyingTax}
+                className="h-7 px-2 rounded border border-[#FF6600]/40 hover:bg-[#FF6600]/10 disabled:opacity-50 text-[#FF6600] text-[11px] font-medium transition flex items-center gap-1"
+                title="Aplica IVA / IRPF según override por empresa (si existe) o defaults del cliente"
+              >
+                {applyingTax ? '...' : '↻'} Aplicar régimen del cliente
+              </button>
+              {taxConfigSource === 'override' && (
+                <span
+                  className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+                  title="Aplicado override de IVA específico para esta empresa (v70)"
+                >
+                  ✓ override empresa
+                </span>
+              )}
+              {taxConfigSource === 'client_default' && (
+                <span
+                  className="text-[10px] px-1.5 py-0.5 rounded bg-[#1E2330] text-[#9CA3AF] border border-[#2A3040]"
+                  title="Sin override por empresa: se aplicaron los defaults fiscales del cliente"
+                >
+                  default cliente
+                </span>
+              )}
             </div>
           )}
 
