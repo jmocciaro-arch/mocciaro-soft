@@ -15,6 +15,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useCompanyFilter } from '@/hooks/use-company-filter'
 import { useCompanyContext } from '@/lib/company-context'
 import { formatCurrency, INCOTERMS } from '@/lib/utils'
+import { resolveTaxConfigFromClient, type TaxConfig } from '@/lib/tax-config'
 import type { Company, Client } from '@/types'
 import { DocumentDetailLayout, type WorkflowStep, type Alert, type InternalNote } from '@/components/workflow/document-detail-layout'
 import { DocumentProcessBar } from '@/components/workflow/document-process-bar'
@@ -134,6 +135,9 @@ export default function CotizadorPage() {
   const [irpfRate, setIrpfRate] = useState(0)
   const [reEnabled, setReEnabled] = useState(false)
   const [reRate, setReRate] = useState(0)
+  // Fuente del IVA aplicado (override / default cliente / fallback). Se actualiza
+  // cuando cambia (cliente, empresa). Sirve para mostrar un chip en la UI.
+  const [taxConfigSource, setTaxConfigSource] = useState<TaxConfig['source'] | null>(null)
   const [validUntil, setValidUntil] = useState('')
   const [paymentTerms, setPaymentTerms] = useState('')       // "30 dias FF"
   const [paymentDays, setPaymentDays] = useState<number>(0)   // 30
@@ -392,28 +396,46 @@ export default function CotizadorPage() {
     setShowClientDropdown(true)
   }
 
-  // Auto-apply IVA/IRPF/RE when client is selected — cada cliente trae su régimen fiscal
+  // Auto-apply IVA/IRPF/RE: resuelve por (cliente, empresa) con override v70 →
+  // fallback a defaults del cliente → fallback duro 21%/sin retenciones.
+  // Se redispara cuando cambia el cliente o la empresa activa. Después de esto,
+  // si el operador edita los toggles a mano, sus cambios persisten hasta que
+  // vuelva a cambiar cliente/empresa (no hay watcher de los toggles).
   useEffect(() => {
     if (!selectedClient) {
-      // Sin cliente → defaults razonables: IVA on, sin retenciones
       setIvaEnabled(true); setTaxRate(21)
       setIrpfEnabled(false); setIrpfRate(0); setReEnabled(false); setReRate(0)
+      setTaxConfigSource(null)
       return
     }
+
+    // Guard contra race conditions: si el efecto vuelve a dispararse antes
+    // que termine la query, descartamos la respuesta vieja.
+    let cancelled = false
+    const sb = createClient()
     const c = selectedClient as Client & {
+      id: string
       subject_iva?: boolean; iva_rate?: number;
       subject_irpf?: boolean; irpf_rate?: number;
       subject_re?: boolean; re_rate?: number;
     }
-    // IVA: default true si no está definido (compatibilidad con clientes viejos)
-    const ivaOn = c.subject_iva !== false
-    setIvaEnabled(ivaOn)
-    setTaxRate(ivaOn ? (c.iva_rate ?? 21) : 0)
-    if (c.subject_irpf) { setIrpfEnabled(true); setIrpfRate(c.irpf_rate || 15) }
-    else { setIrpfEnabled(false); setIrpfRate(0) }
-    if (c.subject_re) { setReEnabled(true); setReRate(c.re_rate || 5.2) }
-    else { setReEnabled(false); setReRate(0) }
-  }, [selectedClient?.id])
+
+    void resolveTaxConfigFromClient(sb, c, activeCompanyId).then((cfg) => {
+      if (cancelled) return
+      setIvaEnabled(cfg.subject_iva)
+      setTaxRate(cfg.subject_iva ? cfg.iva_rate : 0)
+      setIrpfEnabled(cfg.subject_irpf)
+      setIrpfRate(cfg.subject_irpf ? cfg.irpf_rate : 0)
+      setReEnabled(cfg.subject_re)
+      setReRate(cfg.subject_re ? cfg.re_rate : 0)
+      setTaxConfigSource(cfg.source)
+    })
+
+    return () => { cancelled = true }
+    // selectedClient.id es la signal real; selectedClient completo solo dispara
+    // el effect cuando se selecciona/deselecciona, no por mutaciones internas.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedClient?.id, activeCompanyId])
 
   // Client special prices (loaded when client is selected)
   const [clientPrices, setClientPrices] = useState<Record<string, { special_price: number | null; discount_pct: number }>>({})
@@ -1005,11 +1027,29 @@ export default function CotizadorPage() {
               <CardContent>
                 {selectedClient ? (
                   <div className="flex items-center justify-between p-3 rounded-lg bg-[#0F1218] border border-[#1E2330]">
-                    <div>
-                      <p className="text-sm font-medium text-[#F0F2F5]">{selectedClient.name}</p>
-                      <p className="text-xs text-[#6B7280]">{selectedClient.tax_id} - {selectedClient.email}</p>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm font-medium text-[#F0F2F5]">{selectedClient.name}</p>
+                        {taxConfigSource === 'override' && activeCompanyId && (
+                          <span
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+                            title="Aplicado override de IVA específico para esta empresa (v70)"
+                          >
+                            ✓ override empresa
+                          </span>
+                        )}
+                        {taxConfigSource === 'client_default' && (
+                          <span
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-[#1E2330] text-[#9CA3AF] border border-[#2A3040]"
+                            title="Sin override por empresa: se aplican los defaults fiscales del cliente"
+                          >
+                            default cliente
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-[#6B7280] mt-0.5">{selectedClient.tax_id} - {selectedClient.email}</p>
                     </div>
-                    <button onClick={() => setSelectedClient(null)} className="text-[#6B7280] hover:text-red-400"><X size={16} /></button>
+                    <button onClick={() => setSelectedClient(null)} className="text-[#6B7280] hover:text-red-400 shrink-0"><X size={16} /></button>
                   </div>
                 ) : (
                   <div className="relative">
