@@ -26,6 +26,7 @@ import { DocumentForm } from '@/components/workflow/document-form'
 import { DocumentListCard } from '@/components/workflow/document-list-card'
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table'
 import { mapStatus } from '@/lib/document-helpers'
+import { quoteToOrder } from '@/lib/document-workflow'
 import {
   Plus, Minus, Trash2, Save, FileText, Paperclip,
   MessageSquare, Building2, User, Search, X, Loader2, Printer, List, PlusCircle, Upload, Sparkles
@@ -125,6 +126,9 @@ export default function CotizadorPage() {
   const [currentQuoteId, setCurrentQuoteId] = useState<string | null>(null)
   const [quoteStatus, setQuoteStatus] = useState<'borrador' | 'enviada' | 'aceptada' | 'rechazada' | 'pedido' | null>(null)
   const [transitioning, setTransitioning] = useState(false)
+  // Cuando se convierte la cotización en pedido real (via quoteToOrder), guardamos
+  // referencia al pedido creado para mostrar el link "Ver pedido →"
+  const [createdOrder, setCreatedOrder] = useState<{ id: string; number: string } | null>(null)
   const [quoteNumber, setQuoteNumber] = useState('')
   const [docSubtype, setDocSubtype] = useState<'cotizacion' | 'presupuesto' | 'proforma' | 'packing_list' | 'oferta'>('cotizacion')
   const [items, setItems] = useState<QuoteLineItem[]>([])
@@ -204,7 +208,7 @@ export default function CotizadorPage() {
 
     setConvertingOc(true)
     try {
-      // 1. Cargar items en el cotizador
+      // 1. Cargar items en el cotizador (sin match todavía)
       const newItems: QuoteLineItem[] = data.items.map((it) => ({
         id: Math.random().toString(36).slice(2),
         product_id: null,
@@ -216,6 +220,43 @@ export default function CotizadorPage() {
         notes: it.observaciones || '',
       }))
       setItems(newItems)
+
+      // 1.b Auto-match contra tt_products: SKU exacto primero, después fuzzy.
+      // En batch, una sola query con OR para no martillar la DB.
+      const skusBuscados = newItems.map((i) => i.sku.trim()).filter((s) => s.length > 0)
+      if (skusBuscados.length > 0) {
+        const supabase = createClient()
+        const { data: prods } = await supabase
+          .from('tt_products')
+          .select('id, sku, name, price_eur, cost_eur, price_min')
+          .in('sku', skusBuscados)
+          .eq('active', true)
+        const bySku = new Map<string, { id: string; sku: string; name: string; price_eur: number; cost_eur: number; price_min: number | null }>()
+        for (const p of (prods || []) as Array<{ id: string; sku: string; name: string; price_eur: number; cost_eur: number; price_min: number | null }>) {
+          bySku.set(p.sku.toUpperCase().trim(), p)
+        }
+        setItems((curr) => curr.map((item) => {
+          const match = bySku.get(item.sku.toUpperCase().trim())
+          if (!match) return item
+          // Si la OC ya traía precio (>0), respetamos ese; sino tomamos el del catálogo.
+          const ocPrice = item.unitPrice > 0 ? item.unitPrice : match.price_eur
+          return {
+            ...item,
+            product_id: match.id,
+            // Si la descripción de la OC es vacía o muy corta, usamos la del catálogo
+            description: item.description && item.description.length > 3 ? item.description : match.name,
+            unitPrice: ocPrice,
+          }
+        }))
+        const matched = newItems.filter((i) => bySku.has(i.sku.toUpperCase().trim())).length
+        if (matched > 0) {
+          addToast({
+            type: 'info',
+            title: `${matched}/${newItems.length} items matcheados con el catálogo`,
+            message: matched < newItems.length ? 'Revisá los items en rojo (sin match)' : 'Todos los SKUs encontrados ✓',
+          })
+        }
+      }
 
       // 2. Pre-cargar moneda
       if (data.moneda) {
@@ -584,7 +625,7 @@ export default function CotizadorPage() {
     } finally { setSaving(false) }
   }
 
-  async function transitionStatus(newStatus: 'enviada' | 'aceptada' | 'rechazada' | 'pedido') {
+  async function transitionStatus(newStatus: 'enviada' | 'aceptada' | 'rechazada') {
     if (!currentQuoteId) return
     setTransitioning(true)
     const sb = createClient()
@@ -595,7 +636,6 @@ export default function CotizadorPage() {
         enviada: 'Marcada como enviada',
         aceptada: 'Cotización aceptada',
         rechazada: 'Cotización rechazada',
-        pedido: 'Convertida en pedido',
       }
       await sb.from('tt_activity_log').insert({
         entity_type: 'quote', entity_id: currentQuoteId,
@@ -607,6 +647,42 @@ export default function CotizadorPage() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : JSON.stringify(err)
       addToast({ type: 'error', title: 'No se pudo cambiar el estado', message: msg })
+    } finally { setTransitioning(false) }
+  }
+
+  // Convierte la cotización en un pedido real (tt_sales_orders) usando el helper
+  // unificado del ERP. Crea items, link en tt_document_links, marca la cotización
+  // como 'pedido' y redirige a /ventas?tab=pedidos&highlight=<id>.
+  async function convertToOrder() {
+    if (!currentQuoteId) return
+    setTransitioning(true)
+    try {
+      const { orderId, orderNumber } = await quoteToOrder(currentQuoteId, 'local')
+      const sb = createClient()
+      // Link de trazabilidad cotización ↔ pedido (tt_document_links)
+      try {
+        await sb.from('tt_document_links').insert({
+          parent_id: currentQuoteId,
+          child_id: orderId,
+          relation_type: 'quote_to_order',
+        })
+      } catch { /* la tabla podría no aceptar tt_quotes como parent, no es crítico */ }
+      // Marca la cotización como convertida en pedido (para el banner del cotizador)
+      await sb.from('tt_quotes').update({ status: 'pedido' }).eq('id', currentQuoteId)
+      setQuoteStatus('pedido')
+      setCreatedOrder({ id: orderId, number: orderNumber })
+      addToast({
+        type: 'success',
+        title: `Pedido ${orderNumber} creado`,
+        message: 'Te redirijo a la pantalla del pedido…',
+      })
+      // Redirect a /ventas con tab=pedidos y highlight del recién creado
+      setTimeout(() => {
+        router.push(`/ventas?tab=pedidos&highlight=${orderId}`)
+      }, 800)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : JSON.stringify(err)
+      addToast({ type: 'error', title: 'No se pudo crear el pedido', message: msg })
     } finally { setTransitioning(false) }
   }
 
@@ -972,7 +1048,7 @@ export default function CotizadorPage() {
                     {quoteStatus === 'borrador' && `Cotización ${quoteNumber} guardada · Próximo paso: enviar al cliente`}
                     {quoteStatus === 'enviada' && `Cotización ${quoteNumber} enviada · Esperando respuesta del cliente`}
                     {quoteStatus === 'aceptada' && `Cliente aceptó · Convertí en pedido cuando estés listo`}
-                    {quoteStatus === 'pedido' && `Convertida en pedido de venta`}
+                    {quoteStatus === 'pedido' && (createdOrder ? `✓ Convertida en pedido ${createdOrder.number}` : `Convertida en pedido de venta`)}
                     {quoteStatus === 'rechazada' && `Cliente rechazó la cotización`}
                   </p>
                   {quoteStatus === 'borrador' && (
@@ -1006,18 +1082,35 @@ export default function CotizadorPage() {
                   )}
                   {quoteStatus === 'aceptada' && (
                     <div className="flex flex-wrap gap-2 mt-2">
-                      <Button size="sm" variant="primary" onClick={() => transitionStatus('pedido')} disabled={transitioning}>
+                      <Button size="sm" variant="primary" onClick={convertToOrder} disabled={transitioning}>
                         📦 Convertir en pedido
                       </Button>
                     </div>
                   )}
-                  {(quoteStatus === 'pedido' || quoteStatus === 'rechazada') && (
+                  {quoteStatus === 'pedido' && (
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {createdOrder && (
+                        <Button size="sm" variant="primary" onClick={() => router.push(`/ventas?tab=pedidos&highlight=${createdOrder.id}`)}>
+                          📦 Ver pedido {createdOrder.number} →
+                        </Button>
+                      )}
+                      <Button size="sm" variant="secondary" onClick={() => {
+                        setItems([]); setNotes(''); setInternalNotes(''); setSelectedClient(null)
+                        setIvaEnabled(true); setTaxRate(21); setIrpfEnabled(false); setIrpfRate(0)
+                        setReEnabled(false); setReRate(0); setOcImportSource(null)
+                        setCurrentQuoteId(null); setQuoteStatus(null); setCreatedOrder(null); generateQuoteNumber()
+                      }}>
+                        <PlusCircle size={14} /> Nueva cotización
+                      </Button>
+                    </div>
+                  )}
+                  {quoteStatus === 'rechazada' && (
                     <div className="flex flex-wrap gap-2 mt-2">
                       <Button size="sm" variant="primary" onClick={() => {
                         setItems([]); setNotes(''); setInternalNotes(''); setSelectedClient(null)
                         setIvaEnabled(true); setTaxRate(21); setIrpfEnabled(false); setIrpfRate(0)
                         setReEnabled(false); setReRate(0); setOcImportSource(null)
-                        setCurrentQuoteId(null); setQuoteStatus(null); generateQuoteNumber()
+                        setCurrentQuoteId(null); setQuoteStatus(null); setCreatedOrder(null); generateQuoteNumber()
                       }}>
                         <PlusCircle size={14} /> Nueva cotización
                       </Button>
@@ -1171,7 +1264,7 @@ export default function CotizadorPage() {
                       ]
                     : quoteStatus === 'aceptada'
                       ? [
-                          { label: 'Convertir en pedido', onClick: () => transitionStatus('pedido'), icon: 'play', variant: 'primary', disabled: transitioning },
+                          { label: 'Convertir en pedido', onClick: convertToOrder, icon: 'play', variant: 'primary', disabled: transitioning },
                         ]
                       : []
             }
@@ -1347,7 +1440,15 @@ export default function CotizadorPage() {
                               {idx + 1}
                               {isService && <span className="ml-1 text-[8px] text-blue-400" title="Servicio">S</span>}
                             </td>
-                            <td className="py-2 px-2"><input value={item.sku} onChange={(e) => updateItem(item.id, 'sku', e.target.value)} className="w-full bg-transparent text-xs font-mono text-[#9CA3AF] outline-none" placeholder="SKU" /></td>
+                            <td className="py-2 px-2">
+                              <div className="flex items-center gap-1.5">
+                                <span
+                                  className={`w-1.5 h-1.5 rounded-full shrink-0 ${item.product_id ? 'bg-emerald-400' : 'bg-red-400'} print:hidden`}
+                                  title={item.product_id ? 'Producto matcheado con el catálogo' : 'SIN MATCH — abrí "Buscar producto" para vincular'}
+                                />
+                                <input value={item.sku} onChange={(e) => updateItem(item.id, 'sku', e.target.value)} className="w-full bg-transparent text-xs font-mono text-[#9CA3AF] outline-none" placeholder="SKU" />
+                              </div>
+                            </td>
                             <td className="py-2 px-2"><input value={item.description} onChange={(e) => updateItem(item.id, 'description', e.target.value)} className="w-full bg-transparent text-sm text-[#F0F2F5] outline-none" placeholder="Descripcion del producto" /></td>
                             <td className="py-2 px-2">
                               <div className="flex items-center justify-center gap-1">
@@ -1588,15 +1689,29 @@ export default function CotizadorPage() {
                     </Button>
                   </div>
                 ) : quoteStatus === 'aceptada' ? (
-                  <Button variant="primary" className="w-full mt-2 print:hidden" onClick={() => transitionStatus('pedido')} loading={transitioning}>
+                  <Button variant="primary" className="w-full mt-2 print:hidden" onClick={convertToOrder} loading={transitioning}>
                     📦 Convertir en pedido
                   </Button>
+                ) : quoteStatus === 'pedido' && createdOrder ? (
+                  <div className="space-y-2 mt-2 print:hidden">
+                    <Button variant="primary" className="w-full" onClick={() => router.push(`/ventas?tab=pedidos&highlight=${createdOrder.id}`)}>
+                      📦 Ver pedido {createdOrder.number} →
+                    </Button>
+                    <Button variant="ghost" className="w-full" onClick={() => {
+                      setItems([]); setNotes(''); setInternalNotes(''); setSelectedClient(null)
+                      setIvaEnabled(true); setTaxRate(21); setIrpfEnabled(false); setIrpfRate(0)
+                      setReEnabled(false); setReRate(0); setOcImportSource(null)
+                      setCurrentQuoteId(null); setQuoteStatus(null); setCreatedOrder(null); generateQuoteNumber()
+                    }}>
+                      <PlusCircle size={16} /> Nueva cotización
+                    </Button>
+                  </div>
                 ) : (
                   <Button variant="secondary" className="w-full mt-2 print:hidden" onClick={() => {
                     setItems([]); setNotes(''); setInternalNotes(''); setSelectedClient(null)
                     setIvaEnabled(true); setTaxRate(21); setIrpfEnabled(false); setIrpfRate(0)
                     setReEnabled(false); setReRate(0); setOcImportSource(null)
-                    setCurrentQuoteId(null); setQuoteStatus(null); generateQuoteNumber()
+                    setCurrentQuoteId(null); setQuoteStatus(null); setCreatedOrder(null); generateQuoteNumber()
                   }}>
                     <PlusCircle size={16} /> Nueva cotización
                   </Button>

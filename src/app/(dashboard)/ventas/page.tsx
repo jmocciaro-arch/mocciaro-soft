@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useEffect, useCallback, Suspense } from 'react'
+import { useState, useEffect, useCallback, useRef, Suspense } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useCompanyFilter } from '@/hooks/use-company-filter'
 import { Button } from '@/components/ui/button'
@@ -206,6 +207,9 @@ function PedidosTab() {
   const { filterByCompany, companyKey } = useCompanyFilter()
   const supabase = createClient()
   const { addToast } = useToast()
+  const searchParams = useSearchParams()
+  const highlightId = searchParams.get('highlight')
+  const highlightConsumed = useRef<string | null>(null)
 
   const [rows, setRows] = useState<Record<string, unknown>[]>([])
   const [loading, setLoading] = useState(true)
@@ -239,6 +243,25 @@ function PedidosTab() {
   }, [companyKey])
 
   useEffect(() => { load() }, [load])
+
+  // Auto-abrir el detalle cuando llegamos desde el cotizador con ?highlight=<id>.
+  // Se consume una sola vez por id para que después de cerrar el detalle no
+  // se vuelva a abrir solo.
+  useEffect(() => {
+    if (!highlightId || loading || rows.length === 0) return
+    if (highlightConsumed.current === highlightId) return
+    const found = rows.find((r) => {
+      const raw = r._raw as Row | undefined
+      return raw?.id === highlightId
+    })
+    if (found) {
+      highlightConsumed.current = highlightId
+      const doc = found._raw as Row
+      const src = found._source as string
+      setSelectedSO({ id: doc.id as string, source: src === 'local' ? 'local' : 'tt_documents' } as unknown as Row)
+      addToast({ type: 'success', title: 'Pedido abierto', message: `${(doc.number || doc.display_ref || doc.system_code) ?? ''}` })
+    }
+  }, [highlightId, loading, rows, addToast])
 
   const loadCreateData = async () => {
     const [{ data: cl }, { data: qt }, { data: pr }] = await Promise.all([
