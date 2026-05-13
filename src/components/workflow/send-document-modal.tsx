@@ -20,6 +20,7 @@ import {
   Send, ChevronDown, ChevronUp, Loader2, Upload,
   CheckCircle, AlertCircle, EyeOff,
 } from 'lucide-react'
+import { SendConfirmationModal } from '@/components/workflow/send-confirmation-modal'
 
 // ===============================================================
 // TYPES
@@ -201,7 +202,9 @@ export function SendDocumentModal({
   const [subject, setSubject] = useState('')
   const [messageBody, setMessageBody] = useState('')
   const [language, setLanguage] = useState<Language>('es')
-  const [showPreview, setShowPreview] = useState(false)
+  // Split-screen: el preview se muestra siempre por defecto al lado derecho,
+  // tipo StelOrder. El usuario puede colapsarlo si necesita más espacio para el form.
+  const [showPreview, setShowPreview] = useState(true)
 
   // Step 4: Attachments
   const [extraAttachments, setExtraAttachments] = useState<Array<{ name: string; size: string }>>([])
@@ -215,6 +218,19 @@ export function SendDocumentModal({
   const [sending, setSending] = useState(false)
   const [sent, setSent] = useState(false)
   const [copied, setCopied] = useState(false)
+
+  // FASE 0 — Confirmación humana post-envío
+  // Estado falso desactivado: nada se marca como enviado hasta que el
+  // usuario confirme explícitamente en el modal "¿Lo mandaste?".
+  const [confirmingSend, setConfirmingSend] = useState(false)
+  const [showConfirmation, setShowConfirmation] = useState(false)
+  const [pendingSend, setPendingSend] = useState<{
+    channel: string
+    format: string
+    recipients: Recipient[]
+    trackingId: string | null
+    shareLink: string | null
+  } | null>(null)
 
   // History
   const [sendHistory, setSendHistory] = useState<SendRecord[]>([])
@@ -412,7 +428,16 @@ TorqueTools`,
     }
   }
 
-  // Handle send
+  // ─────────────────────────────────────────────────────────────
+  // FASE 0 — Flujo de envío en dos pasos:
+  //   handleSend()          → dispara la acción (Gmail/PDF/etc.)
+  //                           y abre el modal de confirmación.
+  //                           NO escribe tt_document_sends.
+  //   handleSendConfirmed() → SOLO si el usuario confirmó "Sí, ya
+  //                           lo mandé", escribe tt_document_sends.
+  //   handleSendDeclined()  → "No, todavía no": no escribe nada.
+  // ─────────────────────────────────────────────────────────────
+
   async function handleSend() {
     setSending(true)
     try {
@@ -433,32 +458,7 @@ TorqueTools`,
         shareLink = `${window.location.origin}/doc/view/${trackingId || Date.now()}`
       }
 
-      // Save send record
-      if (documentId) {
-        await supabase.from('tt_document_sends').insert({
-          document_id: documentId,
-          document_type: documentType,
-          document_ref: documentNumber,
-          channel: selectedFormat === 'link' ? 'link' : 'email',
-          format: selectedFormat,
-          recipients: allRecipients,
-          subject,
-          message: messageBody,
-          tracking_id: trackingId,
-          delivery_status: 'sent',
-          share_link: shareLink,
-          share_link_expires_at: shareLink
-            ? new Date(Date.now() + parseInt(linkExpiry) * 24 * 60 * 60 * 1000).toISOString()
-            : null,
-          share_link_password: linkPassword || null,
-          attachments: [
-            { name: `${documentNumber}.${selectedFormat === 'excel' ? 'xls' : selectedFormat === 'text' ? 'txt' : 'pdf'}`, size: '~', url: '' },
-            ...extraAttachments.map(a => ({ name: a.name, size: a.size, url: '' })),
-          ],
-        })
-      }
-
-      // Execute format-specific action
+      // Execute format-specific action (abre Gmail, descarga PDF, etc.)
       const content = generateContent()
 
       switch (selectedFormat) {
@@ -496,18 +496,69 @@ TorqueTools`,
         }
       }
 
-      setSent(true)
-      onSent?.()
-
-      // Reload history
-      if (documentId) {
-        await loadSendHistory()
-      }
+      // Diferir el registro hasta confirmación humana
+      setPendingSend({
+        channel: selectedFormat === 'link' ? 'link' : 'email',
+        format: selectedFormat,
+        recipients: allRecipients,
+        trackingId,
+        shareLink,
+      })
+      setShowConfirmation(true)
     } catch (err) {
       console.error('Error sending:', err)
     } finally {
       setSending(false)
     }
+  }
+
+  async function handleSendConfirmed() {
+    if (!pendingSend) return
+    setConfirmingSend(true)
+    try {
+      if (documentId) {
+        await supabase.from('tt_document_sends').insert({
+          document_id: documentId,
+          document_type: documentType,
+          document_ref: documentNumber,
+          channel: pendingSend.channel,
+          format: pendingSend.format,
+          recipients: pendingSend.recipients,
+          subject,
+          message: messageBody,
+          tracking_id: pendingSend.trackingId,
+          delivery_status: 'sent',
+          share_link: pendingSend.shareLink,
+          share_link_expires_at: pendingSend.shareLink
+            ? new Date(Date.now() + parseInt(linkExpiry) * 24 * 60 * 60 * 1000).toISOString()
+            : null,
+          share_link_password: linkPassword || null,
+          attachments: [
+            { name: `${documentNumber}.${selectedFormat === 'excel' ? 'xls' : selectedFormat === 'text' ? 'txt' : 'pdf'}`, size: '~', url: '' },
+            ...extraAttachments.map(a => ({ name: a.name, size: a.size, url: '' })),
+          ],
+        })
+      }
+
+      setSent(true)
+      setShowConfirmation(false)
+      setPendingSend(null)
+      onSent?.()
+
+      if (documentId) {
+        await loadSendHistory()
+      }
+    } catch (err) {
+      console.error('Error guardando envio:', err)
+    } finally {
+      setConfirmingSend(false)
+    }
+  }
+
+  function handleSendDeclined() {
+    // No se persiste nada. El usuario podrá reintentar el envío.
+    setPendingSend(null)
+    setShowConfirmation(false)
   }
 
   // Handle copy message
@@ -536,8 +587,29 @@ TorqueTools`,
   ]
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={`Enviar ${docLabel}`} size="xl">
-      <div className="space-y-4">
+    <>
+      {/* FASE 0 — Modal de confirmación humana post-envío.
+          Sólo cuando el usuario dice "Sí, ya lo mandé" se registra
+          el envío en tt_document_sends. */}
+      <SendConfirmationModal
+        isOpen={showConfirmation}
+        onClose={handleSendDeclined}
+        onConfirmed={handleSendConfirmed}
+        onDeclined={handleSendDeclined}
+        channel={
+          (pendingSend?.format as 'pdf' | 'html' | 'excel' | 'word' | 'text' | 'link') ?? 'pdf'
+        }
+        documentLabel={docLabel}
+        documentNumber={documentNumber}
+        recipientHint={toRecipients.map(r => r.email).join(', ') || undefined}
+        confirming={confirmingSend}
+      />
+
+    <Modal isOpen={isOpen} onClose={onClose} title={`Enviar ${docLabel}`} size="full">
+      {/* Layout split-screen: form a la izquierda, preview del PDF a la derecha
+          (siempre visible en pantallas md+). En mobile se apila vertical. */}
+      <div className={!sent && showPreview ? "grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] gap-4" : "block"}>
+      <div className="space-y-4 min-w-0">
 
         {/* Success state */}
         {sent && (
@@ -963,6 +1035,38 @@ TorqueTools`,
           </>
         )}
 
+      </div>
+      {/* COLUMNA DERECHA — Preview persistente del PDF que va a recibir el cliente */}
+      {!sent && showPreview && (
+        <div className="hidden md:flex flex-col bg-[#0B0E13] rounded-xl border border-[#2A3040] overflow-hidden min-h-[600px]">
+          <div className="flex items-center justify-between px-3 py-2 border-b border-[#2A3040] bg-[#141820]">
+            <div className="flex items-center gap-2 text-xs text-[#9CA3AF]">
+              <Eye size={12} /> Vista previa — esto es exactamente lo que va a ver el cliente
+            </div>
+            <button onClick={() => setShowPreview(false)} className="text-[#6B7280] hover:text-[#F0F2F5] text-xs">
+              Ocultar preview
+            </button>
+          </div>
+          <iframe
+            srcDoc={selectedFormat === 'text' || selectedFormat === 'excel' ? generateContent() : generateContent()}
+            className="flex-1 w-full bg-white"
+            title={`Vista previa ${docLabel} ${documentNumber}`}
+            sandbox="allow-same-origin"
+          />
+        </div>
+      )}
+      {/* Botón flotante para volver a mostrar el preview si el usuario lo ocultó */}
+      {!sent && !showPreview && (
+        <button
+          onClick={() => setShowPreview(true)}
+          className="hidden md:flex items-center gap-1.5 fixed bottom-6 right-6 z-50 px-3 py-2 rounded-lg bg-[#FF6600] hover:bg-[#E55A00] text-white text-xs font-semibold shadow-lg"
+        >
+          <Eye size={14} /> Mostrar preview
+        </button>
+      )}
+      </div>
+
+      <div className="space-y-4">
         {/* ========== SEND HISTORY ========== */}
         {documentId && (
           <div className="border-t border-[#1E2330] pt-3 mt-3">
@@ -1041,5 +1145,6 @@ TorqueTools`,
         )}
       </div>
     </Modal>
+    </>
   )
 }

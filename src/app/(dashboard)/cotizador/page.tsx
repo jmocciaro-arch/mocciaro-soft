@@ -32,6 +32,10 @@ import {
   MessageSquare, Building2, User, Search, X, Loader2, Printer, List, PlusCircle, Upload, Sparkles
 } from 'lucide-react'
 import { DocumentAttachments } from '@/components/documents/document-attachments'
+import { SendConfirmationModal } from '@/components/workflow/send-confirmation-modal'
+import { SendDocumentModal } from '@/components/workflow/send-document-modal'
+import { QuoteVersionBadge } from '@/components/workflow/quote-version-badge'
+import { markAcceptedVersion, snapshotQuoteVersion } from '@/lib/quote-versioning'
 
 interface QuoteLineItem {
   id: string
@@ -129,6 +133,10 @@ export default function CotizadorPage() {
   // Cuando se convierte la cotización en pedido real (via quoteToOrder), guardamos
   // referencia al pedido creado para mostrar el link "Ver pedido →"
   const [createdOrder, setCreatedOrder] = useState<{ id: string; number: string } | null>(null)
+  // FASE 0 — Modal de confirmación post-envío WhatsApp (estado falso desactivado)
+  const [showSendConfirmation, setShowSendConfirmation] = useState(false)
+  // Modal "Enviar al cliente" estilo StelOrder (split-screen con preview)
+  const [showSendModal, setShowSendModal] = useState(false)
   const [quoteNumber, setQuoteNumber] = useState('')
   const [docSubtype, setDocSubtype] = useState<'cotizacion' | 'presupuesto' | 'proforma' | 'packing_list' | 'oferta'>('cotizacion')
   const [items, setItems] = useState<QuoteLineItem[]>([])
@@ -630,8 +638,47 @@ export default function CotizadorPage() {
     setTransitioning(true)
     const sb = createClient()
     try {
-      const { error } = await sb.from('tt_quotes').update({ status: newStatus }).eq('id', currentQuoteId)
-      if (error) throw error
+      // FASE 1.4 — Al pasar a 'enviada' por primera vez, snapshoteamos
+      // la versión actual para tener el original que vio el cliente.
+      if (newStatus === 'enviada') {
+        const { data: authUser } = await sb.auth.getUser()
+        const snap = await snapshotQuoteVersion({
+          quoteId: currentQuoteId,
+          changeSummary: 'Versión enviada al cliente',
+          actorUserId: authUser?.user?.id ?? null,
+        })
+        if (!snap.ok) {
+          console.warn('[transitionStatus] snapshotQuoteVersion fallo:', snap.error)
+        }
+      }
+
+      // FASE 1.4 — Al aceptar, marcamos cuál versión aceptó el cliente.
+      // mark_quote_accepted_version setea status='aceptada' + accepted_at,
+      // así que no necesitamos el UPDATE manual abajo en ese caso.
+      if (newStatus === 'aceptada') {
+        const { data: authUser } = await sb.auth.getUser()
+        // Leer current_version_number ANTES del snapshot
+        const { data: q } = await sb
+          .from('tt_quotes')
+          .select('current_version_number')
+          .eq('id', currentQuoteId)
+          .maybeSingle()
+        // accepted_version = última versión existente (current - 1 si
+        // ya hubo al menos un snapshot; si no, 1 implícito)
+        const acceptedVersion = Math.max(1, ((q?.current_version_number as number) || 1) - 1)
+        const mark = await markAcceptedVersion({
+          quoteId: currentQuoteId,
+          versionNumber: acceptedVersion,
+          actorUserId: authUser?.user?.id ?? null,
+        })
+        if (!mark.ok) {
+          // Fallback: UPDATE manual sin marcar versión
+          await sb.from('tt_quotes').update({ status: newStatus }).eq('id', currentQuoteId)
+        }
+      } else {
+        const { error } = await sb.from('tt_quotes').update({ status: newStatus }).eq('id', currentQuoteId)
+        if (error) throw error
+      }
       const labels: Record<typeof newStatus, string> = {
         enviada: 'Marcada como enviada',
         aceptada: 'Cotización aceptada',
@@ -655,18 +702,34 @@ export default function CotizadorPage() {
   // como 'pedido' y redirige a /ventas?tab=pedidos&highlight=<id>.
   async function convertToOrder() {
     if (!currentQuoteId) return
+    // FASE 0 — Anti doble-click / retry: el botón ya está disabled
+    // mientras transitioning=true. La defensa de fondo es withIdempotency
+    // dentro de quoteToOrder() + el índice UNIQUE de la migración v71.
+    if (transitioning) return
     setTransitioning(true)
     try {
-      const { orderId, orderNumber } = await quoteToOrder(currentQuoteId, 'local')
       const sb = createClient()
-      // Link de trazabilidad cotización ↔ pedido (tt_document_links)
+      // userId para que la clave de idempotencia distinga entre usuarios
+      // (un mismo usuario haciendo doble click obtiene el mismo PED;
+      //  el índice UNIQUE de DB bloquea cualquier intento posterior).
+      const { data: authUser } = await sb.auth.getUser()
+      const userId = authUser?.user?.id ?? null
+      const { orderId, orderNumber } = await quoteToOrder(currentQuoteId, 'local', { userId })
+      // Link de trazabilidad cotización ↔ pedido (tt_document_relations,
+      // renombrada desde tt_document_links en v61). Si el parent
+      // currentQuoteId vive en tt_quotes y no en tt_documents, el FK
+      // tira y dejamos pasar (el pedido ya está creado y registrado en
+      // tt_sales_orders.quote_id). El índice UNIQUE parcial de v71
+      // sobre (parent_id, relation_type) garantiza que no haya dos
+      // 'quote_to_order' del mismo origen, evitando duplicados aún
+      // ante carreras a nivel de DB.
       try {
-        await sb.from('tt_document_links').insert({
+        await sb.from('tt_document_relations').insert({
           parent_id: currentQuoteId,
           child_id: orderId,
           relation_type: 'quote_to_order',
         })
-      } catch { /* la tabla podría no aceptar tt_quotes como parent, no es crítico */ }
+      } catch { /* parent no en tt_documents (tt_quotes legacy) — no crítico */ }
       // Marca la cotización como convertida en pedido (para el banner del cotizador)
       await sb.from('tt_quotes').update({ status: 'pedido' }).eq('id', currentQuoteId)
       setQuoteStatus('pedido')
@@ -686,6 +749,18 @@ export default function CotizadorPage() {
     } finally { setTransitioning(false) }
   }
 
+  // CTA principal "Enviar al cliente": abre el modal split-screen estilo StelOrder
+  // (formulario + preview del PDF en vivo). Reemplaza al wa.me directo.
+  function openSendModal() {
+    if (!currentQuoteId) {
+      addToast({ type: 'warning', title: 'Primero guardá la cotización' })
+      return
+    }
+    setShowSendModal(true)
+  }
+
+  // Mantiene compatibilidad: el botón "Reenviar por WhatsApp" del banner azul
+  // sigue siendo wa.me directo (envío rápido sin pasar por el modal).
   function sendByWhatsApp() {
     const text = `Cotización ${quoteNumber}\nCliente: ${selectedClient?.legal_name || selectedClient?.name || '-'}\nTotal: ${formatCurrency(total, currency)}\nItems: ${items.length}`
     const phone = (selectedClient as Client & { phone?: string })?.phone || ''
@@ -694,7 +769,12 @@ export default function CotizadorPage() {
       ? `https://wa.me/${cleaned}?text=${encodeURIComponent(text)}`
       : `https://wa.me/?text=${encodeURIComponent(text)}`
     window.open(url, '_blank')
-    if (quoteStatus === 'borrador') void transitionStatus('enviada')
+    if (quoteStatus === 'borrador') setShowSendConfirmation(true)
+  }
+
+  async function handleWhatsAppConfirmed() {
+    await transitionStatus('enviada')
+    setShowSendConfirmation(false)
   }
 
   function sendByEmail() {
@@ -1044,17 +1124,20 @@ export default function CotizadorPage() {
                   } />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold text-[#F0F2F5]">
-                    {quoteStatus === 'borrador' && `Cotización ${quoteNumber} guardada · Próximo paso: enviar al cliente`}
-                    {quoteStatus === 'enviada' && `Cotización ${quoteNumber} enviada · Esperando respuesta del cliente`}
-                    {quoteStatus === 'aceptada' && `Cliente aceptó · Convertí en pedido cuando estés listo`}
-                    {quoteStatus === 'pedido' && (createdOrder ? `✓ Convertida en pedido ${createdOrder.number}` : `Convertida en pedido de venta`)}
-                    {quoteStatus === 'rechazada' && `Cliente rechazó la cotización`}
-                  </p>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-sm font-bold text-[#F0F2F5]">
+                      {quoteStatus === 'borrador' && `Cotización ${quoteNumber} guardada · Próximo paso: enviar al cliente`}
+                      {quoteStatus === 'enviada' && `Cotización ${quoteNumber} enviada · Esperando respuesta del cliente`}
+                      {quoteStatus === 'aceptada' && `Cliente aceptó · Convertí en pedido cuando estés listo`}
+                      {quoteStatus === 'pedido' && (createdOrder ? `✓ Convertida en pedido ${createdOrder.number}` : `Convertida en pedido de venta`)}
+                      {quoteStatus === 'rechazada' && `Cliente rechazó la cotización`}
+                    </p>
+                    {currentQuoteId && <QuoteVersionBadge quoteId={currentQuoteId} />}
+                  </div>
                   {quoteStatus === 'borrador' && (
                     <div className="flex flex-wrap gap-2 mt-2">
-                      <Button size="sm" variant="primary" onClick={sendByWhatsApp} disabled={transitioning}>
-                        <MessageSquare size={14} /> WhatsApp
+                      <Button size="sm" variant="primary" onClick={openSendModal} disabled={transitioning}>
+                        <MessageSquare size={14} /> Enviar al cliente
                       </Button>
                       <Button size="sm" variant="secondary" onClick={sendByEmail} disabled={transitioning}>
                         Email
@@ -1082,7 +1165,7 @@ export default function CotizadorPage() {
                   )}
                   {quoteStatus === 'aceptada' && (
                     <div className="flex flex-wrap gap-2 mt-2">
-                      <Button size="sm" variant="primary" onClick={convertToOrder} disabled={transitioning}>
+                      <Button size="sm" variant="primary" onClick={convertToOrder} loading={transitioning} disabled={transitioning}>
                         📦 Convertir en pedido
                       </Button>
                     </div>
@@ -1254,7 +1337,7 @@ export default function CotizadorPage() {
                 ? [{ label: 'Guardar', onClick: saveQuote, icon: 'save', variant: 'primary', disabled: saving || !selectedClient || items.length === 0 }]
                 : quoteStatus === 'borrador'
                   ? [
-                      { label: 'Enviar al cliente', onClick: sendByWhatsApp, icon: 'play', variant: 'primary', disabled: transitioning },
+                      { label: 'Enviar al cliente', onClick: openSendModal, icon: 'play', variant: 'primary', disabled: transitioning },
                       { label: 'Marcar enviada', onClick: () => transitionStatus('enviada'), variant: 'secondary', disabled: transitioning },
                     ]
                   : quoteStatus === 'enviada'
@@ -1671,8 +1754,8 @@ export default function CotizadorPage() {
                   </Button>
                 ) : quoteStatus === 'borrador' ? (
                   <div className="space-y-2 mt-2 print:hidden">
-                    <Button variant="primary" className="w-full" onClick={sendByWhatsApp} loading={transitioning}>
-                      <MessageSquare size={16} /> Enviar al cliente por WhatsApp
+                    <Button variant="primary" className="w-full" onClick={openSendModal} loading={transitioning}>
+                      <MessageSquare size={16} /> Enviar al cliente (Email · WhatsApp · PDF)
                     </Button>
                     <div className="grid grid-cols-2 gap-2">
                       <Button variant="secondary" size="sm" onClick={sendByEmail} disabled={transitioning}>Enviar por Email</Button>
@@ -1756,6 +1839,85 @@ export default function CotizadorPage() {
           companyId={activeCompanyId}
           clientId={selectedClient?.id}
           onParsed={(result) => { void handleOCParsed(result) }}
+        />
+      )}
+
+      {/* FASE 0 — Confirmación humana post-envío WhatsApp.
+          Reemplaza el auto-marca a 'enviada' al click del botón WA. */}
+      <SendConfirmationModal
+        isOpen={showSendConfirmation}
+        onClose={() => setShowSendConfirmation(false)}
+        onConfirmed={handleWhatsAppConfirmed}
+        onDeclined={() => setShowSendConfirmation(false)}
+        channel="whatsapp"
+        documentLabel="Cotizacion"
+        documentNumber={quoteNumber}
+        recipientHint={selectedClient?.legal_name || selectedClient?.name || undefined}
+        confirming={transitioning}
+      />
+
+      {/* Modal de envío estilo StelOrder: form de email + preview del PDF en split-screen.
+          Solo se abre cuando hay currentQuoteId (cotización ya guardada). */}
+      {currentQuoteId && (
+        <SendDocumentModal
+          isOpen={showSendModal}
+          onClose={() => setShowSendModal(false)}
+          documentType="coti"
+          documentNumber={quoteNumber}
+          documentId={currentQuoteId}
+          clientName={selectedClient?.legal_name || selectedClient?.name || ''}
+          clientEmail={(selectedClient as Client & { email?: string })?.email || ''}
+          clientId={selectedClient?.id}
+          total={total}
+          currency={currency}
+          items={items.map((it) => ({
+            sku: it.sku,
+            description: it.description,
+            quantity: it.quantity,
+            unit_price: it.unitPrice,
+            discount_pct: it.discount,
+            subtotal: it.quantity * it.unitPrice * (1 - it.discount / 100),
+            notes: it.notes,
+          }))}
+          document={{
+            type: 'coti',
+            display_ref: quoteNumber,
+            system_code: quoteNumber,
+            status: quoteStatus || 'borrador',
+            currency: currency,
+            subtotal: subtotal,
+            tax_amount: taxAmount,
+            tax_rate: ivaEnabled ? taxRate : 0,
+            total: total,
+            notes: notes,
+            created_at: new Date().toISOString(),
+            valid_until: validUntil,
+            incoterm: incoterm,
+            payment_terms: paymentTerms,
+          }}
+          client={selectedClient ? {
+            name: selectedClient.name,
+            legal_name: selectedClient.legal_name,
+            tax_id: selectedClient.tax_id,
+            email: (selectedClient as Client & { email?: string })?.email || null,
+            phone: (selectedClient as Client & { phone?: string })?.phone || null,
+            country: selectedClient.country,
+          } : undefined}
+          company={(() => {
+            const c = companies.find((c) => c.id === selectedCompanyId)
+            if (!c) return undefined
+            return {
+              name: c.name,
+              tax_id: (c as Company & { tax_id?: string })?.tax_id,
+              country: c.country,
+            }
+          })()}
+          onSent={() => {
+            // Al confirmar el envío desde el modal, marcamos la cotización
+            // como enviada automáticamente (a diferencia de wa.me que pide
+            // confirmación manual via SendConfirmationModal).
+            if (quoteStatus === 'borrador') void transitionStatus('enviada')
+          }}
         />
       )}
     </div>
