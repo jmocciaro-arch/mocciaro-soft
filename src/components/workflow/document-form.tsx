@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { resolveTaxConfig, type TaxConfig } from '@/lib/tax-config'
+import { DocumentTracePanel } from '@/components/workflow/document-trace-panel'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
@@ -2483,6 +2484,100 @@ export function DocumentForm({
                 <StockReservationsPanel documentId={doc.id} documentType={documentType} />
               </div>
             )}
+            {/* Banner de conciliación con catálogo — muestra cuántos items están
+                vinculados a tt_products y permite hacer match en batch por SKU.
+                Solo se muestra si hay al menos un item real (no sección). */}
+            {(() => {
+              const realItems = displayItems.filter((i) => !i.is_section)
+              if (realItems.length === 0) return null
+              const matched = realItems.filter((i) => i.product_id).length
+              const unmatched = realItems.length - matched
+              const allMatched = unmatched === 0
+              return (
+                <div className={`mb-3 rounded-xl border p-3 flex items-center gap-3 ${allMatched ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-amber-500/30 bg-amber-500/5'}`}>
+                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${allMatched ? 'bg-emerald-500/20' : 'bg-amber-500/20'}`}>
+                    <FileText size={16} className={allMatched ? 'text-emerald-400' : 'text-amber-400'} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-[#F0F2F5]">
+                      {allMatched
+                        ? `✓ Los ${matched} items están vinculados al catálogo`
+                        : `${matched}/${realItems.length} items vinculados al catálogo`}
+                    </p>
+                    {!allMatched && (
+                      <p className="text-xs text-[#9CA3AF] mt-0.5">
+                        {unmatched} ítem{unmatched !== 1 ? 's' : ''} sin match: descuentan stock como texto libre. Probá &quot;Conciliar por SKU&quot; o vinculá manualmente desde la fila (🔴).
+                      </p>
+                    )}
+                  </div>
+                  {!allMatched && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const skusBuscados = realItems
+                          .filter((i) => !i.product_id && i.sku.trim())
+                          .map((i) => i.sku.trim())
+                        if (skusBuscados.length === 0) {
+                          addToast({ type: 'warning', title: 'No hay items con SKU para conciliar' })
+                          return
+                        }
+                        const supabase = createClient()
+                        const { data: prods } = await supabase
+                          .from('tt_products')
+                          .select('id, sku, name, price_eur')
+                          .in('sku', skusBuscados)
+                          .eq('active', true)
+                        const bySku = new Map<string, { id: string; sku: string; name: string; price_eur: number }>()
+                        for (const p of (prods || []) as Array<{ id: string; sku: string; name: string; price_eur: number }>) {
+                          bySku.set(p.sku.toUpperCase().trim(), p)
+                        }
+                        // Update local state (edit o read mode)
+                        const updateFn = (curr: ItemData[]) => curr.map((it) => {
+                          if (it.product_id || !it.sku.trim()) return it
+                          const m = bySku.get(it.sku.toUpperCase().trim())
+                          if (!m) return it
+                          return { ...it, product_id: m.id }
+                        })
+                        if (editMode) setEditItems(updateFn)
+                        else setItems(updateFn)
+
+                        // Update DB si no estamos en editMode (los cambios del editMode se persisten al guardar)
+                        if (!editMode) {
+                          const itemTableMap: Record<string, { table: string }> = {
+                            coti: { table: 'tt_quote_items' },
+                            pedido: { table: 'tt_so_items' },
+                            delivery_note: { table: 'tt_dn_items' },
+                            invoice: { table: 'tt_invoice_items' },
+                          }
+                          const cfg = itemTableMap[documentType]
+                          if (cfg) {
+                            for (const it of realItems) {
+                              if (it.product_id || !it.sku.trim()) continue
+                              const m = bySku.get(it.sku.toUpperCase().trim())
+                              if (!m) continue
+                              try {
+                                await supabase.from(cfg.table).update({ product_id: m.id }).eq('id', it.id)
+                              } catch { /* ignore individual error */ }
+                            }
+                          }
+                        }
+                        const nuevos = realItems.filter((it) => !it.product_id && it.sku.trim() && bySku.has(it.sku.toUpperCase().trim())).length
+                        addToast({
+                          type: nuevos > 0 ? 'success' : 'info',
+                          title: nuevos > 0 ? `${nuevos} nuevos matches` : 'Sin matches nuevos',
+                          message: nuevos === skusBuscados.length
+                            ? 'Todos los SKUs encontrados ✓'
+                            : `${nuevos} de ${skusBuscados.length} SKUs encontrados — los demás no existen en el catálogo (creá productos o ajustá los SKUs)`,
+                        })
+                      }}
+                      className="shrink-0 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-white text-xs font-bold transition-colors"
+                    >
+                      Conciliar por SKU
+                    </button>
+                  )}
+                </div>
+              )
+            })()}
             <div data-testid="doc-items-card" className="bg-[#141820] rounded-xl border border-[#2A3040] overflow-hidden">
             {/* Items table */}
             <div className="overflow-x-auto">
@@ -2555,7 +2650,13 @@ export function DocumentForm({
                               className="h-8 w-full rounded bg-[#0B0E13] border border-[#2A3040] focus:border-[#FF6600] px-2 text-xs text-[#F0F2F5] font-mono focus:outline-none"
                             />
                           ) : (
-                            <code className="text-xs text-[#9CA3AF] font-mono">{item.sku || '-'}</code>
+                            <div className="flex items-center gap-1.5">
+                              <span
+                                className={`w-1.5 h-1.5 rounded-full shrink-0 ${item.product_id ? 'bg-emerald-400' : 'bg-red-400'}`}
+                                title={item.product_id ? 'Producto vinculado al catálogo' : 'Sin match — texto libre (no descuenta stock al generar pedido)'}
+                              />
+                              <code className="text-xs text-[#9CA3AF] font-mono">{item.sku || '-'}</code>
+                            </div>
                           )}
                         </td>
                         <td className="px-4 py-3">
@@ -3159,6 +3260,24 @@ export function DocumentForm({
         {/* ====== TAB: RELACIONADOS ====== */}
         {activeTab === 'relacionados' && (
           <div className="bg-[#141820] rounded-xl border border-[#2A3040] p-5 space-y-6">
+            {/* FASE 1.3 — Panel de trazabilidad COT←PED←REM←FAC←Cobro
+                vía FK directas (cubre flujo legacy). Complementa a
+                parentLinks/childLinks que cubren tt_document_relations. */}
+            <DocumentTracePanel
+              docId={documentId}
+              source={
+                source === 'tt_documents'
+                  ? 'tt_documents'
+                  : documentType === 'pedido' || documentType === 'sales_order'
+                  ? 'sales_order'
+                  : documentType === 'delivery_note' || documentType === 'albaran' || documentType === 'remito'
+                  ? 'delivery_note'
+                  : documentType === 'factura' || documentType === 'invoice'
+                  ? 'invoice'
+                  : 'quote'
+              }
+            />
+
             {/* Parent docs */}
             {parentLinks.length > 0 && (
               <div>
