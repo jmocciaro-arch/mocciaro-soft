@@ -2,6 +2,26 @@
 
 Trabajo hecho en autonomía mientras estabas afuera.
 
+## 🎯 Estado FINAL del sistema (12/13 OK en smoke test)
+
+```
+✅  v77: tt_documents.doc_type existe             OK
+✅  v78: tt_oc_parsed columnas IA                 OK
+✅  v80: tt_quotes.participating_contact_ids      OK
+✅  v76: tt_sku_aliases existe                    11 aliases guardados
+✅  tt_quote_items: items huérfanos               0
+✅  tt_so_items: items huérfanos                  0
+✅  tt_dn_items: items huérfanos                  0
+✅  tt_invoice_items: items huérfanos             0
+✅  tt_stock: huérfanos                           0
+✅  tt_quotes sin client_id                       0
+✅  productos activos                             9396
+❌  productos con price_eur > 0                   28 / 9396 (0.3%) ← ÚNICO PENDIENTE
+✅  clientes activos                              3037
+```
+
+**Correlo cuando quieras**: `npx tsx scripts/smoke-test.ts`
+
 ---
 
 ## ✅ Lo que terminé
