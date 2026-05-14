@@ -165,6 +165,10 @@ export default function CotizadorPage() {
   const [productResults, setProductResults] = useState<ProductSearchResult[]>([])
   const [searchingProducts, setSearchingProducts] = useState(false)
   const productDebounceRef = useRef<NodeJS.Timeout | null>(null)
+  // Cuando el usuario clickea el dot rojo (item sin match), guardamos qué item está
+  // vinculando. Al elegir un producto se actualiza ese item específico Y se guarda
+  // el alias en tt_sku_aliases para que la próxima OC lo encuentre solo.
+  const [linkingItemId, setLinkingItemId] = useState<string | null>(null)
 
   // Saved quotes list
   const [savedQuotes, setSavedQuotes] = useState<SavedQuote[]>([])
@@ -230,39 +234,79 @@ export default function CotizadorPage() {
       }))
       setItems(newItems)
 
-      // 1.b Auto-match contra tt_products: SKU exacto primero, después fuzzy.
-      // En batch, una sola query con OR para no martillar la DB.
+      // 1.b Auto-match en 2 pasos:
+      //   (a) Aliases aprendidos (tt_sku_aliases): SKUs del cliente vinculados
+      //       manualmente en OCs previas (cliente-específicos > globales).
+      //   (b) SKU exacto en tt_products.
+      // El paso (a) tiene prioridad porque captura el conocimiento explícito
+      // del usuario sobre "este SKU del cliente = este producto mío".
       const skusBuscados = newItems.map((i) => i.sku.trim()).filter((s) => s.length > 0)
-      if (skusBuscados.length > 0) {
+      if (skusBuscados.length > 0 && selectedCompanyId) {
         const supabase = createClient()
-        const { data: prods } = await supabase
-          .from('tt_products')
-          .select('id, sku, name, price_eur, cost_eur, price_min')
-          .in('sku', skusBuscados)
-          .eq('active', true)
+        const { lookupAliasesForSkus } = await import('@/lib/sku-aliases')
+
+        // (a) Primero buscamos aliases. Si el cliente ya está seleccionado,
+        // priorizamos sus aliases; si no, solo los globales.
+        const aliasMap = await lookupAliasesForSkus({
+          companyId: selectedCompanyId,
+          clientId: selectedClient?.id || null,
+          externalSkus: skusBuscados,
+        })
+
+        // (b) Después buscamos por SKU exacto en tt_products para los que
+        // no tuvieron alias. Una sola query.
+        const skusSinAlias = skusBuscados.filter((s) => !aliasMap.has(s.toUpperCase().trim()))
+        const { data: prods } = skusSinAlias.length > 0
+          ? await supabase
+              .from('tt_products')
+              .select('id, sku, name, price_eur, cost_eur, price_min')
+              .in('sku', skusSinAlias)
+              .eq('active', true)
+          : { data: [] }
+
+        // También necesitamos traer los productos referenciados por los aliases
+        // para poder usar nombre y precio.
+        const aliasProductIds = Array.from(aliasMap.values()).map((v) => v.productId)
+        const { data: aliasProds } = aliasProductIds.length > 0
+          ? await supabase
+              .from('tt_products')
+              .select('id, sku, name, price_eur, cost_eur, price_min')
+              .in('id', aliasProductIds)
+          : { data: [] }
+
+        const productById = new Map<string, { id: string; sku: string; name: string; price_eur: number; cost_eur: number; price_min: number | null }>()
+        for (const p of ([...(aliasProds || []), ...(prods || [])]) as Array<{ id: string; sku: string; name: string; price_eur: number; cost_eur: number; price_min: number | null }>) {
+          productById.set(p.id, p)
+        }
         const bySku = new Map<string, { id: string; sku: string; name: string; price_eur: number; cost_eur: number; price_min: number | null }>()
         for (const p of (prods || []) as Array<{ id: string; sku: string; name: string; price_eur: number; cost_eur: number; price_min: number | null }>) {
           bySku.set(p.sku.toUpperCase().trim(), p)
         }
+
         setItems((curr) => curr.map((item) => {
-          const match = bySku.get(item.sku.toUpperCase().trim())
+          const key = item.sku.toUpperCase().trim()
+          // Primero alias (cliente o global)
+          const aliasHit = aliasMap.get(key)
+          const match = aliasHit ? productById.get(aliasHit.productId) : bySku.get(key)
           if (!match) return item
-          // Si la OC ya traía precio (>0), respetamos ese; sino tomamos el del catálogo.
           const ocPrice = item.unitPrice > 0 ? item.unitPrice : match.price_eur
           return {
             ...item,
             product_id: match.id,
-            // Si la descripción de la OC es vacía o muy corta, usamos la del catálogo
             description: item.description && item.description.length > 3 ? item.description : match.name,
             unitPrice: ocPrice,
           }
         }))
-        const matched = newItems.filter((i) => bySku.has(i.sku.toUpperCase().trim())).length
-        if (matched > 0) {
+        const aliasHits = aliasMap.size
+        const directHits = newItems.filter((i) => bySku.has(i.sku.toUpperCase().trim())).length
+        const total = aliasHits + directHits
+        if (total > 0) {
           addToast({
             type: 'info',
-            title: `${matched}/${newItems.length} items matcheados con el catálogo`,
-            message: matched < newItems.length ? 'Revisá los items en rojo (sin match)' : 'Todos los SKUs encontrados ✓',
+            title: `${total}/${newItems.length} items matcheados con el catálogo`,
+            message: aliasHits > 0
+              ? `${aliasHits} desde historial de vinculación, ${directHits} por SKU directo`
+              : total < newItems.length ? 'Revisá los items en rojo (sin match)' : 'Todos los SKUs encontrados ✓',
           })
         }
       }
@@ -566,7 +610,62 @@ export default function CotizadorPage() {
     setSearchingProducts(false)
   }
 
-  function addProductAsItem(product: ProductSearchResult) {
+  async function addProductAsItem(product: ProductSearchResult) {
+    // Si venimos del flujo "vincular ítem rojo", actualizamos el ítem existente
+    // (conservamos cantidad, sku original del cliente, descripción) y guardamos
+    // el alias para futuras OCs.
+    if (linkingItemId) {
+      const target = items.find((i) => i.id === linkingItemId)
+      if (target) {
+        setItems((prev) => prev.map((i) => i.id === linkingItemId ? {
+          ...i,
+          product_id: product.id,
+          // Mantenemos el SKU original del cliente — es lo que viene en su OC.
+          // El SKU del catálogo queda implícito vía product_id.
+          // Mantenemos también la cantidad y precio que ya estaban en la línea.
+        } : i))
+
+        // Guardar alias para que la próxima OC lo encuentre solo.
+        // Si no hay company seleccionada no podemos guardar (FK obligatoria).
+        if (selectedCompanyId && target.sku.trim()) {
+          try {
+            const { saveAlias } = await import('@/lib/sku-aliases')
+            const useClientScope = !!selectedClient?.id && confirm(
+              `¿Guardar este vínculo SOLO para "${selectedClient.legal_name || selectedClient.name}"?\n\n` +
+              `Aceptar = alias específico para ese cliente.\n` +
+              `Cancelar = alias GLOBAL (vale para cualquier cliente con SKU "${target.sku.trim()}").`
+            )
+            const saved = await saveAlias({
+              companyId: selectedCompanyId,
+              clientId: useClientScope ? selectedClient!.id : null,
+              externalSku: target.sku,
+              productId: product.id,
+              source: 'manual',
+            })
+            if (saved) {
+              addToast({
+                type: 'success',
+                title: 'Vínculo guardado',
+                message: useClientScope
+                  ? `Próxima OC de este cliente con SKU "${target.sku}" se va a matchear solo`
+                  : `SKU "${target.sku}" matcheado globalmente con ${product.sku}`,
+              })
+            } else {
+              addToast({ type: 'warning', title: 'Vinculado pero no se pudo guardar el alias' })
+            }
+          } catch (err) {
+            console.error('Error guardando alias:', err)
+            addToast({ type: 'warning', title: 'Vinculado pero falló guardar el alias' })
+          }
+        }
+      }
+      setLinkingItemId(null)
+      setShowProductSearch(false)
+      setProductSearch('')
+      return
+    }
+
+    // Flujo normal: agregar nuevo ítem a la cotización
     const resolved = resolvePrice(product.id, product.price_eur)
     setItems((prev) => [...prev, {
       id: Math.random().toString(36).slice(2),
@@ -1608,10 +1707,23 @@ export default function CotizadorPage() {
                             </td>
                             <td className="py-2 px-2">
                               <div className="flex items-center gap-1.5">
-                                <span
-                                  className={`w-1.5 h-1.5 rounded-full shrink-0 ${item.product_id ? 'bg-emerald-400' : 'bg-red-400'} print:hidden`}
-                                  title={item.product_id ? 'Producto matcheado con el catálogo' : 'SIN MATCH — abrí "Buscar producto" para vincular'}
-                                />
+                                {item.product_id ? (
+                                  <span
+                                    className="w-1.5 h-1.5 rounded-full shrink-0 bg-emerald-400 print:hidden"
+                                    title="Producto matcheado con el catálogo"
+                                  />
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setLinkingItemId(item.id)
+                                      setProductSearch(item.sku || item.description.slice(0, 30))
+                                      setShowProductSearch(true)
+                                    }}
+                                    className="w-2.5 h-2.5 rounded-full shrink-0 bg-red-400 hover:bg-red-300 ring-2 ring-red-500/30 hover:ring-red-500/60 print:hidden transition-all"
+                                    title="SIN MATCH — click para vincular este SKU con un producto del catálogo (se guarda como alias para futuras OCs)"
+                                  />
+                                )}
                                 <input value={item.sku} onChange={(e) => updateItem(item.id, 'sku', e.target.value)} className="w-full bg-transparent text-xs font-mono text-[#9CA3AF] outline-none" placeholder="SKU" />
                               </div>
                             </td>
@@ -1889,7 +2001,12 @@ export default function CotizadorPage() {
       )}
 
       {/* Product Search Modal */}
-      <Modal isOpen={showProductSearch} onClose={() => { setShowProductSearch(false); setProductSearch(''); setProductResults([]) }} title="Buscar Producto" size="lg">
+      <Modal
+        isOpen={showProductSearch}
+        onClose={() => { setShowProductSearch(false); setProductSearch(''); setProductResults([]); setLinkingItemId(null) }}
+        title={linkingItemId ? `Vincular SKU "${items.find((i) => i.id === linkingItemId)?.sku || ''}" con producto del catálogo` : 'Buscar Producto'}
+        size="lg"
+      >
         <SearchBar placeholder="Buscar por SKU, nombre, marca..." value={productSearch} onChange={setProductSearch} autoFocus className="mb-4" />
         {searchingProducts && <div className="flex items-center justify-center py-8"><Loader2 size={24} className="animate-spin text-[#FF6600]" /></div>}
         {!searchingProducts && productResults.length === 0 && productSearch && <p className="text-sm text-[#4B5563] text-center py-8">No se encontraron productos</p>}

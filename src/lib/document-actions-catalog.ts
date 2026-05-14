@@ -23,6 +23,7 @@ import {
   Send, Copy, Download, FileDown, Package, Truck, Receipt,
   DollarSign, Calendar, CheckSquare, FolderOpen, Link as LinkIcon,
   Pen, Trash2, Eye, RotateCcw, FileText, Edit, ClipboardList,
+  Workflow,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -82,6 +83,7 @@ export const DOCUMENT_ACTIONS: DocumentActionDef[] = [
   { key: 'create_project',   label: 'Crear proyecto',             icon: FolderOpen,  appliesTo: ['*'],                group: 'transform', implemented: false },
   { key: 'link_project',     label: 'Relacionar proyecto…',       icon: LinkIcon,    appliesTo: ['*'],                group: 'transform', implemented: false },
   { key: 'sign',             label: 'Firmar',                     icon: Pen,         appliesTo: ['coti', 'invoice'],  group: 'transform', implemented: false },
+  { key: 'create_workflow',  label: 'Crear flujo visual',         icon: Workflow,    appliesTo: ['*'],                group: 'transform', implemented: true },
 
   // ── ADMIN ── (peligro / mantenimiento)
   { key: 'edit_notes',     label: 'Editar observaciones',  icon: Edit,          appliesTo: ['*'],                                           group: 'admin', implemented: false },

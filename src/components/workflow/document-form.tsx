@@ -399,6 +399,10 @@ export function DocumentForm({
   // Product search
   const [showProductSearch, setShowProductSearch] = useState(false)
   const [productSearchQuery, setProductSearchQuery] = useState('')
+  // Cuando el usuario clickea el dot rojo de una línea para vincularla manualmente:
+  // guardamos qué item se está vinculando. Al elegir un producto se actualiza ese
+  // item específico Y se guarda el alias en tt_sku_aliases.
+  const [linkingItemId, setLinkingItemId] = useState<string | null>(null)
   const [productResults, setProductResults] = useState<Row[]>([])
   const [searchingProducts, setSearchingProducts] = useState(false)
   const productDebounceRef = useRef<NodeJS.Timeout | null>(null)
@@ -1237,7 +1241,87 @@ export function DocumentForm({
     setEditItems(editItems.filter((_, i) => i !== index))
   }
 
-  function addProductToItems(product: Row) {
+  async function addProductToItems(product: Row) {
+    // ── Modo "vincular item rojo": el usuario clickeó el dot rojo de una fila
+    // para vincularla con un producto del catálogo. NO agregamos nueva fila —
+    // actualizamos la existente. Y guardamos el alias para futuras OCs.
+    if (linkingItemId) {
+      const targetList = editMode ? editItems : items
+      const target = targetList.find((i) => i.id === linkingItemId)
+      if (!target) {
+        setLinkingItemId(null)
+        setShowProductSearch(false)
+        setProductSearchQuery('')
+        return
+      }
+      const productId = (product.id as string) || ''
+      const productSku = (product.sku as string) || ''
+
+      // 1. Actualizar el item localmente — mantenemos cantidad/precio/SKU del cliente
+      const updateFn = (curr: ItemData[]) => curr.map((it) =>
+        it.id === linkingItemId ? { ...it, product_id: productId } : it
+      )
+      if (editMode) setEditItems(updateFn)
+      else setItems(updateFn)
+
+      // 2. Persistir en DB si no estamos en editMode
+      if (!editMode) {
+        const itemTableMap: Record<string, string> = {
+          coti: 'tt_quote_items',
+          pedido: 'tt_so_items',
+          delivery_note: 'tt_dn_items',
+          invoice: 'tt_invoice_items',
+          factura: 'tt_invoice_items',
+        }
+        const table = itemTableMap[documentType]
+        if (table) {
+          try {
+            await supabase.from(table).update({ product_id: productId }).eq('id', target.id)
+          } catch (err) {
+            console.error('Error update item product_id:', err)
+          }
+        }
+      }
+
+      // 3. Guardar alias para futuras OCs con el mismo SKU del cliente
+      const docCompanyId = (doc as unknown as Record<string, unknown>)?.company_id as string | undefined
+      const docClientId = (doc as unknown as Record<string, unknown>)?.client_id as string | undefined
+      if (docCompanyId && target.sku.trim()) {
+        try {
+          const { saveAlias } = await import('@/lib/sku-aliases')
+          const useClientScope = !!docClientId && confirm(
+            `¿Guardar este vínculo SOLO para este cliente?\n\n` +
+            `Aceptar = alias específico para ese cliente.\n` +
+            `Cancelar = alias GLOBAL (vale para cualquier cliente con SKU "${target.sku.trim()}").`
+          )
+          const saved = await saveAlias({
+            companyId: docCompanyId,
+            clientId: useClientScope ? docClientId! : null,
+            externalSku: target.sku,
+            productId,
+            source: 'manual',
+          })
+          if (saved) {
+            addToast({
+              type: 'success',
+              title: 'Vínculo guardado',
+              message: useClientScope
+                ? `Próxima OC de este cliente con SKU "${target.sku}" se va a matchear sola`
+                : `SKU "${target.sku}" matcheado globalmente con ${productSku}`,
+            })
+          }
+        } catch (err) {
+          console.error('Error guardando alias:', err)
+        }
+      }
+
+      setLinkingItemId(null)
+      setShowProductSearch(false)
+      setProductSearchQuery('')
+      return
+    }
+
+    // ── Modo normal: agregar nueva línea
     const newItem: ItemData = {
       id: `new-${Date.now()}`,
       sku: (product.sku as string) || '',
@@ -1808,6 +1892,8 @@ export function DocumentForm({
                     generate_invoice:  () => triggerWorkflowAction(scope === 'pedido' ? 'invoice_direct' : 'generate_invoice'),
                     register_payment:  () => triggerWorkflowAction('register_payment'),
                     reopen:            () => triggerWorkflowAction('reopen'),
+                    // Dispatcha evento que escucha EntityWorkflowsCard para abrir su modal "nuevo flujo"
+                    create_workflow:   () => window.dispatchEvent(new CustomEvent('entity-workflows:new', { detail: { entityId: doc?.id } })),
                   }}
                 />
               )
@@ -1864,7 +1950,10 @@ export function DocumentForm({
         </div>
       )}
 
-      {/* ====== VISUAL WORKFLOWS DEL DOCUMENTO ====== */}
+      {/* ====== VISUAL WORKFLOWS DEL DOCUMENTO ======
+          hideIfEmpty=true → si no hay workflows asociados, el componente
+          desaparece. Se sigue pudiendo crear uno desde el menú "Más → Crear
+          flujo visual" (que dispatcha el evento 'entity-workflows:new'). */}
       {!editMode && doc?.id && (
         <div className="mt-3 print:hidden">
           <EntityWorkflowsCard
@@ -1872,6 +1961,7 @@ export function DocumentForm({
             entityId={doc.id as string}
             entityName={(doc.display_ref || doc.system_code || doc.id) as string}
             companyId={(doc.company_id as string) || undefined}
+            hideIfEmpty
           />
         </div>
       )}
@@ -2553,19 +2643,37 @@ export function DocumentForm({
                           return
                         }
                         const supabase = createClient()
-                        const { data: prods } = await supabase
-                          .from('tt_products')
-                          .select('id, sku, name, price_eur')
-                          .in('sku', skusBuscados)
-                          .eq('active', true)
+                        // (a) Primero buscamos en aliases aprendidos (priorizando los del cliente)
+                        const { lookupAliasesForSkus } = await import('@/lib/sku-aliases')
+                        const docClientId = (doc as unknown as Record<string, unknown>)?.client_id as string | undefined
+                        const docCompanyId = (doc as unknown as Record<string, unknown>)?.company_id as string | undefined
+                        const aliasMap = docCompanyId
+                          ? await lookupAliasesForSkus({
+                              companyId: docCompanyId,
+                              clientId: docClientId || null,
+                              externalSkus: skusBuscados,
+                            })
+                          : new Map()
+                        // (b) Después buscamos por SKU exacto los que no tuvieron alias
+                        const skusSinAlias = skusBuscados.filter((s) => !aliasMap.has(s.toUpperCase().trim()))
+                        const { data: prods } = skusSinAlias.length > 0
+                          ? await supabase
+                              .from('tt_products')
+                              .select('id, sku, name, price_eur')
+                              .in('sku', skusSinAlias)
+                              .eq('active', true)
+                          : { data: [] }
                         const bySku = new Map<string, { id: string; sku: string; name: string; price_eur: number }>()
                         for (const p of (prods || []) as Array<{ id: string; sku: string; name: string; price_eur: number }>) {
                           bySku.set(p.sku.toUpperCase().trim(), p)
                         }
-                        // Update local state (edit o read mode)
+                        // Update local state (edit o read mode). Alias gana sobre match directo.
                         const updateFn = (curr: ItemData[]) => curr.map((it) => {
                           if (it.product_id || !it.sku.trim()) return it
-                          const m = bySku.get(it.sku.toUpperCase().trim())
+                          const key = it.sku.toUpperCase().trim()
+                          const aliasHit = aliasMap.get(key)
+                          if (aliasHit) return { ...it, product_id: aliasHit.productId }
+                          const m = bySku.get(key)
                           if (!m) return it
                           return { ...it, product_id: m.id }
                         })
@@ -2584,21 +2692,28 @@ export function DocumentForm({
                           if (cfg) {
                             for (const it of realItems) {
                               if (it.product_id || !it.sku.trim()) continue
-                              const m = bySku.get(it.sku.toUpperCase().trim())
-                              if (!m) continue
+                              const key = it.sku.toUpperCase().trim()
+                              const aliasHit = aliasMap.get(key)
+                              const m = bySku.get(key)
+                              const productId = aliasHit?.productId || m?.id
+                              if (!productId) continue
                               try {
-                                await supabase.from(cfg.table).update({ product_id: m.id }).eq('id', it.id)
+                                await supabase.from(cfg.table).update({ product_id: productId }).eq('id', it.id)
                               } catch { /* ignore individual error */ }
                             }
                           }
                         }
-                        const nuevos = realItems.filter((it) => !it.product_id && it.sku.trim() && bySku.has(it.sku.toUpperCase().trim())).length
+                        const aliasHits = realItems.filter((it) => !it.product_id && it.sku.trim() && aliasMap.has(it.sku.toUpperCase().trim())).length
+                        const directHits = realItems.filter((it) => !it.product_id && it.sku.trim() && bySku.has(it.sku.toUpperCase().trim())).length
+                        const nuevos = aliasHits + directHits
                         addToast({
                           type: nuevos > 0 ? 'success' : 'info',
                           title: nuevos > 0 ? `${nuevos} nuevos matches` : 'Sin matches nuevos',
-                          message: nuevos === skusBuscados.length
-                            ? 'Todos los SKUs encontrados ✓'
-                            : `${nuevos} de ${skusBuscados.length} SKUs encontrados — los demás no existen en el catálogo (creá productos o ajustá los SKUs)`,
+                          message: aliasHits > 0
+                            ? `${aliasHits} desde historial (alias), ${directHits} por SKU directo`
+                            : nuevos === skusBuscados.length
+                              ? 'Todos los SKUs encontrados ✓'
+                              : `${nuevos} de ${skusBuscados.length} SKUs encontrados — los demás no existen (creá productos o ajustá los SKUs)`,
                         })
                       }}
                       className="shrink-0 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-white text-xs font-bold transition-colors"
@@ -2682,10 +2797,23 @@ export function DocumentForm({
                             />
                           ) : (
                             <div className="flex items-center gap-1.5">
-                              <span
-                                className={`w-1.5 h-1.5 rounded-full shrink-0 ${item.product_id ? 'bg-emerald-400' : 'bg-red-400'}`}
-                                title={item.product_id ? 'Producto vinculado al catálogo' : 'Sin match — texto libre (no descuenta stock al generar pedido)'}
-                              />
+                              {item.product_id ? (
+                                <span
+                                  className="w-1.5 h-1.5 rounded-full shrink-0 bg-emerald-400"
+                                  title="Producto vinculado al catálogo"
+                                />
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setLinkingItemId(item.id)
+                                    setProductSearchQuery(item.sku || item.description.slice(0, 30))
+                                    setShowProductSearch(true)
+                                  }}
+                                  className="w-2.5 h-2.5 rounded-full shrink-0 bg-red-400 hover:bg-red-300 ring-2 ring-red-500/30 hover:ring-red-500/60 transition-all"
+                                  title="SIN MATCH — click para vincular este SKU con un producto del catálogo (se guarda como alias para futuras OCs)"
+                                />
+                              )}
                               <code className="text-xs text-[#9CA3AF] font-mono">{item.sku || '-'}</code>
                             </div>
                           )}
@@ -3969,11 +4097,13 @@ export function DocumentForm({
         </div>
       </Modal>
 
-      {/* Product search modal */}
+      {/* Product search modal — dual purpose: agregar item nuevo O vincular item existente */}
       <Modal
         isOpen={showProductSearch}
-        onClose={() => { setShowProductSearch(false); setProductSearchQuery('') }}
-        title="Buscar producto"
+        onClose={() => { setShowProductSearch(false); setProductSearchQuery(''); setLinkingItemId(null) }}
+        title={linkingItemId
+          ? `Vincular SKU "${(editMode ? editItems : items).find((i) => i.id === linkingItemId)?.sku || ''}" con producto del catálogo`
+          : 'Buscar producto'}
         size="lg"
       >
         <div className="space-y-4">

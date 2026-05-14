@@ -26,6 +26,7 @@ import {
 import { BankAccountsAdmin } from '@/components/admin/bank-accounts-admin'
 import { ParamsSection } from '@/components/admin/params-section'
 import { DocumentActionsAdmin } from '@/components/admin/document-actions-admin'
+import { SkuAliasesAdmin } from '@/components/admin/sku-aliases-admin'
 
 type Row = Record<string, unknown>
 
@@ -263,6 +264,7 @@ const tabs = [
   { id: 'plantillas', label: 'Plantillas', icon: <FileText size={16} /> },
   { id: 'estados', label: 'Estados', icon: <Palette size={16} /> },
   { id: 'doc_actions', label: 'Acciones de documento', icon: <Sliders size={16} /> },
+  { id: 'sku_aliases', label: 'Alias de SKU', icon: <FileText size={16} /> },
 ]
 
 export default function AdminPage() {
@@ -1300,6 +1302,9 @@ export default function AdminPage() {
 
             {/* ═══ DOCUMENT ACTIONS CONFIG (menú "Más" por tipo de documento) ═══ */}
             {activeTab === 'doc_actions' && <DocumentActionsAdmin />}
+
+            {/* ═══ SKU ALIASES (historial de vinculaciones SKU cliente → producto) ═══ */}
+            {activeTab === 'sku_aliases' && <SkuAliasesAdmin />}
 
             {/* ═══ AUDIT ═══ */}
             {activeTab === 'audit' && (
