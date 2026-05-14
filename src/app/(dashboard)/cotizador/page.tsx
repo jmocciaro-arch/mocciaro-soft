@@ -169,6 +169,10 @@ export default function CotizadorPage() {
   // vinculando. Al elegir un producto se actualiza ese item específico Y se guarda
   // el alias en tt_sku_aliases para que la próxima OC lo encuentre solo.
   const [linkingItemId, setLinkingItemId] = useState<string | null>(null)
+  // Cache de productos vinculados (key: product_id) para mostrar el SKU del
+  // catálogo bajo el SKU del cliente en cada línea matcheada. Se popula
+  // automáticamente cuando cambian los items.
+  const [linkedProducts, setLinkedProducts] = useState<Map<string, { sku: string; name: string; brand: string | null }>>(new Map())
 
   // Saved quotes list
   const [savedQuotes, setSavedQuotes] = useState<SavedQuote[]>([])
@@ -436,6 +440,29 @@ export default function CotizadorPage() {
     return () => { if (productDebounceRef.current) clearTimeout(productDebounceRef.current) }
   }, [productSearch])
 
+  // Carga el SKU/nombre del catálogo para cada item vinculado, así podemos
+  // mostrar "[SKU cliente] → [SKU catálogo]" en cada línea. Se dispara cada
+  // vez que cambia el set de product_ids vinculados.
+  useEffect(() => {
+    const ids = Array.from(new Set(items.map((i) => i.product_id).filter(Boolean) as string[]))
+    if (ids.length === 0) { setLinkedProducts(new Map()); return }
+    // Si todos los ids ya están en el cache, no hace falta refetch
+    const missing = ids.filter((id) => !linkedProducts.has(id))
+    if (missing.length === 0) return
+    const sb = createClient()
+    void sb.from('tt_products').select('id, sku, name, brand').in('id', missing).then(({ data }) => {
+      setLinkedProducts((prev) => {
+        const next = new Map(prev)
+        for (const p of (data || []) as Array<{ id: string; sku: string; name: string; brand: string | null }>) {
+          next.set(p.id, { sku: p.sku, name: p.name, brand: p.brand })
+        }
+        return next
+      })
+    })
+    // No depende de linkedProducts (sólo de los ids) — usamos length+ids como key
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items.map((i) => i.product_id).filter(Boolean).join(',')])
+
   /**
    * REGLA DE ORO: las empresas del selector salen del contexto multi-empresa.
    * Si el topbar tiene Torquetools seleccionada → solo Torquetools aparece acá.
@@ -604,10 +631,36 @@ export default function CotizadorPage() {
     setSearchingProducts(true)
     const supabase = createClient()
     const tokens = query.trim().toLowerCase().split(/\s+/)
-    let q = supabase.from('tt_products').select('id, sku, name, brand, price_eur, cost_eur, image_url, product_type, price_min').eq('active', true).limit(20)
+    // Traemos más de 20 porque hay duplicados de la migración de StelOrder
+    // (mismo nombre con SKU auto-generado tipo PROXXXXX y el SKU real tipo
+    // TC.QSP o TE.HEAVY.55). Después dedup en runtime.
+    let q = supabase.from('tt_products').select('id, sku, name, brand, price_eur, cost_eur, image_url, product_type, price_min').eq('active', true).limit(80)
     for (const token of tokens) { q = q.or(`name.ilike.%${token}%,sku.ilike.%${token}%,brand.ilike.%${token}%`) }
     const { data } = await q
-    setProductResults((data || []) as ProductSearchResult[])
+    const rows = (data || []) as ProductSearchResult[]
+
+    // Dedup por nombre+marca, preferimos:
+    //   - SKU "real" (no patrón PROXXXXX o COSTOPROXXXXX auto-generado)
+    //   - Con precio_eur > 0 (mejor que precio cero)
+    //   - Con price_min definido
+    //   - Con imagen
+    const isAutoSku = (sku: string) => /^(PRO|COSTO|GASTO|SVC|SRV)\d{3,}$/i.test(sku) || /^[A-Z]{3,6}\d{5,}$/.test(sku)
+    const scoreProd = (p: ProductSearchResult) => {
+      let s = 0
+      if (!isAutoSku(p.sku)) s += 10
+      if (p.price_eur && p.price_eur > 0) s += 3
+      if (p.price_min && p.price_min > 0) s += 1
+      if (p.image_url) s += 1
+      if (p.brand) s += 1
+      return s
+    }
+    const byKey = new Map<string, ProductSearchResult>()
+    for (const p of rows) {
+      const key = `${(p.name || '').trim().toLowerCase()}__${(p.brand || '').trim().toLowerCase()}`
+      const existing = byKey.get(key)
+      if (!existing || scoreProd(p) > scoreProd(existing)) byKey.set(key, p)
+    }
+    setProductResults(Array.from(byKey.values()).slice(0, 20))
     setSearchingProducts(false)
   }
 
@@ -1725,10 +1778,10 @@ export default function CotizadorPage() {
                               {isService && <span className="ml-1 text-[8px] text-blue-400" title="Servicio">S</span>}
                             </td>
                             <td className="py-2 px-2">
-                              <div className="flex items-center gap-1.5">
+                              <div className="flex items-start gap-1.5">
                                 {item.product_id ? (
                                   <span
-                                    className="w-2 h-2 rounded-full shrink-0 bg-emerald-400 print:hidden"
+                                    className="w-2 h-2 mt-1.5 rounded-full shrink-0 bg-emerald-400 print:hidden"
                                     title="Producto matcheado con el catálogo"
                                   />
                                 ) : (
@@ -1736,7 +1789,6 @@ export default function CotizadorPage() {
                                     type="button"
                                     onClick={(e) => {
                                       e.stopPropagation()
-                                      console.log('[match] click vincular item', item.id, 'sku=', item.sku)
                                       setLinkingItemId(item.id)
                                       setProductSearch(item.sku || item.description.slice(0, 30))
                                       setProductResults([])
@@ -1748,7 +1800,19 @@ export default function CotizadorPage() {
                                     🔗 Vincular
                                   </button>
                                 )}
-                                <input value={item.sku} onChange={(e) => updateItem(item.id, 'sku', e.target.value)} className="w-full bg-transparent text-xs font-mono text-[#9CA3AF] outline-none" placeholder="SKU" />
+                                <div className="flex-1 min-w-0">
+                                  <input value={item.sku} onChange={(e) => updateItem(item.id, 'sku', e.target.value)} className="w-full bg-transparent text-xs font-mono text-[#9CA3AF] outline-none" placeholder="SKU cliente" />
+                                  {/* SKU del catálogo bajo el del cliente — solo si están vinculados y son distintos */}
+                                  {item.product_id && (() => {
+                                    const linked = linkedProducts.get(item.product_id)
+                                    if (!linked || linked.sku === item.sku) return null
+                                    return (
+                                      <div className="text-[10px] font-mono text-emerald-400/80 truncate" title={`Catálogo: ${linked.sku} · ${linked.name}`}>
+                                        → {linked.sku}
+                                      </div>
+                                    )
+                                  })()}
+                                </div>
                               </div>
                             </td>
                             <td className="py-2 px-2"><input value={item.description} onChange={(e) => updateItem(item.id, 'description', e.target.value)} className="w-full bg-transparent text-sm text-[#F0F2F5] outline-none" placeholder="Descripcion del producto" /></td>
@@ -1765,7 +1829,19 @@ export default function CotizadorPage() {
                             </td>
                             <td className="py-2 px-2"><input type="number" min="0" max="100" value={item.discount} onChange={(e) => updateItem(item.id, 'discount', Number(e.target.value))} className="w-full bg-[#0F1218] border border-[#1E2330] rounded px-2 py-1 text-center text-sm text-[#F0F2F5] outline-none focus:border-[#FF6600]" /></td>
                             <td className={`py-2 px-2 text-right text-sm font-medium ${isBelowMin ? 'text-red-400' : 'text-[#F0F2F5]'}`}>{formatCurrency(lineTotal, currency)}</td>
-                            <td className="py-2 px-2"><input value={item.notes} onChange={(e) => updateItem(item.id, 'notes', e.target.value)} className="w-full bg-transparent text-xs text-[#6B7280] outline-none" placeholder="Notas" /></td>
+                            <td className="py-2 px-2">
+                              <input
+                                value={item.notes}
+                                onChange={(e) => updateItem(item.id, 'notes', e.target.value)}
+                                className={`w-full text-xs outline-none rounded px-2 py-1 transition-colors border ${
+                                  item.notes
+                                    ? 'bg-[#FF6600]/5 border-[#FF6600]/30 text-[#F0F2F5]'
+                                    : 'bg-transparent border-dashed border-[#2A3040] text-[#6B7280] hover:border-[#FF6600]/50 hover:bg-[#FF6600]/5'
+                                } focus:border-[#FF6600] focus:bg-[#FF6600]/5 focus:text-[#F0F2F5]`}
+                                placeholder="+ Nota"
+                                title="Nota visible al cliente en la línea del producto (ej: 'incluye flete', 'entrega 30 días', etc.)"
+                              />
+                            </td>
                             <td className="py-2 px-1 print:hidden"><button onClick={() => removeItem(item.id)} className="p-1 rounded hover:bg-red-500/10 text-[#4B5563] hover:text-red-400 transition-colors"><Trash2 size={14} /></button></td>
                           </tr>
                         )

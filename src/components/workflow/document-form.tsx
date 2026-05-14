@@ -946,12 +946,29 @@ export function DocumentForm({
     productDebounceRef.current = setTimeout(async () => {
       setSearchingProducts(true)
       const tokens = productSearchQuery.trim().toLowerCase().split(/\s+/)
-      let q = supabase.from('tt_products').select('id, sku, name, brand, price_eur').eq('active', true).limit(15)
+      // Traemos 80 y dedupeamos por nombre+marca (la migración de StelOrder
+      // duplicó productos con SKU auto-generado PROXXXXX además del real).
+      let q = supabase.from('tt_products').select('id, sku, name, brand, price_eur').eq('active', true).limit(80)
       for (const token of tokens) {
         q = q.or(`name.ilike.%${token}%,sku.ilike.%${token}%,brand.ilike.%${token}%`)
       }
       const { data } = await q
-      setProductResults(data || [])
+      const rows = (data || []) as Row[]
+      const isAutoSku = (sku: string) => /^(PRO|COSTO|GASTO|SVC|SRV)\d{3,}$/i.test(sku) || /^[A-Z]{3,6}\d{5,}$/.test(sku)
+      const scoreProd = (p: Row) => {
+        let s = 0
+        if (!isAutoSku((p.sku as string) || '')) s += 10
+        if (((p.price_eur as number) || 0) > 0) s += 3
+        if (p.brand) s += 1
+        return s
+      }
+      const byKey = new Map<string, Row>()
+      for (const p of rows) {
+        const key = `${((p.name as string) || '').trim().toLowerCase()}__${((p.brand as string) || '').trim().toLowerCase()}`
+        const existing = byKey.get(key)
+        if (!existing || scoreProd(p) > scoreProd(existing)) byKey.set(key, p)
+      }
+      setProductResults(Array.from(byKey.values()).slice(0, 15))
       setSearchingProducts(false)
     }, 300)
     return () => { if (productDebounceRef.current) clearTimeout(productDebounceRef.current) }
