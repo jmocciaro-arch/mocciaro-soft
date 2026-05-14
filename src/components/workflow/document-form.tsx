@@ -12,6 +12,8 @@ import { useToast } from '@/components/ui/toast'
 import { formatCurrency, formatDate, formatRelative, INCOTERMS } from '@/lib/utils'
 import { mapStatus } from '@/lib/document-helpers'
 import { DocumentActions, type DocumentActionType } from './document-actions'
+import { DocumentMoreMenu } from './document-more-menu'
+import type { DocumentActionScope } from '@/lib/document-actions-catalog'
 import { NextStepPanel } from './next-step-panel'
 import { EntityWorkflowsCard } from '@/components/workflow-builder/entity-workflows-card'
 import { DocumentAttachments } from '@/components/documents/document-attachments'
@@ -22,7 +24,7 @@ import { buildSteps, type DocumentType } from '@/lib/workflow-definitions'
 import { useCompanyContext } from '@/lib/company-context'
 import { useCompanyFilter } from '@/hooks/use-company-filter'
 import {
-  ArrowLeft, Edit3, Save, Printer, Mail, MoreVertical,
+  ArrowLeft, Edit3, Save, Printer, Mail,
   ChevronLeft, ChevronRight, Trash2, Copy, RefreshCw,
   Plus, X, Search, FileText, Link2, Clock, Paperclip,
   PenTool, Loader2, ExternalLink, GripVertical, Eye, Send,
@@ -370,7 +372,7 @@ export function DocumentForm({
   const clientDebounceRef = useRef<NodeJS.Timeout | null>(null)
 
   // Modals
-  const [showMoreMenu, setShowMoreMenu] = useState(false)
+  // showMoreMenu removed — replaced by reusable DocumentMoreMenu component
   const [showSendModal, setShowSendModal] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
@@ -1261,7 +1263,6 @@ export function DocumentForm({
   const handleDuplicate = async () => {
     if (!doc) return
     addToast({ type: 'info', title: 'Funcion en desarrollo', message: 'Duplicar documento' })
-    setShowMoreMenu(false)
   }
 
   // ---------------------------------------------------------------
@@ -1756,31 +1757,61 @@ export function DocumentForm({
               <Mail size={14} />
             </Button>
 
-            {/* More menu */}
-            <div className="relative">
-              <Button variant="outline" size="sm" onClick={() => setShowMoreMenu(!showMoreMenu)}>
-                <MoreVertical size={14} />
-              </Button>
-              {showMoreMenu && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setShowMoreMenu(false)} />
-                  <div className="absolute right-0 top-full mt-1 w-48 bg-[#1C2230] border border-[#2A3040] rounded-lg shadow-xl z-50 py-1">
-                    <button
-                      onClick={handleDuplicate}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[#9CA3AF] hover:bg-[#2A3040] hover:text-[#F0F2F5]"
-                    >
-                      <Copy size={14} /> Duplicar
-                    </button>
-                    <button
-                      onClick={() => { setShowDeleteConfirm(true); setShowMoreMenu(false) }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10"
-                    >
-                      <Trash2 size={14} /> Eliminar
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
+            {/* Menú "Más" configurable estilo StelOrder.
+                Las acciones de workflow (generate_*, register_payment, reopen)
+                se delegan a los botones existentes de DocumentActions vía
+                data-doc-action — NO duplicamos la lógica.
+                Las admin-actions (duplicate, delete, download_pdf) usan los
+                handlers locales que ya existían (handleDuplicate, etc.). */}
+            {(() => {
+              // Normaliza documentType al scope que entiende el catálogo
+              const scope: DocumentActionScope = (
+                documentType === 'factura' ? 'invoice'
+                : documentType === 'coti' || documentType === 'pedido' || documentType === 'delivery_note' || documentType === 'invoice' || documentType === 'pap' || documentType === 'recepcion' || documentType === 'factura_compra' ? documentType
+                : '*'
+              ) as DocumentActionScope
+
+              const triggerWorkflowAction = (actionKey: string) => {
+                // Busca el botón de DocumentActions más abajo en el árbol y
+                // hace click programático. Si no existe (estado no aplicable),
+                // dispatch genérico para que cualquier listener pueda manejarlo.
+                const btn = window.document.querySelector<HTMLButtonElement>(
+                  `[data-doc-action="${actionKey}"]`
+                )
+                if (btn && !btn.disabled) {
+                  btn.click()
+                } else {
+                  window.dispatchEvent(new CustomEvent('doc:next-step', {
+                    detail: { actionKey, docId: doc?.id },
+                  }))
+                  addToast({
+                    type: 'info',
+                    title: 'Esa acción no aplica en el estado actual del documento',
+                  })
+                }
+              }
+
+              return (
+                <DocumentMoreMenu
+                  documentType={scope}
+                  variant="ghost"
+                  align="right"
+                  handlers={{
+                    // Genéricas (handlers locales del form)
+                    send: () => setShowSendModal(true),
+                    download_pdf: handlePrint,
+                    duplicate: handleDuplicate,
+                    delete: () => setShowDeleteConfirm(true),
+                    // Workflow (delegadas a DocumentActions con click programático)
+                    generate_order:    () => triggerWorkflowAction('generate_order'),
+                    generate_delivery: () => triggerWorkflowAction('generate_delivery'),
+                    generate_invoice:  () => triggerWorkflowAction(scope === 'pedido' ? 'invoice_direct' : 'generate_invoice'),
+                    register_payment:  () => triggerWorkflowAction('register_payment'),
+                    reopen:            () => triggerWorkflowAction('reopen'),
+                  }}
+                />
+              )
+            })()}
           </div>
         </div>
       </div>
