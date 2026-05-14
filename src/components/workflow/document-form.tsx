@@ -2799,20 +2799,23 @@ export function DocumentForm({
                             <div className="flex items-center gap-1.5">
                               {item.product_id ? (
                                 <span
-                                  className="w-1.5 h-1.5 rounded-full shrink-0 bg-emerald-400"
+                                  className="w-2 h-2 rounded-full shrink-0 bg-emerald-400"
                                   title="Producto vinculado al catálogo"
                                 />
                               ) : (
                                 <button
                                   type="button"
-                                  onClick={() => {
+                                  onClick={(e) => {
+                                    e.stopPropagation()
                                     setLinkingItemId(item.id)
                                     setProductSearchQuery(item.sku || item.description.slice(0, 30))
                                     setShowProductSearch(true)
                                   }}
-                                  className="w-2.5 h-2.5 rounded-full shrink-0 bg-red-400 hover:bg-red-300 ring-2 ring-red-500/30 hover:ring-red-500/60 transition-all"
-                                  title="SIN MATCH — click para vincular este SKU con un producto del catálogo (se guarda como alias para futuras OCs)"
-                                />
+                                  className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-500/15 hover:bg-red-500/30 border border-red-500/40 hover:border-red-500/70 text-red-400 hover:text-red-300 text-[10px] font-semibold transition-all"
+                                  title="SIN MATCH — click para vincular este SKU con un producto del catálogo. Se guarda como alias para futuras OCs."
+                                >
+                                  🔗 Vincular
+                                </button>
                               )}
                               <code className="text-xs text-[#9CA3AF] font-mono">{item.sku || '-'}</code>
                             </div>
