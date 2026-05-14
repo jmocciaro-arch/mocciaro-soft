@@ -301,12 +301,22 @@ export default function CotizadorPage() {
           const aliasHit = aliasMap.get(key)
           const match = aliasHit ? productById.get(aliasHit.productId) : bySku.get(key)
           if (!match) return item
-          const ocPrice = item.unitPrice > 0 ? item.unitPrice : match.price_eur
+          // Si la OC trae precio, lo respetamos. Sino: price_eur del catálogo,
+          // y si no hay price_eur pero sí cost_eur, sugerimos cost*1.3
+          let suggestedPrice = match.price_eur || 0
+          if (suggestedPrice <= 0 && match.cost_eur && match.cost_eur > 0) {
+            suggestedPrice = Math.round(match.cost_eur * 1.3 * 100) / 100
+          }
+          const ocPrice = item.unitPrice > 0 ? item.unitPrice : suggestedPrice
+          const notesPrefix = (item.unitPrice <= 0 && suggestedPrice > 0 && (match.price_eur || 0) <= 0)
+            ? 'Precio sugerido = costo + 30%. '
+            : ''
           return {
             ...item,
             product_id: match.id,
             description: item.description && item.description.length > 3 ? item.description : match.name,
             unitPrice: ocPrice,
+            notes: notesPrefix + (item.notes || ''),
           }
         }))
         const aliasHits = aliasMap.size
@@ -655,12 +665,18 @@ export default function CotizadorPage() {
   }, [selectedClient?.id])
 
   // Resolve best price for a product: special price > price list > catalog
-  function resolvePrice(productId: string, catalogPrice: number): { price: number; source: string; discount: number } {
+  function resolvePrice(productId: string, catalogPrice: number, costPrice?: number): { price: number; source: string; discount: number } {
     const special = clientPrices[productId]
     if (special?.special_price != null) return { price: special.special_price, source: 'especial', discount: special.discount_pct }
     if (special?.discount_pct) return { price: catalogPrice * (1 - special.discount_pct / 100), source: 'dto_cliente', discount: special.discount_pct }
     const plPrice = clientPriceList[productId]
     if (plPrice != null) return { price: plPrice, source: 'tarifa', discount: 0 }
+    // Si el producto NO tiene price_eur pero tiene cost_eur, sugerimos cost+30%.
+    // Útil mientras se cargan los precios reales (la mayoría de productos no
+    // tienen price_eur tras la migración de StelOrder).
+    if ((!catalogPrice || catalogPrice <= 0) && costPrice && costPrice > 0) {
+      return { price: Math.round(costPrice * 1.3 * 100) / 100, source: 'sugerido_costo+30%', discount: 0 }
+    }
     return { price: catalogPrice, source: 'catalogo', discount: 0 }
   }
 
@@ -775,7 +791,7 @@ export default function CotizadorPage() {
     }
 
     // Flujo normal: agregar nuevo ítem a la cotización
-    const resolved = resolvePrice(product.id, product.price_eur)
+    const resolved = resolvePrice(product.id, product.price_eur, product.cost_eur)
     setItems((prev) => [...prev, {
       id: Math.random().toString(36).slice(2),
       product_id: product.id,
