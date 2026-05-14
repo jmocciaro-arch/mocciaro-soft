@@ -82,7 +82,7 @@ Es la causa de que la mayoría de cotizaciones tengan que ingresar precios a man
 | # | Tema | Pregunta |
 |---|---|---|
 | 1 | **Stock huérfano** | ¿Aplico el consolidate? (8.475 entradas → ~3.000 después) |
-| 2 | **Duplicados con typo** | ¿Revisas los 966 grupos manualmente o armo otro dedup automático con normalización más agresiva? |
+| 2 | **Duplicados con typo** | Te armé `dedupe-products-aggressive.ts` — detectó **1.015 grupos / 1.067 productos** para mergear. CSV revisable en `out/dedupe-products-aggressive-plan.csv`. ⚠ Antes de aplicar revisalo: la norm agresiva puede tener falsos positivos (productos parecidos pero distintos modelos). |
 | 3 | **Precios** | ¿De dónde los traemos? StelOrder CSV o API? |
 | 4 | **Pares casi-idénticos** | 21.852 son muchos. ¿Querés revisar los top 50? (probablemente falsos positivos por nombres genéricos cortos) |
 
