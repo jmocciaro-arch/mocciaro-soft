@@ -626,6 +626,24 @@ export default function CotizadorPage() {
           // Mantenemos también la cantidad y precio que ya estaban en la línea.
         } : i))
 
+        // Si la cotización ya está guardada en DB, persistir el vínculo
+        // inmediatamente en tt_quote_items (no esperar a que el user vuelva a
+        // tocar "Guardar"). Hacemos match por quote_id + sku + product_id IS NULL
+        // para no pisar otros items que ya estuvieran vinculados.
+        if (currentQuoteId && target.sku.trim()) {
+          try {
+            const sb = createClient()
+            const { error } = await sb.from('tt_quote_items')
+              .update({ product_id: product.id })
+              .eq('quote_id', currentQuoteId)
+              .eq('sku', target.sku)
+              .is('product_id', null)
+            if (error) console.warn('No se pudo persistir el vínculo en tt_quote_items:', error)
+          } catch (err) {
+            console.warn('Error persistiendo vínculo en DB:', err)
+          }
+        }
+
         // Guardar alias para que la próxima OC lo encuentre solo.
         // Si no hay company seleccionada no podemos guardar (FK obligatoria).
         if (selectedCompanyId && target.sku.trim()) {
