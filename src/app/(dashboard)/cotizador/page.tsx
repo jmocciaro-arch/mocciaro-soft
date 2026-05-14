@@ -126,6 +126,13 @@ export default function CotizadorPage() {
   const [selectedClient, setSelectedClient] = useState<Client | null>(null)
   const [showClientDropdown, setShowClientDropdown] = useState(false)
   const clientDebounceRef = useRef<NodeJS.Timeout | null>(null)
+  // Contactos del cliente seleccionado (NORDEX → Mariella, Ana, etc.)
+  interface ContactLite { id: string; name: string; position: string | null; email: string | null; phone: string | null; whatsapp: string | null; is_primary: boolean | null; receives_quotes: boolean | null }
+  const [clientContacts, setClientContacts] = useState<ContactLite[]>([])
+  const [participatingContactIds, setParticipatingContactIds] = useState<string[]>([])
+  const [showNewContactModal, setShowNewContactModal] = useState(false)
+  const [newContactDraft, setNewContactDraft] = useState({ name: '', position: '', email: '', phone: '' })
+  const [savingContact, setSavingContact] = useState(false)
 
   // Quote
   const [currentQuoteId, setCurrentQuoteId] = useState<string | null>(null)
@@ -439,6 +446,36 @@ export default function CotizadorPage() {
     productDebounceRef.current = setTimeout(() => searchProducts(productSearch), 300)
     return () => { if (productDebounceRef.current) clearTimeout(productDebounceRef.current) }
   }, [productSearch])
+
+  // Cargar contactos del cliente seleccionado. Pre-selecciona el primario
+  // o los marcados como receives_quotes=true (default razonable).
+  useEffect(() => {
+    if (!selectedClient?.id) {
+      setClientContacts([])
+      // No tocamos participatingContactIds si estamos cargando una cotización guardada
+      return
+    }
+    const sb = createClient()
+    void sb.from('tt_client_contacts')
+      .select('id, name, position, email, phone, whatsapp, is_primary, receives_quotes')
+      .eq('client_id', selectedClient.id)
+      .eq('active', true)
+      .order('is_primary', { ascending: false })
+      .order('name')
+      .then(({ data }) => {
+        const contacts = (data || []) as ContactLite[]
+        setClientContacts(contacts)
+        // Pre-selección: si NO había contactos elegidos antes, marcamos los
+        // que reciben cotizaciones (o el primario si no hay).
+        setParticipatingContactIds((prev) => {
+          if (prev.length > 0) return prev
+          const auto = contacts
+            .filter((c) => c.receives_quotes || c.is_primary)
+            .map((c) => c.id)
+          return auto.length > 0 ? auto : (contacts[0] ? [contacts[0].id] : [])
+        })
+      })
+  }, [selectedClient?.id])
 
   // Carga el SKU/nombre del catálogo para cada item vinculado, así podemos
   // mostrar "[SKU cliente] → [SKU catálogo]" en cada línea. Se dispara cada
@@ -779,7 +816,7 @@ export default function CotizadorPage() {
     try {
       const { data: quoteData, error: quoteError } = await supabase
         .from('tt_quotes')
-        .insert({ number: quoteNumber, company_id: selectedCompanyId, client_id: selectedClient?.id || null, user_id: (await supabase.from('tt_users').select('id').eq('role', 'admin').limit(1).single()).data?.id || null, status: 'borrador', doc_subtype: docSubtype, notes, internal_notes: internalNotes, incoterm: incoterm || null, payment_terms: paymentTerms || null, payment_days: paymentDays || null, payment_terms_type: paymentTermsType || null, currency, subtotal, subject_iva: ivaEnabled, tax_rate: ivaEnabled ? taxRate : 0, tax_amount: taxAmount, irpf_rate: irpfEnabled ? irpfRate : 0, irpf_amount: irpfAmount, re_rate: reEnabled ? reRate : 0, re_amount: reAmount, total, valid_until: validUntil ? new Date(validUntil).toISOString() : null })
+        .insert({ number: quoteNumber, company_id: selectedCompanyId, client_id: selectedClient?.id || null, user_id: (await supabase.from('tt_users').select('id').eq('role', 'admin').limit(1).single()).data?.id || null, status: 'borrador', doc_subtype: docSubtype, notes, internal_notes: internalNotes, incoterm: incoterm || null, payment_terms: paymentTerms || null, payment_days: paymentDays || null, payment_terms_type: paymentTermsType || null, currency, subtotal, subject_iva: ivaEnabled, tax_rate: ivaEnabled ? taxRate : 0, tax_amount: taxAmount, irpf_rate: irpfEnabled ? irpfRate : 0, irpf_amount: irpfAmount, re_rate: reEnabled ? reRate : 0, re_amount: reAmount, total, valid_until: validUntil ? new Date(validUntil).toISOString() : null, participating_contact_ids: participatingContactIds.length > 0 ? participatingContactIds : null })
         .select('id').single()
       if (quoteError) throw quoteError
       const quoteItems = items.map((item, idx) => ({ quote_id: quoteData.id, product_id: item.product_id, sort_order: idx + 1, sku: item.sku, description: item.description, quantity: item.quantity, unit_price: item.unitPrice, discount_pct: item.discount, subtotal: item.quantity * item.unitPrice * (1 - item.discount / 100), notes: item.notes || null }))
@@ -1687,7 +1724,7 @@ export default function CotizadorPage() {
                       </div>
                       <p className="text-xs text-[#6B7280] mt-0.5">{selectedClient.tax_id} - {selectedClient.email}</p>
                     </div>
-                    <button onClick={() => setSelectedClient(null)} className="text-[#6B7280] hover:text-red-400 shrink-0"><X size={16} /></button>
+                    <button onClick={() => { setSelectedClient(null); setParticipatingContactIds([]) }} className="text-[#6B7280] hover:text-red-400 shrink-0"><X size={16} /></button>
                   </div>
                 ) : (
                   <div className="relative">
@@ -1718,6 +1755,77 @@ export default function CotizadorPage() {
                     {showClientDropdown && clientSearch && clientResults.length === 0 && (
                       <div className="absolute top-full left-0 right-0 mt-1 bg-[#141820] border border-[#1E2330] rounded-lg shadow-xl z-10">
                         <p className="px-4 py-3 text-sm text-[#4B5563]">No se encontraron clientes</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ── CONTACTOS PARTICIPANTES (estilo StelOrder) ───────────
+                    Lista de contactos del cliente con checkboxes para marcar
+                    quiénes participan en la cotización. Pre-selecciona los
+                    marcados con receives_quotes=true o is_primary.
+                    Sus emails se pre-cargan en el modal de envío. */}
+                {selectedClient && (
+                  <div className="mt-3 rounded-lg border border-[#1E2330] bg-[#0F1218] overflow-hidden">
+                    <div className="flex items-center justify-between px-3 py-2 border-b border-[#1E2330] bg-[#141820]">
+                      <span className="text-[10px] uppercase tracking-wider text-[#9CA3AF] font-semibold flex items-center gap-1.5">
+                        <User size={11} /> Contactos participantes ({participatingContactIds.length}/{clientContacts.length})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => { setNewContactDraft({ name: '', position: '', email: '', phone: '' }); setShowNewContactModal(true) }}
+                        className="text-[10px] font-semibold text-[#FF6600] hover:text-[#FF8533] flex items-center gap-1"
+                      >
+                        <Plus size={10} /> Nuevo contacto
+                      </button>
+                    </div>
+                    {clientContacts.length === 0 ? (
+                      <div className="px-3 py-3 text-xs text-[#6B7280] text-center italic">
+                        Este cliente todavía no tiene contactos cargados.
+                        <button
+                          type="button"
+                          onClick={() => { setNewContactDraft({ name: '', position: '', email: '', phone: '' }); setShowNewContactModal(true) }}
+                          className="block w-full mt-1 text-[#FF6600] hover:text-[#FF8533] font-semibold"
+                        >
+                          + Agregar el primero
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="max-h-44 overflow-y-auto divide-y divide-[#1E2330]">
+                        {clientContacts.map((c) => {
+                          const checked = participatingContactIds.includes(c.id)
+                          return (
+                            <label
+                              key={c.id}
+                              className={`flex items-center gap-2 px-3 py-2 text-xs cursor-pointer transition-colors ${
+                                checked ? 'bg-[#FF6600]/5 hover:bg-[#FF6600]/10' : 'hover:bg-[#1C2230]'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(e) => {
+                                  setParticipatingContactIds((prev) =>
+                                    e.target.checked ? [...prev, c.id] : prev.filter((id) => id !== c.id)
+                                  )
+                                }}
+                                className="accent-[#FF6600] shrink-0"
+                              />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className={`font-semibold truncate ${checked ? 'text-[#F0F2F5]' : 'text-[#D1D5DB]'}`}>{c.name}</span>
+                                  {c.is_primary && <span className="text-[9px] px-1 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">PRINCIPAL</span>}
+                                  {c.position && <span className="text-[10px] text-[#6B7280]">— {c.position}</span>}
+                                </div>
+                                {(c.email || c.phone) && (
+                                  <div className="text-[10px] text-[#6B7280] truncate">
+                                    {c.email}{c.email && c.phone ? ' · ' : ''}{c.phone}
+                                  </div>
+                                )}
+                              </div>
+                            </label>
+                          )
+                        })}
                       </div>
                     )}
                   </div>
@@ -2142,6 +2250,85 @@ export default function CotizadorPage() {
         />
       )}
 
+      {/* Modal "Nuevo contacto" — crear contacto on-the-fly desde el cotizador */}
+      <Modal
+        isOpen={showNewContactModal}
+        onClose={() => setShowNewContactModal(false)}
+        title={`Nuevo contacto para ${selectedClient?.legal_name || selectedClient?.name || 'cliente'}`}
+        size="md"
+      >
+        <div className="space-y-3">
+          <Input
+            label="Nombre completo *"
+            value={newContactDraft.name}
+            onChange={(e) => setNewContactDraft((d) => ({ ...d, name: e.target.value }))}
+            placeholder="Ej: Ana Capatano"
+            autoFocus
+          />
+          <Input
+            label="Cargo / Posición"
+            value={newContactDraft.position}
+            onChange={(e) => setNewContactDraft((d) => ({ ...d, position: e.target.value }))}
+            placeholder="Ej: Compras"
+          />
+          <Input
+            label="Email"
+            type="email"
+            value={newContactDraft.email}
+            onChange={(e) => setNewContactDraft((d) => ({ ...d, email: e.target.value }))}
+            placeholder="ana@empresa.com"
+          />
+          <Input
+            label="Teléfono / WhatsApp"
+            value={newContactDraft.phone}
+            onChange={(e) => setNewContactDraft((d) => ({ ...d, phone: e.target.value }))}
+            placeholder="+598 ..."
+          />
+          <div className="flex justify-end gap-2 pt-2 border-t border-[#1E2330]">
+            <Button variant="secondary" onClick={() => setShowNewContactModal(false)} disabled={savingContact}>
+              Cancelar
+            </Button>
+            <Button
+              variant="primary"
+              loading={savingContact}
+              disabled={!newContactDraft.name.trim() || !selectedClient?.id}
+              onClick={async () => {
+                if (!selectedClient?.id || !newContactDraft.name.trim()) return
+                setSavingContact(true)
+                const sb = createClient()
+                try {
+                  const { data, error } = await sb.from('tt_client_contacts').insert({
+                    client_id: selectedClient.id,
+                    name: newContactDraft.name.trim(),
+                    position: newContactDraft.position.trim() || null,
+                    email: newContactDraft.email.trim() || null,
+                    phone: newContactDraft.phone.trim() || null,
+                    is_primary: clientContacts.length === 0,
+                    receives_quotes: true,
+                    receives_invoices: false,
+                    receives_remitos: false,
+                    is_collections: false,
+                    active: true,
+                  }).select('id, name, position, email, phone, whatsapp, is_primary, receives_quotes').single()
+                  if (error) throw error
+                  const created = data as ContactLite
+                  setClientContacts((prev) => [...prev, created])
+                  setParticipatingContactIds((prev) => [...prev, created.id])
+                  addToast({ type: 'success', title: `Contacto "${created.name}" agregado y marcado como participante` })
+                  setShowNewContactModal(false)
+                } catch (err) {
+                  addToast({ type: 'error', title: 'No se pudo crear el contacto', message: (err as Error).message })
+                } finally {
+                  setSavingContact(false)
+                }
+              }}
+            >
+              <Plus size={14} /> Crear y marcar
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
       {/* FASE 0 — Confirmación humana post-envío WhatsApp.
           Reemplaza el auto-marca a 'enviada' al click del botón WA. */}
       <SendConfirmationModal
@@ -2167,6 +2354,9 @@ export default function CotizadorPage() {
           documentId={currentQuoteId}
           clientName={selectedClient?.legal_name || selectedClient?.name || ''}
           clientEmail={(selectedClient as Client & { email?: string })?.email || ''}
+          extraRecipients={clientContacts
+            .filter((c) => participatingContactIds.includes(c.id) && c.email && c.email.includes('@'))
+            .map((c) => ({ email: c.email!, name: c.name }))}
           clientId={selectedClient?.id}
           total={total}
           currency={currency}

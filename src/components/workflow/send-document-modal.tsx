@@ -62,6 +62,10 @@ interface SendDocumentModalProps {
   clientName: string
   clientEmail?: string
   clientId?: string
+  /** Destinatarios pre-cargados (TO). Si vienen poblados, se usan en lugar
+   *  del solo clientEmail. Pensado para los "contactos participantes" del
+   *  cliente seleccionados en el cotizador. */
+  extraRecipients?: Array<{ email: string; name: string }>
   total: number
   currency: 'EUR' | 'ARS' | 'USD'
   items?: Array<{
@@ -169,6 +173,7 @@ export function SendDocumentModal({
   clientName,
   clientEmail,
   clientId,
+  extraRecipients,
   total,
   currency,
   items,
@@ -240,9 +245,17 @@ export function SendDocumentModal({
   // Initialize on open
   useEffect(() => {
     if (isOpen) {
-      // Pre-fill recipients
-      if (clientEmail && toRecipients.length === 0) {
-        setToRecipients([{ email: clientEmail, name: clientName, type: 'to' }])
+      // Pre-fill recipients — priorizamos los contactos participantes
+      // seleccionados en el cotizador. Si no vinieron, caemos al clientEmail.
+      if (toRecipients.length === 0) {
+        const fromExtras = (extraRecipients || [])
+          .filter((r) => r.email && r.email.includes('@'))
+          .map((r) => ({ email: r.email, name: r.name || clientName, type: 'to' as const }))
+        if (fromExtras.length > 0) {
+          setToRecipients(fromExtras)
+        } else if (clientEmail) {
+          setToRecipients([{ email: clientEmail, name: clientName, type: 'to' }])
+        }
       }
       // Pre-fill subject
       setSubject(`${docLabel} ${documentNumber} — TorqueTools`)
