@@ -21,8 +21,11 @@ import {
   Settings, Users, Building2, Sliders, Warehouse, Activity,
   Save, Plus, Loader2, ChevronLeft, ChevronRight, Edit, Shield,
   UserPlus, Power, Copy, Eye, EyeOff, Check, ShieldCheck, X,
-  FileText, Trash2, Palette
+  FileText, Trash2, Palette, CreditCard
 } from 'lucide-react'
+import { BankAccountsAdmin } from '@/components/admin/bank-accounts-admin'
+import { ParamsSection } from '@/components/admin/params-section'
+import { DocumentActionsAdmin } from '@/components/admin/document-actions-admin'
 
 type Row = Record<string, unknown>
 
@@ -255,9 +258,11 @@ const tabs = [
   { id: 'companies', label: 'Empresas', icon: <Building2 size={16} /> },
   { id: 'params', label: 'Parametros', icon: <Sliders size={16} /> },
   { id: 'warehouses', label: 'Almacenes', icon: <Warehouse size={16} /> },
+  { id: 'bank_accounts', label: 'Cuentas bancarias', icon: <CreditCard size={16} /> },
   { id: 'audit', label: 'Auditoria', icon: <Activity size={16} /> },
   { id: 'plantillas', label: 'Plantillas', icon: <FileText size={16} /> },
   { id: 'estados', label: 'Estados', icon: <Palette size={16} /> },
+  { id: 'doc_actions', label: 'Acciones de documento', icon: <Sliders size={16} /> },
 ]
 
 export default function AdminPage() {
@@ -1245,32 +1250,13 @@ export default function AdminPage() {
 
             {/* ═══ PARAMS ═══ */}
             {activeTab === 'params' && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Parametros del sistema</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {loadingParams ? (
-                    <div className="flex justify-center py-10"><Loader2 className="animate-spin text-[#FF6600]" size={28} /></div>
-                  ) : params.length === 0 ? (
-                    <p className="text-sm text-[#6B7280] text-center py-10">No hay parametros configurados</p>
-                  ) : (
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {params.map((p) => (
-                          <Input
-                            key={p.key as string}
-                            label={`${(p.key as string) || ''} ${(p.description as string) ? `(${p.description})` : ''}`}
-                            value={paramEdits[p.key as string] || ''}
-                            onChange={(e) => setParamEdits({ ...paramEdits, [p.key as string]: e.target.value })}
-                          />
-                        ))}
-                      </div>
-                      <Button onClick={saveParams}><Save size={14} /> Guardar</Button>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+              <ParamsSection
+                loading={loadingParams}
+                params={params}
+                paramEdits={paramEdits}
+                setParamEdits={setParamEdits}
+                onSave={saveParams}
+              />
             )}
 
             {/* ═══ WAREHOUSES ═══ */}
@@ -1308,6 +1294,12 @@ export default function AdminPage() {
                 </CardContent>
               </Card>
             )}
+
+            {/* ═══ BANK ACCOUNTS (FASE 1.2) ═══ */}
+            {activeTab === 'bank_accounts' && <BankAccountsAdmin />}
+
+            {/* ═══ DOCUMENT ACTIONS CONFIG (menú "Más" por tipo de documento) ═══ */}
+            {activeTab === 'doc_actions' && <DocumentActionsAdmin />}
 
             {/* ═══ AUDIT ═══ */}
             {activeTab === 'audit' && (

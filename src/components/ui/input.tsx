@@ -1,5 +1,14 @@
 'use client'
 
+/**
+ * Input — estilo StelOrder.
+ *
+ * - Fondo blanco con borde gris claro #E5E5E5
+ * - Focus: borde naranja #FF6600 + ring suave
+ * - Label en gris oscuro #374151 (no en gris claro)
+ * - Placeholder #9CA3AF
+ */
+
 import { forwardRef, type InputHTMLAttributes } from 'react'
 import { cn } from '@/lib/utils'
 
@@ -16,13 +25,13 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
     return (
       <div className="w-full">
         {label && (
-          <label htmlFor={inputId} className="block text-sm font-medium text-[#9CA3AF] mb-1.5">
+          <label htmlFor={inputId} className="block text-[13px] font-medium text-[#374151] mb-1.5">
             {label}
           </label>
         )}
         <div className="relative">
           {icon && (
-            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280]">
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-[#9CA3AF]">
               {icon}
             </div>
           )}
@@ -30,17 +39,17 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
             ref={ref}
             id={inputId}
             className={cn(
-              'w-full h-10 rounded-lg bg-[#1E2330] border border-[#2A3040] px-3 text-sm text-[#F0F2F5] placeholder:text-[#4B5563]',
-              'focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50',
-              'transition-all duration-200',
+              'w-full h-9 rounded-md bg-white border border-[#E5E5E5] px-3 text-[13px] text-[#1F2937] placeholder:text-[#9CA3AF]',
+              'focus:outline-none focus:ring-2 focus:ring-[#FF6600]/30 focus:border-[#FF6600]',
+              'transition-colors duration-150',
               icon && 'pl-10',
-              error && 'border-red-500 focus:ring-red-500/50',
+              error && 'border-[#DC2626] focus:ring-[#DC2626]/30 focus:border-[#DC2626]',
               className
             )}
             {...props}
           />
         </div>
-        {error && <p className="mt-1 text-xs text-red-400">{error}</p>}
+        {error && <p className="mt-1 text-xs text-[#DC2626]">{error}</p>}
       </div>
     )
   }

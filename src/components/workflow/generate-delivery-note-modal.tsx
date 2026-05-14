@@ -6,7 +6,10 @@ import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/modal'
 import { useToast } from '@/components/ui/toast'
 import { formatCurrency } from '@/lib/utils'
-import { orderToDeliveryNote, type DeliveryItem } from '@/lib/document-workflow'
+import { orderToDeliveryNote, precheckDeliveryStock, type DeliveryItem } from '@/lib/document-workflow'
+import type { StockShortfall } from '@/lib/stock-ops'
+import { getUserPermissions, hasPermission } from '@/lib/rbac'
+import { StockShortfallModal, type StockShortfallDecision } from '@/components/workflow/stock-shortfall-modal'
 import {
   Truck, Package, Check, ChevronDown, ChevronRight,
   Loader2, Minus, Plus, FileText, AlertCircle,
@@ -65,6 +68,17 @@ export function GenerateDeliveryNoteModal({
   const [creating, setCreating] = useState(false)
   const [orders, setOrders] = useState<OrderForDelivery[]>([])
   const [previewMode, setPreviewMode] = useState(false)
+
+  // FASE 1.1 — Modal "stock insuficiente"
+  const [shortfallModalOpen, setShortfallModalOpen] = useState(false)
+  const [shortfallList, setShortfallList] = useState<StockShortfall[]>([])
+  const [canOverdeliver, setCanOverdeliver] = useState(false)
+  // Stash de la decisión pre-modal para re-disparar handleCreate con opciones
+  const [pendingCreateContext, setPendingCreateContext] = useState<{
+    allItems: DeliveryItem[]
+    primaryOrderId: string
+    primaryOrderSource: 'local' | 'tt_documents'
+  } | null>(null)
 
   // Load all pending orders for this client
   const loadOrders = useCallback(async () => {
@@ -236,7 +250,7 @@ export function GenerateDeliveryNoteModal({
     sum + o.items.filter(it => it.selected).reduce((s, it) => s + it.toDeliver, 0), 0
   )
 
-  // Create the delivery note
+  // Create the delivery note (con pre-check de stock + overdelivery flow)
   const handleCreate = async () => {
     if (selectedOrders.length === 0) {
       addToast({ type: 'error', title: 'Selecciona al menos un item' })
@@ -263,6 +277,30 @@ export function GenerateDeliveryNoteModal({
         }
       }
 
+      // FASE 1.1 — Pre-check stock físico
+      const check = await precheckDeliveryStock(primaryOrder.id, allDeliveryItems)
+      if (check.ok && check.shortfalls.length > 0) {
+        // Verificar permiso allow_overdelivery
+        const { data: authUser } = await supabase.auth.getUser()
+        const userId = authUser?.user?.id
+        let allow = false
+        if (userId) {
+          const perms = await getUserPermissions(userId)
+          allow = hasPermission(perms, 'allow_overdelivery')
+        }
+        setCanOverdeliver(allow)
+        setShortfallList(check.shortfalls)
+        setPendingCreateContext({
+          allItems: allDeliveryItems,
+          primaryOrderId: primaryOrder.id,
+          primaryOrderSource: primaryOrder.source,
+        })
+        setShortfallModalOpen(true)
+        setCreating(false)
+        return
+      }
+
+      // Sin shortfall → emisión directa
       const result = await orderToDeliveryNote(
         primaryOrder.id,
         allDeliveryItems,
@@ -304,8 +342,100 @@ export function GenerateDeliveryNoteModal({
     }
   }
 
+  // FASE 1.1/1.5 — Resolver decisión del modal de stock insuficiente
+  async function handleShortfallDecision(decision: StockShortfallDecision) {
+    if (decision.action === 'cancel' || !pendingCreateContext) {
+      setShortfallModalOpen(false)
+      setPendingCreateContext(null)
+      return
+    }
+    setCreating(true)
+    try {
+      const ctx = pendingCreateContext
+      let itemsToUse = ctx.allItems
+
+      if (decision.action === 'partial') {
+        // Recortar cada item a la cantidad disponible
+        const shortfallMap = new Map(shortfallList.map((s) => [s.product_id, s.on_hand]))
+        // Mapear so_item_id → product_id usando los selectedOrders
+        const productIdBySoItem = new Map<string, string>()
+        for (const o of selectedOrders) {
+          for (const it of o.items) {
+            // No tenemos product_id en DeliveryItemLine — la query inicial no lo trajo.
+            // El recorte parcial: si el shortfall por producto es X, restamos X del item.
+            // Como no tenemos product_id acá, hacemos lookup vía SO items.
+            const _ = it.id; void _
+          }
+        }
+        // Plan B simple: traer product_id en una query rápida y recortar
+        const itemIds = ctx.allItems.map((i) => i.id)
+        const { data: soItems } = await supabase
+          .from('tt_so_items')
+          .select('id, product_id')
+          .in('id', itemIds)
+        for (const so of soItems || []) {
+          productIdBySoItem.set(so.id as string, so.product_id as string)
+        }
+        itemsToUse = ctx.allItems.map((it) => {
+          const pid = productIdBySoItem.get(it.id)
+          if (!pid) return it
+          const onHand = shortfallMap.get(pid)
+          if (onHand === undefined) return it // no estaba en shortfall
+          return { ...it, toDeliver: Math.min(it.toDeliver, onHand) }
+        }).filter((it) => it.toDeliver > 0)
+
+        if (itemsToUse.length === 0) {
+          addToast({
+            type: 'warning',
+            title: 'Sin stock para emitir',
+            message: 'Ningún producto tiene stock físico disponible.',
+          })
+          setShortfallModalOpen(false)
+          setPendingCreateContext(null)
+          setCreating(false)
+          return
+        }
+      }
+
+      const { data: authUser } = await supabase.auth.getUser()
+      const userId = authUser?.user?.id ?? null
+
+      const result = await orderToDeliveryNote(
+        ctx.primaryOrderId,
+        itemsToUse,
+        ctx.primaryOrderSource,
+        decision.action === 'overdeliver'
+          ? { allowOverdelivery: true, overdeliveryReason: decision.reason, actorUserId: userId }
+          : { actorUserId: userId }
+      )
+
+      addToast({
+        type: 'success',
+        title: 'Remito generado',
+        message: `${result.deliveryNoteNumber}${decision.action === 'overdeliver' ? ' (con overdelivery)' : decision.action === 'partial' ? ' (parcial)' : ''}`,
+      })
+      setShortfallModalOpen(false)
+      setPendingCreateContext(null)
+      onCreated(result)
+      onClose()
+    } catch (err) {
+      addToast({ type: 'error', title: 'Error generando remito', message: (err as Error).message })
+    } finally {
+      setCreating(false)
+    }
+  }
+
   return (
-    <Modal
+    <>
+      <StockShortfallModal
+        isOpen={shortfallModalOpen}
+        onClose={() => { setShortfallModalOpen(false); setPendingCreateContext(null) }}
+        shortfalls={shortfallList}
+        canOverdeliver={canOverdeliver}
+        onDecision={handleShortfallDecision}
+        processing={creating}
+      />
+      <Modal
       isOpen={isOpen}
       onClose={onClose}
       title="Generar Remito / Albaran"
@@ -546,5 +676,6 @@ export function GenerateDeliveryNoteModal({
         </div>
       </div>
     </Modal>
+    </>
   )
 }

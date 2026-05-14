@@ -10,7 +10,8 @@
  *   3) Stepper visual con pasos del workflow (completed/current/pending/skipped)
  *   4) Acciones principales (Guardar / Cancelar / X)
  *
- * Esta barra se mantiene FIJA al hacer scroll.
+ * Estilo: StelOrder light (fondo blanco, sombra inferior, naranja para
+ * el código y estado actual).
  */
 
 import { ReactNode } from 'react'
@@ -23,7 +24,7 @@ export interface ProcessStep {
   label: string
   status: StepStatus
   optional?: boolean
-  onClick?: () => void   // para navegación entre pasos si aplica
+  onClick?: () => void
   hint?: string
 }
 
@@ -42,15 +43,15 @@ export interface ProcessAction {
 }
 
 interface Props {
-  code: string                    // Ej "COTI-TT-0004"
-  title?: string                   // opcional (si se quiere ver junto al código)
+  code: string
+  title?: string
   badge?: { label: string; variant?: 'default' | 'warning' | 'danger' | 'success' | 'info' }
-  entity?: ReactNode               // info contextual (cliente, equipo, etc)
+  entity?: ReactNode
   alerts?: ProcessAlert[]
   steps: ProcessStep[]
   actions?: ProcessAction[]
   onClose?: () => void
-  offsetTop?: number               // distancia al top (para layouts con topbar propio)
+  offsetTop?: number
 }
 
 export function DocumentProcessBar({
@@ -58,21 +59,17 @@ export function DocumentProcessBar({
 }: Props) {
   return (
     <div
-      className="sticky z-40 border-b backdrop-blur"
-      style={{
-        top: offsetTop,
-        background: 'rgba(15, 18, 24, 0.95)',
-        borderColor: '#2A3040',
-      }}
+      className="sticky z-40 bg-white border-b border-[#E5E5E5] shadow-[0_1px_3px_rgba(0,0,0,0.04)]"
+      style={{ top: offsetTop }}
     >
       {/* Línea superior: código + badge + entity + acciones */}
       <div className="flex items-start gap-3 px-4 py-2.5">
         <div className="flex items-center gap-2 min-w-0 flex-1">
-          <span className="font-mono font-bold text-sm" style={{ color: 'var(--sat-or, #f97316)' }}>
+          <span className="font-mono font-bold text-sm text-[#FF6600]">
             {code}
           </span>
           {badge && <BadgeChip {...badge} />}
-          {title && <span className="text-sm font-semibold truncate">— {title}</span>}
+          {title && <span className="text-sm font-semibold text-[#1F2937] truncate">— {title}</span>}
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           {actions.map((a, i) => (
@@ -82,18 +79,18 @@ export function DocumentProcessBar({
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 rounded hover:bg-white/10"
+              className="p-1.5 rounded hover:bg-[#F5F5F5] text-[#9CA3AF] hover:text-[#1F2937] transition-colors"
               title="Cerrar"
             >
-              <X className="w-4 h-4 opacity-70" />
+              <X className="w-4 h-4" />
             </button>
           )}
         </div>
       </div>
 
-      {/* Entity info (cliente, equipo, empresa, etc) */}
+      {/* Entity info */}
       {entity && (
-        <div className="px-4 pb-2 text-xs opacity-80">{entity}</div>
+        <div className="px-4 pb-2 text-xs text-[#6B7280]">{entity}</div>
       )}
 
       {/* Alerts */}
@@ -109,7 +106,7 @@ export function DocumentProcessBar({
       <div className="px-4 pb-2.5">
         <div className="flex items-center gap-1 overflow-x-auto">
           {steps.map((step, i) => (
-            <StepPill key={step.id} step={step} index={i + 1} total={steps.length} isLast={i === steps.length - 1} />
+            <StepPill key={step.id} step={step} index={i + 1} isLast={i === steps.length - 1} />
           ))}
         </div>
       </div>
@@ -118,38 +115,31 @@ export function DocumentProcessBar({
 }
 
 function BadgeChip({ label, variant = 'default' }: { label: string; variant?: string }) {
-  const colors: Record<string, { bg: string; color: string; border: string }> = {
-    default: { bg: 'rgba(107,114,128,0.2)', color: '#9CA3AF', border: 'rgba(107,114,128,0.4)' },
-    warning: { bg: 'rgba(249,115,22,0.15)', color: '#f97316', border: 'rgba(249,115,22,0.4)' },
-    danger: { bg: 'rgba(239,68,68,0.15)', color: '#ef4444', border: 'rgba(239,68,68,0.4)' },
-    success: { bg: 'rgba(16,185,129,0.15)', color: '#10b981', border: 'rgba(16,185,129,0.4)' },
-    info: { bg: 'rgba(59,130,246,0.15)', color: '#3b82f6', border: 'rgba(59,130,246,0.4)' },
+  const variants: Record<string, string> = {
+    default: 'bg-[#F3F4F6] text-[#374151]',
+    warning: 'bg-[#FFEDD5] text-[#9A3412]',
+    danger:  'bg-[#FEE2E2] text-[#991B1B]',
+    success: 'bg-[#D1FAE5] text-[#065F46]',
+    info:    'bg-[#DBEAFE] text-[#1E40AF]',
   }
-  const c = colors[variant] || colors.default
   return (
-    <span
-      className="text-[11px] px-2 py-0.5 rounded-full font-semibold"
-      style={{ background: c.bg, color: c.color, border: `1px solid ${c.border}` }}
-    >
+    <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${variants[variant] || variants.default}`}>
       {label}
     </span>
   )
 }
 
 function AlertRow({ type, message, action }: ProcessAlert) {
-  const colors: Record<string, { bg: string; color: string; border: string; icon: string }> = {
-    warning: { bg: 'rgba(249,115,22,0.08)', color: '#f97316', border: 'rgba(249,115,22,0.3)', icon: '⚠' },
-    error: { bg: 'rgba(239,68,68,0.08)', color: '#ef4444', border: 'rgba(239,68,68,0.3)', icon: '✗' },
-    info: { bg: 'rgba(59,130,246,0.08)', color: '#3b82f6', border: 'rgba(59,130,246,0.3)', icon: 'ℹ' },
-    success: { bg: 'rgba(16,185,129,0.08)', color: '#10b981', border: 'rgba(16,185,129,0.3)', icon: '✓' },
+  const variants: Record<string, { cls: string; icon: string }> = {
+    warning: { cls: 'bg-[#FFF7ED] text-[#9A3412] border-[#FED7AA]', icon: '⚠' },
+    error:   { cls: 'bg-[#FEF2F2] text-[#991B1B] border-[#FECACA]', icon: '✗' },
+    info:    { cls: 'bg-[#EFF6FF] text-[#1E40AF] border-[#BFDBFE]', icon: 'ℹ' },
+    success: { cls: 'bg-[#ECFDF5] text-[#065F46] border-[#A7F3D0]', icon: '✓' },
   }
-  const c = colors[type]
+  const v = variants[type]
   return (
-    <div
-      className="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs"
-      style={{ background: c.bg, color: c.color, border: `1px solid ${c.border}` }}
-    >
-      <span>{c.icon}</span>
+    <div className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs border ${v.cls}`}>
+      <span>{v.icon}</span>
       <span className="flex-1">{message}</span>
       {action && (
         <button
@@ -164,15 +154,14 @@ function AlertRow({ type, message, action }: ProcessAlert) {
   )
 }
 
-function StepPill({ step, index, total, isLast }: { step: ProcessStep; index: number; total: number; isLast: boolean }) {
-  const colors: Record<StepStatus, { bg: string; color: string; border: string }> = {
-    completed: { bg: 'rgba(16,185,129,0.15)', color: '#10b981', border: 'rgba(16,185,129,0.4)' },
-    current: { bg: 'rgba(249,115,22,0.2)', color: '#f97316', border: '#f97316' },
-    pending: { bg: 'transparent', color: '#6B7280', border: 'rgba(107,114,128,0.3)' },
-    skipped: { bg: 'transparent', color: '#4B5563', border: 'rgba(75,85,99,0.3)' },
-    blocked: { bg: 'rgba(239,68,68,0.1)', color: '#ef4444', border: 'rgba(239,68,68,0.4)' },
+function StepPill({ step, index, isLast }: { step: ProcessStep; index: number; isLast: boolean }) {
+  const variants: Record<StepStatus, string> = {
+    completed: 'bg-[#D1FAE5] text-[#065F46] border-[#A7F3D0]',
+    current:   'bg-[#FF6600] text-white border-[#FF6600] shadow-sm',
+    pending:   'bg-white text-[#6B7280] border-[#E5E5E5]',
+    skipped:   'bg-white text-[#9CA3AF] border-[#E5E5E5] opacity-60',
+    blocked:   'bg-[#FEE2E2] text-[#991B1B] border-[#FECACA]',
   }
-  const c = colors[step.status]
   const clickable = Boolean(step.onClick)
 
   return (
@@ -184,27 +173,23 @@ function StepPill({ step, index, total, isLast }: { step: ProcessStep; index: nu
         onClick={step.onClick}
         disabled={!clickable}
         title={step.hint}
-        className="flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all shrink-0"
+        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all shrink-0 text-[11px] border ${variants[step.status]}`}
         style={{
-          background: c.bg,
-          color: c.color,
-          border: `1px solid ${c.border}`,
           fontWeight: step.status === 'current' ? 700 : 500,
-          fontSize: 11,
           cursor: clickable ? 'pointer' : 'default',
-          opacity: step.status === 'skipped' ? 0.5 : 1,
         }}
       >
         <span
-          className="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold"
-          style={{ background: step.status === 'current' ? '#f97316' : 'transparent', border: `1px solid ${c.color}` }}
+          className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold ${
+            step.status === 'current' ? 'bg-white text-[#FF6600]' : 'border border-current'
+          }`}
         >
           {step.status === 'completed' ? (
-            <CheckCircle2 className="w-3 h-3" style={{ color: c.color, strokeWidth: 3 }} />
+            <CheckCircle2 className="w-3 h-3" strokeWidth={3} />
           ) : step.status === 'blocked' ? (
-            <AlertTriangle className="w-2.5 h-2.5" style={{ color: c.color }} />
+            <AlertTriangle className="w-2.5 h-2.5" />
           ) : (
-            <span style={{ color: step.status === 'current' ? 'white' : c.color }}>{index}</span>
+            <span>{index}</span>
           )}
         </span>
         <span style={{ textTransform: 'uppercase', letterSpacing: 0.3 }}>
@@ -213,7 +198,7 @@ function StepPill({ step, index, total, isLast }: { step: ProcessStep; index: nu
         {step.optional && <span className="text-[9px] opacity-60">(opc)</span>}
       </button>
       {!isLast && (
-        <span className="opacity-30 shrink-0" style={{ width: 12, height: 1, background: '#6B7280' }} />
+        <span className="shrink-0 w-3 h-px bg-[#E5E5E5]" />
       )}
     </>
   )
@@ -221,29 +206,23 @@ function StepPill({ step, index, total, isLast }: { step: ProcessStep; index: nu
 
 function ActionButton({ label, onClick, variant = 'secondary', icon, disabled }: ProcessAction) {
   const icons: Record<string, ReactNode> = {
-    save: <Save className="w-3.5 h-3.5 mr-1" />,
-    x: <X className="w-3.5 h-3.5 mr-1" />,
-    play: <Play className="w-3.5 h-3.5 mr-1" />,
+    save:  <Save className="w-3.5 h-3.5 mr-1" />,
+    x:     <X className="w-3.5 h-3.5 mr-1" />,
+    play:  <Play className="w-3.5 h-3.5 mr-1" />,
     check: <CheckCircle2 className="w-3.5 h-3.5 mr-1" />,
   }
   const variants: Record<string, string> = {
-    primary: '#f97316',
-    secondary: '#2A3040',
-    danger: '#ef4444',
-    ghost: 'transparent',
+    primary:   'bg-[#FF6600] hover:bg-[#E55A00] text-white shadow-sm',
+    secondary: 'bg-white border border-[#E5E5E5] text-[#1F2937] hover:bg-[#F8F8F8]',
+    danger:    'bg-[#DC2626] hover:bg-[#B91C1C] text-white shadow-sm',
+    ghost:     'bg-transparent text-[#374151] hover:bg-[#F5F5F5]',
   }
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="inline-flex items-center px-3 py-1.5 rounded-md text-xs font-semibold transition-opacity hover:opacity-80"
-      style={{
-        background: variant === 'primary' ? variants.primary : variants[variant],
-        color: variant === 'primary' ? '#0A0C0F' : 'inherit',
-        border: variant === 'ghost' ? '1px solid #2A3040' : 'none',
-        opacity: disabled ? 0.5 : 1,
-      }}
+      className={`inline-flex items-center px-3 py-1.5 rounded-md text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${variants[variant]}`}
     >
       {icon && icons[icon]}
       {label}

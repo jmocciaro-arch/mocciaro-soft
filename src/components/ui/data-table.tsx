@@ -343,7 +343,7 @@ export function DataTable({
           {onNewClick && (
             <button
               onClick={onNewClick}
-              className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-[#FF6600] rounded-lg hover:bg-[#E55C00] transition-colors"
+              className="flex items-center gap-1.5 px-3.5 py-2 text-[13px] font-semibold text-white bg-[#FF6600] rounded-md hover:bg-[#E55A00] active:bg-[#CC5200] transition-colors shadow-sm"
             >
               <Plus size={16} /> {newLabel}
             </button>
@@ -352,7 +352,7 @@ export function DataTable({
             <button
               key={i}
               onClick={a.onClick}
-              className="flex items-center gap-1.5 px-3 py-2 text-sm text-[#9CA3AF] bg-[#141820] border border-[#2A3040] rounded-lg hover:text-[#F0F2F5] hover:border-[#3A4050] transition-colors"
+              className="flex items-center gap-1.5 px-3 py-2 text-[13px] font-medium text-[#374151] bg-white border border-[#E5E5E5] rounded-md hover:bg-[#F8F8F8] transition-colors"
             >
               {a.icon}
               {a.label}
@@ -389,7 +389,7 @@ export function DataTable({
               className={cn(
                 'flex items-center gap-1.5 px-3 py-2 text-xs border rounded-lg transition-colors',
                 showColMenu
-                  ? 'bg-[#1C2230] border-[#FF6600] text-[#FF6600]'
+                  ? 'bg-[#F9FAFB] border-[#FF6600] text-[#FF6600]'
                   : 'bg-[#141820] border-[#2A3040] text-[#9CA3AF] hover:text-[#F0F2F5] hover:border-[#3A4050]'
               )}
             >
@@ -397,7 +397,7 @@ export function DataTable({
               Columnas
             </button>
             {showColMenu && (
-              <div className="absolute right-0 top-full mt-1 z-50 bg-[#1C2230] border border-[#2A3040] rounded-lg shadow-2xl w-56 max-h-80 overflow-y-auto py-1">
+              <div className="absolute right-0 top-full mt-1 z-50 bg-[#F9FAFB] border border-[#2A3040] rounded-lg shadow-2xl w-56 max-h-80 overflow-y-auto py-1">
                 <div className="px-3 py-2 border-b border-[#2A3040]">
                   <p className="text-[10px] font-bold text-[#6B7280] uppercase tracking-wider">Columnas visibles</p>
                 </div>
@@ -425,12 +425,12 @@ export function DataTable({
       </div>
 
       {/* Table */}
-      <div className="rounded-xl border border-[#1E2330] overflow-hidden">
+      <div className="rounded-md border border-[#E5E5E5] overflow-hidden bg-white shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             {/* Header */}
             <thead>
-              <tr className="bg-[#1C2230]">
+              <tr className="bg-[#F9FAFB]">
                 {/* Checkbox col */}
                 <th className="w-10 px-3 py-3">
                   <div
@@ -523,7 +523,7 @@ export function DataTable({
                       key={rowId}
                       className={cn(
                         'transition-colors',
-                        isSelected ? 'bg-[#FF6600]/5' : 'hover:bg-[#1A1F2E]',
+                        isSelected ? 'bg-[#FFF5EE]' : 'hover:bg-[#FFF5EE]',
                         onRowClick && 'cursor-pointer'
                       )}
                       onClick={() => onRowClick?.(row)}
@@ -572,7 +572,7 @@ export function DataTable({
             {/* Totals row */}
             {showTotals && totals && !loading && pageData.length > 0 && (
               <tfoot>
-                <tr className="bg-[#0F1218] border-t-2 border-[#2A3040]">
+                <tr className="bg-[#FAFAFA] border-t border-[#E5E5E5]">
                   <td className="px-3 py-3" />
                   {activeColumns.map((col, i) => (
                     <td
@@ -638,7 +638,7 @@ export function DataTable({
                     'w-7 h-7 rounded text-xs font-medium transition-colors',
                     pg === currentPage
                       ? 'bg-[#FF6600] text-white'
-                      : 'text-[#6B7280] hover:text-[#F0F2F5] hover:bg-[#1C2230]'
+                      : 'text-[#6B7280] hover:text-[#F0F2F5] hover:bg-[#F9FAFB]'
                   )}
                 >
                   {pg + 1}

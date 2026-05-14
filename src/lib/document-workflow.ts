@@ -5,6 +5,14 @@
  */
 
 import { createClient } from '@/lib/supabase/client'
+import { withIdempotency, buildIdempotencyKey } from '@/lib/idempotency'
+import {
+  commitStockForOrder,
+  dispatchStockForDelivery,
+  validateStockForDelivery,
+  type DispatchItem,
+  type StockShortfall,
+} from '@/lib/stock-ops'
 
 type Row = Record<string, unknown>
 
@@ -117,7 +125,37 @@ export async function updateDocumentStatus(
 // ---------------------------------------------------------------
 // Cotizacion -> Pedido de Venta
 // ---------------------------------------------------------------
+//
+// IDEMPOTENCIA (FASE 0):
+//   Esta función está envuelta por withIdempotency. Doble click,
+//   retry de red, o dos pestañas abiertas devuelven el MISMO pedido
+//   en lugar de crear duplicados. La key incluye userId para que
+//   distintos usuarios sí puedan crear PEDs paralelos si fuese
+//   necesario (caso raro), pero el mismo usuario no.
+//
+//   La defensa en profundidad es el índice UNIQUE parcial de la
+//   migración v71 sobre tt_document_relations(parent_id, relation_type)
+//   WHERE relation_type IN ('converted_to', 'quote_to_order'), que
+//   garantiza a nivel DB que no haya dos PEDs convertidos desde la
+//   misma COT (incluso entre usuarios distintos).
+// ---------------------------------------------------------------
 export async function quoteToOrder(
+  quoteId: string,
+  source: 'local' | 'tt_documents',
+  options?: { userId?: string | null }
+): Promise<{ orderId: string; orderNumber: string }> {
+  const userId = options?.userId ?? null
+  return withIdempotency(
+    {
+      key: buildIdempotencyKey('quote_to_order', quoteId, userId ?? 'anon'),
+      scope: 'quote_to_order',
+      userId,
+    },
+    () => quoteToOrderImpl(quoteId, source)
+  )
+}
+
+async function quoteToOrderImpl(
   quoteId: string,
   source: 'local' | 'tt_documents'
 ): Promise<{ orderId: string; orderNumber: string }> {
@@ -193,12 +231,19 @@ export async function quoteToOrder(
     await supabase.from('tt_documents').update({ status: 'closed' }).eq('id', quoteId)
   }
 
+  // FASE 1.1 — Stock: al confirmar PED, comprometer (quantity_committed += qty)
+  // No bloqueante: si falla, el pedido ya está creado, sólo loguea.
+  const commitResult = await commitStockForOrder(order.id as string)
+  if (!commitResult.ok) {
+    console.warn('[quoteToOrder] commitStockForOrder fallo:', commitResult.error)
+  }
+
   // Log
   await supabase.from('tt_activity_log').insert({
     entity_type: 'document',
     entity_id: order.id as string,
     action: 'created',
-    detail: `Pedido ${orderNumber} generado desde cotizacion`,
+    detail: `Pedido ${orderNumber} generado desde cotizacion${commitResult.ok ? ' + stock comprometido' : ''}`,
   })
 
   return { orderId: order.id as string, orderNumber }
@@ -215,11 +260,73 @@ export interface DeliveryItem {
   toDeliver: number
 }
 
+export interface OrderToDeliveryOptions {
+  /**
+   * Si true, permite emitir REM con quantity > pendiente del PED.
+   * Requiere `overdeliveryReason`. El caller debe verificar el permiso
+   * RBAC `allow_overdelivery` ANTES de pasar true acá.
+   */
+  allowOverdelivery?: boolean
+  /**
+   * Motivo obligatorio cuando allowOverdelivery=true.
+   */
+  overdeliveryReason?: string
+  /**
+   * Si true, NO valida stock físico (se asume que el caller ya mostró
+   * el modal "stock insuficiente" y el usuario eligió continuar).
+   */
+  skipStockValidation?: boolean
+  /**
+   * UUID del usuario que ejecuta la acción. Se loguea en
+   * tt_stock_movements.created_by.
+   */
+  actorUserId?: string | null
+}
+
+export interface OrderToDeliveryResult {
+  deliveryNoteId: string
+  deliveryNoteNumber: string
+  /** Si se emitió con overdelivery permitida, lista los ítems en exceso */
+  overdeliveryItems?: Array<{ so_item_id: string; excess: number }>
+}
+
+/**
+ * Pre-check de stock físico previo a emitir REM. Devuelve la lista de
+ * productos sin stock suficiente para que la UI muestre el modal
+ * "stock insuficiente. ¿Continuar igual? (con motivo)".
+ *
+ * Si todos los productos tienen stock, devuelve { ok: true, shortfalls: [] }.
+ */
+export async function precheckDeliveryStock(
+  orderId: string,
+  items: DeliveryItem[]
+): Promise<{ ok: boolean; shortfalls: StockShortfall[]; error?: string }> {
+  const supabase = createClient()
+  const { data: soItems } = await supabase
+    .from('tt_so_items')
+    .select('id, product_id, description, sku')
+    .in('id', items.map((i) => i.id))
+
+  const dispatchItems: DispatchItem[] = items.map((it) => {
+    const so = (soItems || []).find((s) => s.id === it.id)
+    return {
+      so_item_id: it.id,
+      product_id: (so?.product_id as string | null) ?? null,
+      quantity: it.toDeliver,
+      description: (so?.description as string) || it.description,
+      sku: (so?.sku as string) || undefined,
+    }
+  })
+
+  return validateStockForDelivery(orderId, dispatchItems)
+}
+
 export async function orderToDeliveryNote(
   orderId: string,
   items: DeliveryItem[],
-  source: 'local' | 'tt_documents'
-): Promise<{ deliveryNoteId: string; deliveryNoteNumber: string }> {
+  source: 'local' | 'tt_documents',
+  options: OrderToDeliveryOptions = {}
+): Promise<OrderToDeliveryResult> {
   const supabase = createClient()
   const dnNumber = await generateDocNumber('REM')
 
@@ -239,6 +346,30 @@ export async function orderToDeliveryNote(
   const totalDelivered = items.reduce((sum, it) => sum + it.toDeliver, 0)
   if (totalDelivered === 0) throw new Error('Selecciona al menos un item para entregar')
 
+  // FASE 1.5 — Overdelivery check (cantidad a entregar > pendiente del PED).
+  // El caller debe verificar permiso RBAC allow_overdelivery ANTES de pasar
+  // options.allowOverdelivery=true. Acá sólo validamos consistencia.
+  const overdeliveryItems: Array<{ so_item_id: string; excess: number }> = []
+  for (const it of items) {
+    const pending = Math.max(0, it.ordered - it.delivered)
+    if (it.toDeliver > pending) {
+      overdeliveryItems.push({ so_item_id: it.id, excess: it.toDeliver - pending })
+    }
+  }
+  if (overdeliveryItems.length > 0) {
+    if (!options.allowOverdelivery) {
+      throw new Error(
+        `Cantidad a entregar excede lo pendiente del pedido (${overdeliveryItems.length} ítem(s)). ` +
+          `Requiere permiso allow_overdelivery + motivo de sobreentrega.`
+      )
+    }
+    if (!options.overdeliveryReason || options.overdeliveryReason.trim().length < 3) {
+      throw new Error(
+        'overdeliveryReason requerido cuando allowOverdelivery=true (mínimo 3 caracteres).'
+      )
+    }
+  }
+
   // Crear remito
   const { data: dn, error } = await supabase
     .from('tt_delivery_notes')
@@ -249,6 +380,12 @@ export async function orderToDeliveryNote(
       doc_number: dnNumber,
       status: 'pending',
       total: (orderData.total as number) || 0,
+      // FASE 1.5 — Persistir motivo de sobreentrega en notas (no hay
+      // columna específica todavía — irá en una migración futura si se
+      // pide reporting sobre overdelivery).
+      notes: options.allowOverdelivery && options.overdeliveryReason
+        ? `OVERDELIVERY: ${options.overdeliveryReason}`
+        : null,
     })
     .select()
     .single()
@@ -297,15 +434,57 @@ export async function orderToDeliveryNote(
       .eq('id', orderId)
   }
 
+  // FASE 1.1 — Stock: dispatch (decrementa físico + libera committed).
+  // Construir DispatchItem[] con product_id desde tt_so_items.
+  const { data: soItemsForDispatch } = await supabase
+    .from('tt_so_items')
+    .select('id, product_id, description, sku')
+    .in('id', items.filter((i) => i.toDeliver > 0).map((i) => i.id))
+
+  const dispatchItems: DispatchItem[] = items
+    .filter((i) => i.toDeliver > 0)
+    .map((it) => {
+      const so = (soItemsForDispatch || []).find((s) => s.id === it.id)
+      return {
+        so_item_id: it.id,
+        product_id: (so?.product_id as string | null) ?? null,
+        quantity: it.toDeliver,
+        description: (so?.description as string) || it.description,
+        sku: (so?.sku as string) || undefined,
+      }
+    })
+
+  const dispatchResult = await dispatchStockForDelivery(orderId, dn.id as string, dispatchItems, {
+    allowOverdelivery: options.allowOverdelivery,
+    actorUserId: options.actorUserId ?? null,
+  })
+
+  if (!dispatchResult.ok) {
+    // Stock falló pero el REM ya está creado. Lo más seguro: marcar el
+    // REM en estado problema, no rollback automático (la app degradada
+    // permite avanzar manual). Loguear y devolver.
+    console.warn('[orderToDeliveryNote] dispatchStockForDelivery fallo:', dispatchResult.error)
+    await supabase
+      .from('tt_delivery_notes')
+      .update({
+        notes: `${(dispatchResult.error || 'stock').slice(0, 200)} [stock no descontado]`,
+      })
+      .eq('id', dn.id as string)
+  }
+
   // Log
   await supabase.from('tt_activity_log').insert({
     entity_type: 'document',
     entity_id: dn.id as string,
     action: 'created',
-    detail: `Remito ${dnNumber} generado desde pedido`,
+    detail: `Remito ${dnNumber} generado desde pedido${dispatchResult.ok ? ' + stock descontado' : ' (stock NO descontado)'}${options.allowOverdelivery ? ` [OVERDELIVERY: ${options.overdeliveryReason}]` : ''}`,
   })
 
-  return { deliveryNoteId: dn.id as string, deliveryNoteNumber: dnNumber }
+  return {
+    deliveryNoteId: dn.id as string,
+    deliveryNoteNumber: dnNumber,
+    overdeliveryItems: overdeliveryItems.length > 0 ? overdeliveryItems : undefined,
+  }
 }
 
 // ---------------------------------------------------------------

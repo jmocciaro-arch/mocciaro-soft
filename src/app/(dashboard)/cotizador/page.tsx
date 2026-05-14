@@ -34,6 +34,7 @@ import {
 import { DocumentAttachments } from '@/components/documents/document-attachments'
 import { SendConfirmationModal } from '@/components/workflow/send-confirmation-modal'
 import { SendDocumentModal } from '@/components/workflow/send-document-modal'
+import { DocumentMoreMenu } from '@/components/workflow/document-more-menu'
 import { QuoteVersionBadge } from '@/components/workflow/quote-version-badge'
 import { markAcceptedVersion, snapshotQuoteVersion } from '@/lib/quote-versioning'
 
@@ -790,6 +791,70 @@ export default function CotizadorPage() {
     if (quoteStatus === 'borrador') void transitionStatus('enviada')
   }
 
+  // === ACCIONES NUEVAS para el menú "Más" ===
+
+  // Duplicar: limpia los flags de "ya guardada" y deja el form igual, listo
+  // para guardar como nueva cotización. Pide confirmación antes.
+  function duplicateQuote() {
+    if (!currentQuoteId) return
+    if (!confirm('¿Duplicar esta cotización? Se mantienen los items, cliente y condiciones, pero se guarda como una nueva.')) return
+    setCurrentQuoteId(null)
+    setQuoteStatus(null)
+    setCreatedOrder(null)
+    setOcImportSource(null)
+    generateQuoteNumber()
+    addToast({ type: 'success', title: 'Cotización duplicada', message: 'Ajustá lo que necesites y guardá como nueva' })
+  }
+
+  // Eliminar: borra la cotización y sus items. Pide confirmación + texto.
+  async function deleteQuote() {
+    if (!currentQuoteId) return
+    const confirmTxt = prompt(`Para eliminar la cotización ${quoteNumber} escribí "ELIMINAR" en mayúsculas:`)
+    if (confirmTxt !== 'ELIMINAR') return
+    setTransitioning(true)
+    const sb = createClient()
+    try {
+      await sb.from('tt_quote_items').delete().eq('quote_id', currentQuoteId)
+      await sb.from('tt_quotes').delete().eq('id', currentQuoteId)
+      await sb.from('tt_activity_log').insert({
+        entity_type: 'quote', entity_id: currentQuoteId,
+        action: 'Cotización eliminada', detail: quoteNumber,
+      })
+      addToast({ type: 'success', title: 'Cotización eliminada' })
+      // Reset form
+      setItems([]); setNotes(''); setInternalNotes(''); setSelectedClient(null)
+      setIvaEnabled(true); setTaxRate(21); setIrpfEnabled(false); setIrpfRate(0)
+      setReEnabled(false); setReRate(0); setOcImportSource(null)
+      setCurrentQuoteId(null); setQuoteStatus(null); setCreatedOrder(null)
+      generateQuoteNumber()
+      loadSavedQuotes()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : JSON.stringify(err)
+      addToast({ type: 'error', title: 'No se pudo eliminar', message: msg })
+    } finally { setTransitioning(false) }
+  }
+
+  // Reabrir: vuelve a 'borrador'. Útil cuando se marcó por error como enviada/aceptada.
+  async function reopenQuote() {
+    if (!currentQuoteId) return
+    if (!confirm('¿Reabrir esta cotización como borrador? Vas a poder editarla y volver a enviarla.')) return
+    setTransitioning(true)
+    const sb = createClient()
+    try {
+      await sb.from('tt_quotes').update({ status: 'borrador' }).eq('id', currentQuoteId)
+      await sb.from('tt_activity_log').insert({
+        entity_type: 'quote', entity_id: currentQuoteId,
+        action: 'Cotización reabierta', detail: quoteNumber,
+      })
+      setQuoteStatus('borrador')
+      addToast({ type: 'success', title: 'Cotización reabierta' })
+      loadSavedQuotes()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : JSON.stringify(err)
+      addToast({ type: 'error', title: 'No se pudo reabrir', message: msg })
+    } finally { setTransitioning(false) }
+  }
+
   async function loadSavedQuotes() {
     setLoadingQuotes(true)
     const sb = createClient()
@@ -1033,6 +1098,24 @@ export default function CotizadorPage() {
                 <><Sparkles size={14} /> <Upload size={16} /> Importar OC del cliente (PDF)</>
               )}
             </button>
+          )}
+          {/* Menú "Más" estilo StelOrder — aparece solo cuando hay una cotización
+              guardada (currentQuoteId) y agrupa acciones contextuales. Las
+              acciones se pueden habilitar/deshabilitar desde /admin. */}
+          {viewMode === 'create' && currentQuoteId && (
+            <DocumentMoreMenu
+              documentType="coti"
+              variant="ghost"
+              align="right"
+              handlers={{
+                send: openSendModal,
+                download_pdf: downloadPdf,
+                duplicate: duplicateQuote,
+                generate_order: quoteStatus === 'aceptada' ? convertToOrder : undefined,
+                reopen: (quoteStatus === 'enviada' || quoteStatus === 'aceptada' || quoteStatus === 'rechazada') ? reopenQuote : undefined,
+                delete: deleteQuote,
+              }}
+            />
           )}
           <div className="flex bg-[#0B0E13] rounded-lg border border-[#2A3040] p-0.5">
             <button

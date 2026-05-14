@@ -1,5 +1,13 @@
 'use client'
 
+/**
+ * Tabs — estilo StelOrder.
+ *
+ * - Sin pill ni fondo: tabs con underline naranja cuando activo.
+ * - Borde inferior gris #E5E5E5 que conecta visualmente.
+ * - Sincronizado con URL via `urlParam` (default "tab").
+ */
+
 import { useState, useEffect } from 'react'
 import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
@@ -17,7 +25,7 @@ interface TabsProps {
   onChange?: (tabId: string) => void
   children: (activeTab: string) => React.ReactNode
   className?: string
-  urlParam?: string // name of the URL search param to sync with
+  urlParam?: string
 }
 
 export function Tabs({ tabs, defaultTab, onChange, children, className, urlParam = 'tab' }: TabsProps) {
@@ -31,18 +39,16 @@ export function Tabs({ tabs, defaultTab, onChange, children, className, urlParam
 
   const [activeTab, setActiveTab] = useState(initialTab)
 
-  // Sync from URL on mount and when URL changes
   useEffect(() => {
     if (validUrlTab && validUrlTab !== activeTab) {
       setActiveTab(validUrlTab)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [validUrlTab])
 
   const handleTabChange = (tabId: string) => {
     setActiveTab(tabId)
     onChange?.(tabId)
-
-    // Update URL
     const params = new URLSearchParams(searchParams.toString())
     params.set(urlParam, tabId)
     router.replace(`${pathname}?${params.toString()}`, { scroll: false })
@@ -50,27 +56,33 @@ export function Tabs({ tabs, defaultTab, onChange, children, className, urlParam
 
   return (
     <div className={cn(className)}>
-      <div className="flex gap-1 p-1 bg-[#0F1218] rounded-lg border border-[#1E2330] mb-4 overflow-x-auto scrollbar-hide">
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => handleTabChange(tab.id)}
-            className={cn(
-              'flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap',
-              activeTab === tab.id
-                ? 'bg-[#1E2330] text-[#FF6600] shadow-sm'
-                : 'text-[#6B7280] hover:text-[#9CA3AF]'
-            )}
-          >
-            {tab.icon}
-            {tab.label}
-            {tab.badge !== undefined && tab.badge > 0 && (
-              <span className="ml-1 px-1.5 py-0.5 text-[10px] rounded-full bg-[#FF6600] text-white">
-                {tab.badge}
-              </span>
-            )}
-          </button>
-        ))}
+      <div className="flex gap-0 border-b border-[#E5E5E5] mb-4 overflow-x-auto scrollbar-hide">
+        {tabs.map((tab) => {
+          const active = activeTab === tab.id
+          return (
+            <button
+              key={tab.id}
+              onClick={() => handleTabChange(tab.id)}
+              className={cn(
+                'relative flex items-center gap-2 px-4 py-2.5 text-[13px] font-semibold transition-colors whitespace-nowrap -mb-px',
+                active
+                  ? 'text-[#FF6600] border-b-2 border-[#FF6600]'
+                  : 'text-[#6B7280] hover:text-[#1F2937] border-b-2 border-transparent'
+              )}
+            >
+              {tab.icon}
+              {tab.label}
+              {tab.badge !== undefined && tab.badge > 0 && (
+                <span className={cn(
+                  'ml-1 px-1.5 py-0.5 text-[10px] rounded-full font-bold',
+                  active ? 'bg-[#FF6600] text-white' : 'bg-[#F3F4F6] text-[#374151]'
+                )}>
+                  {tab.badge}
+                </span>
+              )}
+            </button>
+          )
+        })}
       </div>
       <div>{children(activeTab)}</div>
     </div>

@@ -811,23 +811,54 @@ function FacturasTab() {
 // COBROS TAB
 // ===============================================================
 function CobrosTab() {
-  const { filterByCompany, companyKey } = useCompanyFilter()
+  const { filterByCompany, companyKey, defaultCompanyId } = useCompanyFilter()
   const supabase = createClient()
   const { addToast } = useToast()
   const [rows, setRows] = useState<Record<string, unknown>[]>([])
+  const [invoicesWithStatus, setInvoicesWithStatus] = useState<Array<{
+    id: string; doc_number: string; client_name?: string; total: number;
+    paid: number; outstanding: number; due_date: string | null;
+    payment_status: 'pendiente' | 'parcial' | 'pagada' | 'vencida'; currency: string
+  }>>([])
+  const [bankAccounts, setBankAccounts] = useState<Array<{ id: string; bank_name: string | null; iban_or_cbu: string | null; currency: string }>>([])
   const [loading, setLoading] = useState(true)
   const [showRegister, setShowRegister] = useState(false)
   const [invoices, setInvoices] = useState<Record<string, unknown>[]>([])
-  const [newPayment, setNewPayment] = useState({ invoice_id: '', amount: 0, payment_method: 'transferencia', bank_reference: '', payment_date: new Date().toISOString().split('T')[0] })
+  const [newPayment, setNewPayment] = useState({
+    invoice_id: '', amount: 0, method: 'transferencia' as 'transferencia' | 'efectivo' | 'tarjeta' | 'cheque' | 'pagare' | 'compensacion' | 'otro',
+    reference: '', bank_account_id: '', payment_date: new Date().toISOString().split('T')[0],
+  })
   const [saving, setSaving] = useState(false)
+  const [filterStatus, setFilterStatus] = useState<'all' | 'pendiente' | 'parcial' | 'pagada' | 'vencida'>('all')
 
   const load = useCallback(async () => {
     setLoading(true)
     const sb = createClient()
-    const { data } = await sb.from('tt_payments').select('*, tt_invoices(doc_number)').order('created_at', { ascending: false })
-    setRows((data || []).map(paymentToRow))
+    // Listar pagos (via VIEW tt_payments, alias method/reference)
+    const { data: pData } = await sb
+      .from('tt_payments')
+      .select('id, invoice_id, amount, currency, payment_date, method, reference, created_at')
+      .order('payment_date', { ascending: false })
+      .limit(500)
+    setRows((pData || []).map((p) => ({
+      id: p.id,
+      invoice_id: p.invoice_id,
+      importe: (p.amount as number) || 0,
+      metodo: p.method,
+      referencia: p.reference || '-',
+      fecha: p.payment_date,
+      created_at: p.created_at,
+    })))
+
+    // Listar facturas con estado para la vista de "facturas pendientes/vencidas"
+    const { listInvoicesWithPaymentStatus } = await import('@/lib/payments')
+    const list = await listInvoicesWithPaymentStatus({
+      companyId: defaultCompanyId ?? null,
+      limit: 300,
+    })
+    setInvoicesWithStatus(list)
     setLoading(false)
-  }, [])
+  }, [defaultCompanyId])
 
   useEffect(() => { load() }, [load])
 
@@ -841,65 +872,190 @@ function CobrosTab() {
       .order('created_at', { ascending: false })
       .limit(50)
     setInvoices(data || [])
+
+    // Cargar cuentas bancarias activas de la company
+    if (defaultCompanyId) {
+      const { listActiveBankAccounts } = await import('@/lib/payments')
+      const accounts = await listActiveBankAccounts(defaultCompanyId)
+      setBankAccounts(accounts)
+    }
   }
 
   const handleRegisterPayment = async () => {
     if (!newPayment.amount || newPayment.amount <= 0) { addToast({ type: 'warning', title: 'El importe debe ser mayor a 0' }); return }
+    if (!newPayment.invoice_id) { addToast({ type: 'warning', title: 'Seleccioná la factura' }); return }
     setSaving(true)
-    const { error } = await supabase.from('tt_payments').insert({
-      invoice_id: newPayment.invoice_id || null,
+    const { registerInvoicePayment } = await import('@/lib/payments')
+    const { data: authUser } = await supabase.auth.getUser()
+    const result = await registerInvoicePayment({
+      invoiceId: newPayment.invoice_id,
       amount: newPayment.amount,
-      payment_method: newPayment.payment_method,
-      bank_reference: newPayment.bank_reference || null,
-      payment_date: newPayment.payment_date,
+      method: newPayment.method,
+      reference: newPayment.reference || null,
+      bankAccountId: newPayment.bank_account_id || null,
+      paymentDate: newPayment.payment_date,
+      actorUserId: authUser?.user?.id ?? null,
     })
-    if (!error) {
-      addToast({ type: 'success', title: 'Cobro registrado' })
+    if (result.ok) {
+      addToast({
+        type: 'success',
+        title: 'Cobro registrado',
+        message: `Factura ahora: ${result.newStatus}`,
+      })
       setShowRegister(false)
-      setNewPayment({ invoice_id: '', amount: 0, payment_method: 'transferencia', bank_reference: '', payment_date: new Date().toISOString().split('T')[0] })
+      setNewPayment({ invoice_id: '', amount: 0, method: 'transferencia', reference: '', bank_account_id: '', payment_date: new Date().toISOString().split('T')[0] })
       load()
     } else {
-      addToast({ type: 'error', title: 'Error', message: error.message })
+      addToast({ type: 'error', title: 'Error', message: result.error })
     }
     setSaving(false)
   }
 
   const totalCobrado = rows.reduce((s, r) => s + ((r.importe as number) || 0), 0)
+  const outstandingTotal = invoicesWithStatus.reduce((s, r) => s + r.outstanding, 0)
+  const overdueCount = invoicesWithStatus.filter((r) => r.payment_status === 'vencida').length
+
+  const filteredInvoices = filterStatus === 'all'
+    ? invoicesWithStatus
+    : invoicesWithStatus.filter((r) => r.payment_status === filterStatus)
+
+  const STATUS_COLORS: Record<typeof filterStatus, string> = {
+    all: '#9CA3AF',
+    pendiente: '#F59E0B',
+    parcial: '#3B82F6',
+    pagada: '#10B981',
+    vencida: '#EF4444',
+  }
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <KPICard label="Total cobrado" value={formatCurrency(totalCobrado)} icon={<CreditCard size={22} />} color="#10B981" />
-        <KPICard label="Cobros registrados" value={rows.length} icon={<Receipt size={22} />} />
+        <KPICard label="Por cobrar" value={formatCurrency(outstandingTotal)} icon={<Receipt size={22} />} color="#F59E0B" />
+        <KPICard label="Vencidas" value={overdueCount} icon={<AlertTriangle size={22} />} color="#EF4444" />
         <div className="flex items-end justify-end">
           <Button variant="primary" onClick={() => { setShowRegister(true); loadInvoices() }}>
             <Plus size={16} /> Registrar Cobro
           </Button>
         </div>
       </div>
-      <DataTable
-        data={rows}
-        columns={COBRO_COLS}
-        loading={loading}
-        totalLabel="cobros"
-        showTotals
-        exportFilename="cobros_torquetools"
-        pageSize={25}
-      />
+
+      {/* Filtros de estado */}
+      <div className="flex gap-2 flex-wrap">
+        {(['all', 'pendiente', 'parcial', 'vencida', 'pagada'] as const).map((s) => (
+          <button
+            key={s}
+            onClick={() => setFilterStatus(s)}
+            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${
+              filterStatus === s
+                ? 'bg-[#1E2330] text-[#F0F2F5] border border-[#3A4050]'
+                : 'bg-[#0B0E13] text-[#9CA3AF] hover:text-[#F0F2F5]'
+            }`}
+            style={filterStatus === s ? { borderLeft: `3px solid ${STATUS_COLORS[s]}` } : undefined}
+          >
+            {s === 'all' ? 'Todas' : s.charAt(0).toUpperCase() + s.slice(1)}
+            <span className="ml-1.5 text-[10px] text-[#6B7280]">
+              ({s === 'all' ? invoicesWithStatus.length : invoicesWithStatus.filter((r) => r.payment_status === s).length})
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {/* Tabla facturas con estado */}
+      <div className="border border-[#1E2330] rounded-lg overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-[#0F1218] text-[#9CA3AF]">
+            <tr>
+              <th className="px-3 py-2 text-left text-xs font-medium">Factura</th>
+              <th className="px-3 py-2 text-left text-xs font-medium">Cliente</th>
+              <th className="px-3 py-2 text-right text-xs font-medium">Total</th>
+              <th className="px-3 py-2 text-right text-xs font-medium">Cobrado</th>
+              <th className="px-3 py-2 text-right text-xs font-medium">Pendiente</th>
+              <th className="px-3 py-2 text-left text-xs font-medium">Vencimiento</th>
+              <th className="px-3 py-2 text-left text-xs font-medium">Estado</th>
+            </tr>
+          </thead>
+          <tbody className="text-[#F0F2F5]">
+            {loading && (
+              <tr><td colSpan={7} className="px-3 py-6 text-center text-[#6B7280]"><Loader2 className="animate-spin inline mr-2" size={14} /> Cargando…</td></tr>
+            )}
+            {!loading && filteredInvoices.length === 0 && (
+              <tr><td colSpan={7} className="px-3 py-6 text-center text-[#6B7280]">Sin facturas</td></tr>
+            )}
+            {!loading && filteredInvoices.map((r) => (
+              <tr key={r.id} className="border-t border-[#1E2330] hover:bg-[#0F1218]">
+                <td className="px-3 py-2 font-mono text-xs">{r.doc_number}</td>
+                <td className="px-3 py-2 text-xs">{r.client_name || '-'}</td>
+                <td className="px-3 py-2 text-right">{formatCurrency(r.total, r.currency as 'EUR' | 'ARS' | 'USD')}</td>
+                <td className="px-3 py-2 text-right text-[#10B981]">{formatCurrency(r.paid, r.currency as 'EUR' | 'ARS' | 'USD')}</td>
+                <td className="px-3 py-2 text-right text-[#F59E0B] font-semibold">{formatCurrency(r.outstanding, r.currency as 'EUR' | 'ARS' | 'USD')}</td>
+                <td className="px-3 py-2 text-xs text-[#9CA3AF]">{r.due_date ? formatDate(r.due_date) : '-'}</td>
+                <td className="px-3 py-2">
+                  <span
+                    className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                    style={{ color: STATUS_COLORS[r.payment_status], backgroundColor: `${STATUS_COLORS[r.payment_status]}20` }}
+                  >
+                    {r.payment_status}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Tabla de cobros registrados */}
+      <details className="border border-[#1E2330] rounded-lg p-2">
+        <summary className="cursor-pointer text-xs text-[#9CA3AF] hover:text-[#F0F2F5] px-2 py-1">
+          Historial de cobros ({rows.length})
+        </summary>
+        <div className="mt-2">
+          <DataTable
+            data={rows}
+            columns={COBRO_COLS}
+            loading={loading}
+            totalLabel="cobros"
+            showTotals
+            exportFilename="cobros_torquetools"
+            pageSize={25}
+          />
+        </div>
+      </details>
+
       <Modal isOpen={showRegister} onClose={() => setShowRegister(false)} title="Registrar Cobro" size="md">
         <div className="space-y-4">
-          <Select label="Factura relacionada" value={newPayment.invoice_id} onChange={e => setNewPayment({ ...newPayment, invoice_id: e.target.value })}
+          <Select label="Factura *" value={newPayment.invoice_id} onChange={e => setNewPayment({ ...newPayment, invoice_id: e.target.value })}
             options={invoices.map(inv => ({ value: inv.id as string, label: `${(inv.display_ref as string) || (inv.system_code as string) || 'S/N'} — ${formatCurrency((inv.total as number) || 0)} — ${((inv.client as Record<string, unknown>)?.legal_name as string) || 'Sin cliente'}` }))}
-            placeholder="Sin factura vinculada" />
+            placeholder="Seleccionar factura" />
           <div className="grid grid-cols-2 gap-4">
             <Input label="Importe *" type="number" min={0} step={0.01} value={newPayment.amount || ''} onChange={e => setNewPayment({ ...newPayment, amount: Number(e.target.value) })} />
             <Input label="Fecha" type="date" value={newPayment.payment_date} onChange={e => setNewPayment({ ...newPayment, payment_date: e.target.value })} />
           </div>
           <div className="grid grid-cols-2 gap-4">
-            <Select label="Metodo de pago" value={newPayment.payment_method} onChange={e => setNewPayment({ ...newPayment, payment_method: e.target.value })}
-              options={[{ value: 'transferencia', label: 'Transferencia bancaria' }, { value: 'cheque', label: 'Cheque' }, { value: 'efectivo', label: 'Efectivo' }, { value: 'tarjeta', label: 'Tarjeta' }, { value: 'paypal', label: 'PayPal' }, { value: 'otro', label: 'Otro' }]} />
-            <Input label="Referencia bancaria" value={newPayment.bank_reference} onChange={e => setNewPayment({ ...newPayment, bank_reference: e.target.value })} placeholder="Nro transferencia, cheque..." />
+            <Select label="Método" value={newPayment.method} onChange={e => setNewPayment({ ...newPayment, method: e.target.value as typeof newPayment.method })}
+              options={[
+                { value: 'transferencia', label: 'Transferencia bancaria' },
+                { value: 'cheque', label: 'Cheque' },
+                { value: 'efectivo', label: 'Efectivo' },
+                { value: 'tarjeta', label: 'Tarjeta' },
+                { value: 'pagare', label: 'Pagaré' },
+                { value: 'compensacion', label: 'Compensación' },
+                { value: 'otro', label: 'Otro' },
+              ]} />
+            <Input label="Referencia" value={newPayment.reference} onChange={e => setNewPayment({ ...newPayment, reference: e.target.value })} placeholder="Nro transferencia, cheque..." />
           </div>
+          {bankAccounts.length > 0 && (newPayment.method === 'transferencia' || newPayment.method === 'cheque') && (
+            <Select
+              label="Cuenta bancaria de destino"
+              value={newPayment.bank_account_id}
+              onChange={(e) => setNewPayment({ ...newPayment, bank_account_id: e.target.value })}
+              options={bankAccounts.map((b) => ({
+                value: b.id,
+                label: `${b.bank_name || 'Sin nombre'}${b.iban_or_cbu ? ` — ${b.iban_or_cbu}` : ''}${b.currency ? ` (${b.currency})` : ''}`,
+              }))}
+              placeholder="Sin cuenta específica"
+            />
+          )}
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="secondary" onClick={() => setShowRegister(false)}>Cancelar</Button>
             <Button variant="primary" onClick={handleRegisterPayment} loading={saving}><Save size={14} /> Registrar</Button>
@@ -1475,6 +1631,20 @@ export default function VentasPage() {
         <h1 className="text-2xl font-bold text-[#F0F2F5]">Ventas</h1>
         <p className="text-sm text-[#6B7280] mt-1">Presupuestos, pedidos, albaranes, facturas, notas de credito y cobros</p>
       </div>
+
+      {/* FASE 0 — Disclaimer permanente. Mocciaro Soft opera como ERP
+          standalone hoy: los documentos generados son operativos y
+          NO tienen valor fiscal hasta que se integre la API legal
+          (FASE 2 AR-ARCA / FASE 3 ES-AEAT-Verifactu). */}
+      <div className="flex items-start gap-3 p-3 rounded-lg bg-[#F59E0B]/10 border border-[#F59E0B]/40">
+        <AlertTriangle size={18} className="text-[#F59E0B] mt-0.5 shrink-0" />
+        <div className="text-xs text-[#F0F2F5] leading-relaxed">
+          <span className="font-semibold text-[#F59E0B]">Documentos operativos.</span>{' '}
+          Facturación legal pendiente de integración API fiscal.{' '}
+          <span className="text-[#D1D5DB]">No usar como comprobante AEAT (España) ni ARCA (Argentina).</span>
+        </div>
+      </div>
+
       <Suspense fallback={<div className="flex justify-center py-10"><Loader2 className="animate-spin text-[#FF6600]" size={32} /></div>}>
         <Tabs tabs={ventasTabs} defaultTab="presupuestos">
           {(activeTab) => (
