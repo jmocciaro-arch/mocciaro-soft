@@ -235,26 +235,29 @@ export default function CotizadorPage() {
       setItems(newItems)
 
       // 1.b Auto-match en 2 pasos:
-      //   (a) Aliases aprendidos (tt_sku_aliases): SKUs del cliente vinculados
-      //       manualmente en OCs previas (cliente-específicos > globales).
+      //   (a) Aliases aprendidos (tt_sku_aliases): si falla la query, no
+      //       rompemos el flujo — solo seguimos sin alias.
       //   (b) SKU exacto en tt_products.
-      // El paso (a) tiene prioridad porque captura el conocimiento explícito
-      // del usuario sobre "este SKU del cliente = este producto mío".
       const skusBuscados = newItems.map((i) => i.sku.trim()).filter((s) => s.length > 0)
-      if (skusBuscados.length > 0 && selectedCompanyId) {
+      if (skusBuscados.length > 0) {
         const supabase = createClient()
-        const { lookupAliasesForSkus } = await import('@/lib/sku-aliases')
 
-        // (a) Primero buscamos aliases. Si el cliente ya está seleccionado,
-        // priorizamos sus aliases; si no, solo los globales.
-        const aliasMap = await lookupAliasesForSkus({
-          companyId: selectedCompanyId,
-          clientId: selectedClient?.id || null,
-          externalSkus: skusBuscados,
-        })
+        // (a) Lookup de aliases (defensivo: cualquier error → aliasMap vacío)
+        let aliasMap = new Map<string, { productId: string; aliasId: string; scope: 'client' | 'global' }>()
+        if (selectedCompanyId) {
+          try {
+            const { lookupAliasesForSkus } = await import('@/lib/sku-aliases')
+            aliasMap = await lookupAliasesForSkus({
+              companyId: selectedCompanyId,
+              clientId: selectedClient?.id || null,
+              externalSkus: skusBuscados,
+            })
+          } catch (aliasErr) {
+            console.warn('Lookup de aliases falló — continuando con match directo:', aliasErr)
+          }
+        }
 
-        // (b) Después buscamos por SKU exacto en tt_products para los que
-        // no tuvieron alias. Una sola query.
+        // (b) SKU exacto en tt_products para los que no tuvieron alias
         const skusSinAlias = skusBuscados.filter((s) => !aliasMap.has(s.toUpperCase().trim()))
         const { data: prods } = skusSinAlias.length > 0
           ? await supabase
@@ -264,8 +267,7 @@ export default function CotizadorPage() {
               .eq('active', true)
           : { data: [] }
 
-        // También necesitamos traer los productos referenciados por los aliases
-        // para poder usar nombre y precio.
+        // Productos referenciados por aliases (para tomar nombre/precio)
         const aliasProductIds = Array.from(aliasMap.values()).map((v) => v.productId)
         const { data: aliasProds } = aliasProductIds.length > 0
           ? await supabase
@@ -285,7 +287,6 @@ export default function CotizadorPage() {
 
         setItems((curr) => curr.map((item) => {
           const key = item.sku.toUpperCase().trim()
-          // Primero alias (cliente o global)
           const aliasHit = aliasMap.get(key)
           const match = aliasHit ? productById.get(aliasHit.productId) : bySku.get(key)
           if (!match) return item
