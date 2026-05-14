@@ -20,14 +20,24 @@ export function OCParserModal({ open, onClose, companyId, clientId, quoteDocumen
   const [result, setResult] = useState<{ data: ParsedOC; discrepancies: OCDiscrepancy[]; ocParsedId?: string } | null>(null)
   const [msg, setMsg] = useState('')
 
+  // Nombre del archivo actualmente cargado (feedback visual).
+  const [fileName, setFileName] = useState<string | null>(null)
+
   async function handleFile(file: File) {
-    if (file.type !== 'application/pdf') {
-      setMsg('✗ Solo PDF')
+    // Validación laxa: aceptamos por extensión .pdf O por MIME 'application/pdf'.
+    // Algunos navegadores devuelven '' o 'application/x-pdf' u 'application/octet-stream'
+    // según el origen del archivo, lo que antes rechazaba PDFs válidos sin explicar.
+    const isPdfByExt = /\.pdf$/i.test(file.name)
+    const isPdfByMime = file.type === 'application/pdf'
+    if (!isPdfByExt && !isPdfByMime) {
+      setMsg(`✗ Tiene que ser un PDF (recibí: ${file.name}, tipo: ${file.type || 'desconocido'})`)
       return
     }
+    setFileName(file.name)
     setLoading(true)
-    setMsg('Analizando OC con IA...')
+    setMsg(`📎 Subiendo ${file.name} (${(file.size / 1024).toFixed(0)} KB)... la IA tarda 5–15 seg`)
     try {
+      if (!companyId) throw new Error('Falta seleccionar empresa emisora antes de importar la OC')
       const fd = new FormData()
       fd.append('file', file)
       fd.append('companyId', companyId)
@@ -36,12 +46,13 @@ export function OCParserModal({ open, onClose, companyId, clientId, quoteDocumen
       fd.append('createDocument', 'true')
 
       const res = await fetch('/api/oc/parse', { method: 'POST', body: fd })
-      const j = await res.json()
-      if (!res.ok) throw new Error(j.error || 'Error parseando')
+      const j = await res.json().catch(() => ({ error: `Respuesta no JSON (HTTP ${res.status})` }))
+      if (!res.ok) throw new Error(j.error || `HTTP ${res.status} parseando la OC`)
       setResult({ data: j.data, discrepancies: j.discrepancies || [], ocParsedId: j.ocParsedId })
-      setMsg(`✓ Parseado con ${j.data.provider_used}`)
+      setMsg(`✓ Parseado con ${j.data.provider_used || 'IA'}`)
       onParsed?.({ data: j.data, discrepancies: j.discrepancies, ocParsedId: j.ocParsedId })
     } catch (err) {
+      console.error('Error parseando OC:', err)
       setMsg('✗ ' + (err as Error).message)
     } finally {
       setLoading(false)
@@ -67,19 +78,29 @@ export function OCParserModal({ open, onClose, companyId, clientId, quoteDocumen
             <div
               className="border-2 border-dashed rounded-lg p-6 text-center cursor-pointer hover:bg-[#1E2330]"
               style={{ borderColor: 'var(--sat-br, #2A3040)' }}
-              onClick={() => inputRef.current?.click()}
+              onClick={() => !loading && inputRef.current?.click()}
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) void handleFile(f) }}
             >
-              <div className="text-3xl mb-2">📋</div>
+              <div className="text-3xl mb-2">{loading ? '⏳' : '📋'}</div>
               <div className="text-sm font-semibold mb-1">
-                {loading ? 'Analizando...' : 'Subí la OC del cliente (PDF)'}
+                {loading ? 'Analizando…' : fileName ? `📎 ${fileName}` : 'Subí la OC del cliente (PDF)'}
               </div>
               <div className="text-xs opacity-60">
-                La IA extrae número, items, cantidades y compara con la cotización
+                {fileName && !loading
+                  ? 'Click acá para elegir otro archivo'
+                  : 'La IA extrae número, items, cantidades y compara con la cotización'}
               </div>
             </div>
-            {msg && <div className="text-xs opacity-70 text-center">{msg}</div>}
+            {msg && (
+              <div className={`text-xs text-center px-3 py-2 rounded-lg ${
+                msg.startsWith('✗') ? 'bg-red-500/10 text-red-400'
+                : msg.startsWith('✓') ? 'bg-emerald-500/10 text-emerald-400'
+                : 'bg-[#FF6600]/10 text-[#FF6600]'
+              }`}>
+                {msg}
+              </div>
+            )}
           </>
         ) : (
           <>
