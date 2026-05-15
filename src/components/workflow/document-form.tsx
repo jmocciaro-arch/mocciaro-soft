@@ -2825,7 +2825,10 @@ export function DocumentForm({
                                   onClick={(e) => {
                                     e.stopPropagation()
                                     setLinkingItemId(item.id)
-                                    setProductSearchQuery(item.sku || item.description.slice(0, 30))
+                                    // Pre-carga con palabras de la descripción (mejor match que el SKU del cliente)
+                                    const desc = item.description?.trim() || ''
+                                    const seed = desc ? desc.split(/\s+/).slice(0, 3).join(' ') : (item.sku || '')
+                                    setProductSearchQuery(seed)
                                     setShowProductSearch(true)
                                   }}
                                   className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-500/15 hover:bg-red-500/30 border border-red-500/40 hover:border-red-500/70 text-red-400 hover:text-red-300 text-[10px] font-semibold transition-all"
@@ -4121,12 +4124,62 @@ export function DocumentForm({
       <Modal
         isOpen={showProductSearch}
         onClose={() => { setShowProductSearch(false); setProductSearchQuery(''); setLinkingItemId(null) }}
-        title={linkingItemId
-          ? `Vincular SKU "${(editMode ? editItems : items).find((i) => i.id === linkingItemId)?.sku || ''}" con producto del catálogo`
-          : 'Buscar producto'}
+        title={linkingItemId ? 'Vincular ítem con producto del catálogo' : 'Buscar producto'}
         size="lg"
       >
         <div className="space-y-4">
+          {/* Panel naranja: muestra qué item del cliente estamos vinculando */}
+          {linkingItemId && (() => {
+            const target = (editMode ? editItems : items).find((i) => i.id === linkingItemId)
+            if (!target) return null
+            return (
+              <div className="rounded-lg border border-[#FF6600]/30 bg-[#FF6600]/5 p-3 space-y-1">
+                <div className="text-[10px] uppercase tracking-wider text-[#FF6600] font-bold">
+                  Estás vinculando este ítem del cliente:
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] text-[#9CA3AF]">SKU cliente:</span>
+                  <code className="font-mono text-sm font-bold text-[#FF6600] bg-[#FF6600]/15 px-2 py-0.5 rounded">
+                    {target.sku || '(sin SKU)'}
+                  </code>
+                </div>
+                {target.description && (
+                  <div className="flex items-start gap-2">
+                    <span className="text-[10px] text-[#9CA3AF] shrink-0 mt-0.5">Descripción:</span>
+                    <span className="text-sm text-[#F0F2F5] font-medium">{target.description}</span>
+                  </div>
+                )}
+                <div className="flex items-center gap-1.5 pt-1 flex-wrap">
+                  <span className="text-[10px] text-[#6B7280]">Buscar por:</span>
+                  {target.description && (
+                    <button
+                      type="button"
+                      onClick={() => setProductSearchQuery(target.description.split(/\s+/).slice(0, 3).join(' '))}
+                      className="text-[10px] font-semibold px-2 py-0.5 rounded bg-emerald-500/15 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/40"
+                    >
+                      {target.description.split(/\s+/).slice(0, 3).join(' ')}
+                    </button>
+                  )}
+                  {target.sku && (
+                    <button
+                      type="button"
+                      onClick={() => setProductSearchQuery(target.sku)}
+                      className="text-[10px] font-semibold px-2 py-0.5 rounded bg-[#1E2330] hover:bg-[#2A3040] text-[#9CA3AF] border border-[#2A3040]"
+                    >
+                      SKU: {target.sku}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setProductSearchQuery('')}
+                    className="text-[10px] font-semibold px-2 py-0.5 rounded bg-[#1E2330] hover:bg-[#2A3040] text-[#6B7280] border border-[#2A3040]"
+                  >
+                    Borrar
+                  </button>
+                </div>
+              </div>
+            )
+          })()}
           <Input
             placeholder="Buscar por SKU, nombre o marca..."
             value={productSearchQuery}

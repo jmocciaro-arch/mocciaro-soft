@@ -1914,7 +1914,12 @@ export default function CotizadorPage() {
                                     onClick={(e) => {
                                       e.stopPropagation()
                                       setLinkingItemId(item.id)
-                                      setProductSearch(item.sku || item.description.slice(0, 30))
+                                      // Pre-cargar con las primeras 3 palabras de la descripción —
+                                      // el SKU del cliente rara vez matchea en NUESTRO catálogo,
+                                      // pero la descripción suele tener marca + modelo identificables.
+                                      const desc = item.description?.trim() || ''
+                                      const seed = desc ? desc.split(/\s+/).slice(0, 3).join(' ') : (item.sku || '')
+                                      setProductSearch(seed)
                                       setProductResults([])
                                       setShowProductSearch(true)
                                     }}
@@ -2228,12 +2233,89 @@ export default function CotizadorPage() {
       <Modal
         isOpen={showProductSearch}
         onClose={() => { setShowProductSearch(false); setProductSearch(''); setProductResults([]); setLinkingItemId(null) }}
-        title={linkingItemId ? `Vincular SKU "${items.find((i) => i.id === linkingItemId)?.sku || ''}" con producto del catálogo` : 'Buscar Producto'}
+        title={linkingItemId ? 'Vincular ítem con producto del catálogo' : 'Buscar Producto'}
         size="lg"
       >
-        <SearchBar placeholder="Buscar por SKU, nombre, marca..." value={productSearch} onChange={setProductSearch} autoFocus className="mb-4" />
+        {/* Panel azul: muestra qué item del cliente estamos vinculando.
+            Crítico para que el operador sepa contra qué tiene que buscar
+            cuando el SKU del cliente no matchea nada. */}
+        {linkingItemId && (() => {
+          const target = items.find((i) => i.id === linkingItemId)
+          if (!target) return null
+          return (
+            <div className="mb-4 rounded-lg border border-[#FF6600]/30 bg-[#FF6600]/5 p-3">
+              <div className="text-[10px] uppercase tracking-wider text-[#FF6600] font-bold mb-1.5">
+                Estás vinculando este ítem del cliente:
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] text-[#9CA3AF]">SKU cliente:</span>
+                  <code className="font-mono text-sm font-bold text-[#FF6600] bg-[#FF6600]/15 px-2 py-0.5 rounded">
+                    {target.sku || '(sin SKU)'}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => navigator.clipboard?.writeText(target.sku || '')}
+                    className="text-[10px] text-[#6B7280] hover:text-[#F0F2F5]"
+                    title="Copiar SKU"
+                  >📋</button>
+                </div>
+                {target.description && (
+                  <div className="flex items-start gap-2">
+                    <span className="text-[10px] text-[#9CA3AF] shrink-0 mt-0.5">Descripción:</span>
+                    <span className="text-sm text-[#F0F2F5] font-medium">{target.description}</span>
+                  </div>
+                )}
+                <div className="flex items-center gap-4 text-[11px] text-[#9CA3AF]">
+                  <span>Cant: <strong className="text-[#F0F2F5]">{target.quantity}</strong></span>
+                  {target.unitPrice > 0 && (
+                    <span>P. unit (OC): <strong className="text-[#F0F2F5]">{formatCurrency(target.unitPrice, currency)}</strong></span>
+                  )}
+                </div>
+              </div>
+              {/* Atajos rápidos: bajo el panel un par de botones que pre-cargan
+                  la búsqueda con el SKU o con las primeras palabras de la
+                  descripción. El SKU del cliente probablemente NO matchea,
+                  por eso priorizamos la descripción. */}
+              <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                <span className="text-[10px] text-[#6B7280]">Buscar por:</span>
+                {target.description && (
+                  <button
+                    type="button"
+                    onClick={() => setProductSearch(target.description.split(/\s+/).slice(0, 3).join(' '))}
+                    className="text-[10px] font-semibold px-2 py-0.5 rounded bg-emerald-500/15 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/40"
+                  >
+                    {target.description.split(/\s+/).slice(0, 3).join(' ')}
+                  </button>
+                )}
+                {target.sku && (
+                  <button
+                    type="button"
+                    onClick={() => setProductSearch(target.sku)}
+                    className="text-[10px] font-semibold px-2 py-0.5 rounded bg-[#1E2330] hover:bg-[#2A3040] text-[#9CA3AF] border border-[#2A3040]"
+                  >
+                    SKU: {target.sku}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setProductSearch('')}
+                  className="text-[10px] font-semibold px-2 py-0.5 rounded bg-[#1E2330] hover:bg-[#2A3040] text-[#6B7280] border border-[#2A3040]"
+                >
+                  Borrar
+                </button>
+              </div>
+            </div>
+          )
+        })()}
+        <SearchBar placeholder="Buscar por SKU, nombre o marca..." value={productSearch} onChange={setProductSearch} autoFocus className="mb-4" />
         {searchingProducts && <div className="flex items-center justify-center py-8"><Loader2 size={24} className="animate-spin text-[#FF6600]" /></div>}
-        {!searchingProducts && productResults.length === 0 && productSearch && <p className="text-sm text-[#4B5563] text-center py-8">No se encontraron productos</p>}
+        {!searchingProducts && productResults.length === 0 && productSearch && (
+          <div className="text-center py-8">
+            <p className="text-sm text-[#9CA3AF] mb-2">No se encontraron productos con &quot;<span className="text-[#F0F2F5] font-mono">{productSearch}</span>&quot;</p>
+            <p className="text-xs text-[#6B7280]">Probá con palabras de la descripción o partes del SKU del catálogo.</p>
+          </div>
+        )}
         <div className="space-y-1 max-h-[400px] overflow-y-auto">
           {productResults.map((p) => (
             <button key={p.id} onClick={() => addProductAsItem(p)} className="w-full text-left flex items-center justify-between p-3 rounded-lg hover:bg-[#1E2330] transition-colors">
