@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo, Suspense } from 'react'
 import { useSearchParams, useRouter, usePathname } from 'next/navigation'
+import Link from 'next/link'
 import { SearchBar } from '@/components/ui/search-bar'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -21,7 +22,7 @@ import {
   ChevronLeft, Upload, Trash2, Edit3, Eye, FileSpreadsheet,
   Check, Percent, ArrowLeft, ToggleLeft, ToggleRight,
   LayoutGrid, List, SlidersHorizontal,
-  TrendingUp, TrendingDown, History, Minus
+  TrendingUp, TrendingDown, History, Minus, Layers
 } from 'lucide-react'
 import { useToast } from '@/components/ui/toast'
 import { useCompanyContext } from '@/lib/company-context'
@@ -1224,6 +1225,12 @@ function ProductosTab() {
         <ScheduledExportsManager />
         <RulesManager />
         <ExpiringWidget />
+        <Link href="/catalogo/duplicados">
+          <Button variant="secondary" size="sm">
+            <Layers className="w-4 h-4" />
+            Duplicados
+          </Button>
+        </Link>
         <LabelsButton
           products={
             (selectedIds.size > 0
