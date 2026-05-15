@@ -91,13 +91,13 @@ export function AlertsBell() {
 
       {open && (
         <div
-          className="absolute right-0 mt-2 rounded-lg shadow-2xl border overflow-hidden z-50"
-          style={{ background: '#0F1218', borderColor: '#2A3040', width: 380, maxHeight: 500 }}
+          className="absolute right-0 mt-2 rounded-md shadow-xl overflow-hidden z-50 bg-white border border-[#E5E5E5]"
+          style={{ width: 380, maxHeight: 500 }}
         >
-          <div className="flex items-center justify-between px-3 py-2 border-b" style={{ borderColor: '#2A3040' }}>
-            <strong className="text-sm">Alertas ({alerts.length})</strong>
+          <div className="flex items-center justify-between px-3 py-2 border-b border-[#F0F0F0] bg-[#F9FAFB]">
+            <strong className="text-sm text-[#1F2937]">Alertas ({alerts.length})</strong>
             {alerts.length > 0 && (
-              <button type="button" onClick={markAllRead} className="text-xs underline opacity-60 hover:opacity-100">
+              <button type="button" onClick={markAllRead} className="text-xs text-[#FF6600] hover:underline font-semibold">
                 Marcar todas leídas
               </button>
             )}
@@ -105,36 +105,33 @@ export function AlertsBell() {
 
           <div className="overflow-y-auto" style={{ maxHeight: 440 }}>
             {alerts.length === 0 ? (
-              <div className="p-6 text-center opacity-60 text-sm">
+              <div className="p-6 text-center text-[#9CA3AF] text-sm">
                 ✓ No hay alertas pendientes
               </div>
             ) : (
               alerts.map((a) => {
-                const colors: any = {
-                  danger: { bg: 'rgba(239,68,68,0.08)', color: '#ef4444', border: 'rgba(239,68,68,0.3)' },
-                  warning: { bg: 'rgba(249,115,22,0.08)', color: '#f97316', border: 'rgba(249,115,22,0.3)' },
-                  info: { bg: 'rgba(59,130,246,0.08)', color: '#3b82f6', border: 'rgba(59,130,246,0.3)' },
-                  success: { bg: 'rgba(16,185,129,0.08)', color: '#10b981', border: 'rgba(16,185,129,0.3)' },
+                const unreadBg: Record<string, string> = {
+                  danger:  'bg-[#FEF2F2]',
+                  warning: 'bg-[#FFF7ED]',
+                  info:    'bg-[#EFF6FF]',
+                  success: 'bg-[#ECFDF5]',
                 }
-                const c = colors[a.severity] || colors.info
+                const icon = a.severity === 'danger' ? '🔴' : a.severity === 'warning' ? '🟠' : a.severity === 'success' ? '✓' : 'ℹ'
                 return (
                   <div
                     key={a.id}
-                    className="px-3 py-2 border-b text-sm flex items-start gap-2"
-                    style={{ borderColor: '#2A3040', background: !a.read_at ? c.bg : 'transparent' }}
+                    className={`px-3 py-2 border-b border-[#F0F0F0] text-sm flex items-start gap-2 ${!a.read_at ? (unreadBg[a.severity] || 'bg-[#EFF6FF]') : 'bg-white'}`}
                   >
-                    <span className="text-lg" style={{ color: c.color }}>
-                      {a.severity === 'danger' ? '🔴' : a.severity === 'warning' ? '🟠' : a.severity === 'success' ? '✓' : 'ℹ'}
-                    </span>
+                    <span className="text-lg">{icon}</span>
                     <div className="flex-1 min-w-0">
-                      <div className="font-semibold text-xs">{a.title}</div>
-                      {a.body && <div className="text-xs opacity-70 mt-0.5">{a.body}</div>}
-                      <div className="text-[10px] opacity-40 mt-1">{new Date(a.created_at).toLocaleString('es-AR')}</div>
+                      <div className="font-semibold text-xs text-[#1F2937]">{a.title}</div>
+                      {a.body && <div className="text-xs text-[#6B7280] mt-0.5">{a.body}</div>}
+                      <div className="text-[10px] text-[#9CA3AF] mt-1">{new Date(a.created_at).toLocaleString('es-AR')}</div>
                     </div>
                     <button
                       type="button"
                       onClick={() => dismiss(a.id)}
-                      className="p-1 opacity-60 hover:opacity-100"
+                      className="p-1 text-[#9CA3AF] hover:text-[#1F2937]"
                       title="Descartar"
                     >
                       <X className="w-3 h-3" />

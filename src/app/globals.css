@@ -93,6 +93,26 @@ body {
   animation: pulse-orange 2s infinite;
 }
 
+/* Scrollbar oculta (para la top-nav StelOrder en mobile) */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* ─── StelShell: protección de tokens en cualquier tema ───────────────
+   El shell usa colores fijos (negro #0F0F0F, blanco, naranja #FF6600,
+   gris #F2F2F2). NO debe ser reescrito por overrides light/bright/gray.
+   El TopNav y los drawers ya llevan data-theme-scope="dark" para
+   bloquear el override de "light". Para "bright" y "gray" reforzamos
+   con [data-stel-shell] para evitar que el fondo gris claro se vuelva
+   blanco u otro tono inesperado dentro del contenido principal. */
+[data-stel-shell] header[data-theme-scope="dark"] { background-color: #0F0F0F !important; }
+html[data-theme="bright"] [data-stel-shell] header[data-theme-scope="dark"] { background-color: #0F0F0F !important; }
+html[data-theme="gray"]   [data-stel-shell] header[data-theme-scope="dark"] { background-color: #0F0F0F !important; }
+
 /* Kanban drag styles */
 .kanban-card {
   cursor: grab;

@@ -1,5 +1,13 @@
 'use client'
 
+/**
+ * Modal — estilo StelOrder.
+ *
+ * - Fondo blanco con sombra fuerte (no border)
+ * - Header con título a la izquierda y X a la derecha, borde inferior sutil
+ * - Backdrop oscuro semitransparente
+ */
+
 import { useEffect, useCallback } from 'react'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -35,36 +43,36 @@ export function Modal({ isOpen, onClose, title, children, size = 'md', className
   if (!isOpen) return null
 
   const sizes = {
-    sm: 'max-w-md',
-    md: 'max-w-lg',
-    lg: 'max-w-2xl',
-    xl: 'max-w-4xl',
+    sm:   'max-w-md',
+    md:   'max-w-lg',
+    lg:   'max-w-2xl',
+    xl:   'max-w-4xl',
     full: 'max-w-[90vw]',
   }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center print:hidden p-2 sm:p-4">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
       <div
         className={cn(
-          'relative w-full bg-[#141820] border border-[#1E2330] rounded-xl sm:rounded-2xl shadow-2xl max-h-[95vh] sm:max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200',
+          'relative w-full bg-white rounded-lg shadow-[0_20px_50px_rgba(0,0,0,0.15),0_4px_10px_rgba(0,0,0,0.08)] max-h-[95vh] sm:max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200',
           sizes[size],
           className
         )}
       >
         {title && (
-          <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-[#1E2330]">
-            <h2 className="text-base sm:text-lg font-semibold text-[#F0F2F5] truncate pr-2">{title}</h2>
+          <div className="flex items-center justify-between px-5 py-3.5 border-b border-[#F0F0F0]">
+            <h2 className="text-[15px] font-bold text-[#1F2937] truncate pr-2">{title}</h2>
             <button
               onClick={onClose}
-              className="p-2 rounded-lg hover:bg-[#1E2330] text-[#6B7280] hover:text-[#F0F2F5] transition-colors shrink-0"
+              className="p-1.5 rounded-md hover:bg-[#F5F5F5] text-[#9CA3AF] hover:text-[#1F2937] transition-colors shrink-0"
               aria-label="Cerrar"
             >
               <X size={18} />
             </button>
           </div>
         )}
-        <div className="overflow-y-auto flex-1 p-4 sm:p-6">{children}</div>
+        <div className="overflow-y-auto flex-1 p-5">{children}</div>
       </div>
     </div>
   )

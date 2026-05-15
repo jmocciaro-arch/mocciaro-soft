@@ -31,10 +31,13 @@ interface Props {
   companyId?: string
   /** Si no hay workflows, mostrar el panel de "crear" en lugar de un mensaje vacío */
   emptyAsAction?: boolean
+  /** Si está vacío, NO renderizar el componente (devuelve null).
+   *  Útil cuando la creación está disponible por otra vía (ej. menú "Más"). */
+  hideIfEmpty?: boolean
 }
 
 export function EntityWorkflowsCard({
-  entityType, entityId, entityName, companyId, emptyAsAction = true,
+  entityType, entityId, entityName, companyId, emptyAsAction = true, hideIfEmpty = false,
 }: Props) {
   const router = useRouter()
   const { addToast } = useToast()
@@ -58,6 +61,22 @@ export function EntityWorkflowsCard({
   }, [entityType, entityId])
 
   useEffect(() => { reload() }, [reload])
+
+  // Permite abrir el modal "nuevo flujo" desde fuera (ej. menú "Más" del documento)
+  // disparando un CustomEvent global. Filtramos por entityId para que solo
+  // responda la instancia correcta cuando hay varias cards en pantalla.
+  useEffect(() => {
+    function handleOpenNew(e: Event) {
+      const detail = (e as CustomEvent<{ entityId?: string }>).detail
+      if (!detail?.entityId || detail.entityId === entityId) {
+        setNewName(entityName ? `Flujo para ${entityName}` : 'Nuevo flujo')
+        setNewTemplate('')
+        setShowNew(true)
+      }
+    }
+    window.addEventListener('entity-workflows:new', handleOpenNew as EventListener)
+    return () => window.removeEventListener('entity-workflows:new', handleOpenNew as EventListener)
+  }, [entityId, entityName])
 
   const handleCreate = async () => {
     if (!newName.trim()) { addToast({ type: 'warning', title: 'Falta el nombre' }); return }
@@ -87,12 +106,18 @@ export function EntityWorkflowsCard({
   }
 
   if (loading) {
+    // Si pidieron hideIfEmpty, no mostramos nada durante el load: evita un
+    // "flash" del placeholder antes de saber si hay workflows.
+    if (hideIfEmpty) return null
     return (
       <div className="rounded-xl border border-[#1E2330] bg-[#141820] p-4 flex items-center gap-2 text-xs text-[#6B7280]">
         <Loader2 size={12} className="animate-spin" /> Cargando workflows...
       </div>
     )
   }
+
+  // Hide cuando no hay workflows y no se pidió mostrar como acción.
+  if (hideIfEmpty && workflows.length === 0 && !showNew) return null
 
   return (
     <div className="rounded-xl border border-[#1E2330] bg-[#141820] p-4">

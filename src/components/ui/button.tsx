@@ -1,5 +1,19 @@
 'use client'
 
+/**
+ * Button — estilo StelOrder.
+ *
+ * Variantes:
+ *  - primary:   naranja sólido, sombra leve, blanco
+ *  - secondary: blanco con borde sutil, gris oscuro
+ *  - ghost:     transparente, sin borde, hover bg gris muy claro
+ *  - outline:   blanco con borde sutil (alias visual de secondary, mantenida por compat)
+ *  - danger:    rojo sólido
+ *
+ * Estilo: rounded-md (6px) — más rectangular que el anterior rounded-lg.
+ * Sombras: solo en primary, y solo cuando NO está deshabilitado.
+ */
+
 import { forwardRef, type ButtonHTMLAttributes } from 'react'
 import { cn } from '@/lib/utils'
 
@@ -11,21 +25,24 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant = 'primary', size = 'md', loading, disabled, children, ...props }, ref) => {
-    const base = 'inline-flex items-center justify-center gap-2 font-medium rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-orange-500/50 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap'
+    const base =
+      'inline-flex items-center justify-center gap-2 font-semibold rounded-md transition-colors duration-150 ' +
+      'focus:outline-none focus-visible:ring-2 focus-visible:ring-[#FF6600]/40 focus-visible:ring-offset-1 ' +
+      'disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap'
 
     const variants = {
-      primary: 'bg-[#FF6600] hover:bg-[#E55A00] text-white shadow-lg shadow-orange-500/20',
-      secondary: 'bg-[#1E2330] hover:bg-[#2A3040] text-[#F0F2F5] border border-[#2A3040]',
-      ghost: 'hover:bg-[#1E2330] text-[#9CA3AF]',
-      danger: 'bg-red-600 hover:bg-red-700 text-white',
-      outline: 'border border-[#2A3040] hover:bg-[#1E2330] text-[#F0F2F5]',
+      primary:   'bg-[#FF6600] hover:bg-[#E55A00] active:bg-[#CC5200] text-white shadow-sm',
+      secondary: 'bg-white hover:bg-[#F8F8F8] active:bg-[#F0F0F0] text-[#1F2937] border border-[#E5E5E5]',
+      ghost:     'bg-transparent hover:bg-[#F5F5F5] text-[#374151]',
+      outline:   'bg-white hover:bg-[#F8F8F8] text-[#1F2937] border border-[#E5E5E5]',
+      danger:    'bg-[#DC2626] hover:bg-[#B91C1C] text-white shadow-sm',
     }
 
     const sizes = {
-      sm: 'h-9 sm:h-8 px-3 text-xs',
-      md: 'h-11 sm:h-10 px-4 text-sm',
-      lg: 'h-12 px-6 text-base',
-      icon: 'h-10 w-10 p-0',
+      sm:   'h-8 px-3 text-xs',
+      md:   'h-9 px-3.5 text-[13px]',
+      lg:   'h-10 px-5 text-sm',
+      icon: 'h-9 w-9 p-0',
     }
 
     return (

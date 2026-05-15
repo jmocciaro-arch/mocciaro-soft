@@ -63,11 +63,11 @@ export default function RootLayout({
             antes del primer paint para evitar FOUC. */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var d=document.documentElement;var t=localStorage.getItem('theme');if(['light','dark','bright','gray'].indexOf(t)<0)t='dark';d.setAttribute('data-theme',t);var s=localStorage.getItem('textSize');if(['sm','normal','lg','xl'].indexOf(s)<0)s='normal';d.setAttribute('data-text-size',s);var a=localStorage.getItem('accent');if(['orange','blue','green','purple','rose','teal'].indexOf(a)<0)a='orange';d.setAttribute('data-accent',a);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();`,
+            __html: `(function(){try{var d=document.documentElement;d.setAttribute('data-theme','light');try{localStorage.setItem('theme','light');}catch(_){}var s=localStorage.getItem('textSize');if(['sm','normal','lg','xl'].indexOf(s)<0)s='normal';d.setAttribute('data-text-size',s);d.setAttribute('data-accent','orange');try{localStorage.setItem('accent','orange');}catch(_){}}catch(e){document.documentElement.setAttribute('data-theme','light');}})();`,
           }}
         />
       </head>
-      <body className="min-h-screen bg-[#0B0E13] text-[#F0F2F5] antialiased">
+      <body className="min-h-screen bg-[#F2F2F2] text-[#1F2937] antialiased">
         {children}
         {/* Registro del Service Worker y componentes PWA globales */}
         <PWAInit />

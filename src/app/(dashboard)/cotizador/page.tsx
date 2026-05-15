@@ -15,6 +15,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useCompanyFilter } from '@/hooks/use-company-filter'
 import { useCompanyContext } from '@/lib/company-context'
 import { formatCurrency, INCOTERMS } from '@/lib/utils'
+import { resolveTaxConfigFromClient, type TaxConfig } from '@/lib/tax-config'
 import type { Company, Client } from '@/types'
 import { DocumentDetailLayout, type WorkflowStep, type Alert, type InternalNote } from '@/components/workflow/document-detail-layout'
 import { DocumentProcessBar } from '@/components/workflow/document-process-bar'
@@ -25,11 +26,17 @@ import { DocumentForm } from '@/components/workflow/document-form'
 import { DocumentListCard } from '@/components/workflow/document-list-card'
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table'
 import { mapStatus } from '@/lib/document-helpers'
+import { quoteToOrder } from '@/lib/document-workflow'
 import {
   Plus, Minus, Trash2, Save, FileText, Paperclip,
   MessageSquare, Building2, User, Search, X, Loader2, Printer, List, PlusCircle, Upload, Sparkles
 } from 'lucide-react'
 import { DocumentAttachments } from '@/components/documents/document-attachments'
+import { SendConfirmationModal } from '@/components/workflow/send-confirmation-modal'
+import { SendDocumentModal } from '@/components/workflow/send-document-modal'
+import { DocumentMoreMenu } from '@/components/workflow/document-more-menu'
+import { QuoteVersionBadge } from '@/components/workflow/quote-version-badge'
+import { markAcceptedVersion, snapshotQuoteVersion } from '@/lib/quote-versioning'
 
 interface QuoteLineItem {
   id: string
@@ -69,7 +76,7 @@ interface SavedQuote {
   incoterm?: string
   client_id?: string
   company_id?: string
-  client?: { name: string; tax_id?: string; country?: string } | null
+  client?: { name: string; legal_name?: string; tax_id?: string; country?: string } | null
   company?: { name: string; country?: string } | null
   items?: Array<{
     id: string
@@ -119,9 +126,25 @@ export default function CotizadorPage() {
   const [selectedClient, setSelectedClient] = useState<Client | null>(null)
   const [showClientDropdown, setShowClientDropdown] = useState(false)
   const clientDebounceRef = useRef<NodeJS.Timeout | null>(null)
+  // Contactos del cliente seleccionado (NORDEX → Mariella, Ana, etc.)
+  interface ContactLite { id: string; name: string; position: string | null; email: string | null; phone: string | null; whatsapp: string | null; is_primary: boolean | null; receives_quotes: boolean | null }
+  const [clientContacts, setClientContacts] = useState<ContactLite[]>([])
+  const [participatingContactIds, setParticipatingContactIds] = useState<string[]>([])
+  const [showNewContactModal, setShowNewContactModal] = useState(false)
+  const [newContactDraft, setNewContactDraft] = useState({ name: '', position: '', email: '', phone: '' })
+  const [savingContact, setSavingContact] = useState(false)
 
   // Quote
   const [currentQuoteId, setCurrentQuoteId] = useState<string | null>(null)
+  const [quoteStatus, setQuoteStatus] = useState<'borrador' | 'enviada' | 'aceptada' | 'rechazada' | 'pedido' | null>(null)
+  const [transitioning, setTransitioning] = useState(false)
+  // Cuando se convierte la cotización en pedido real (via quoteToOrder), guardamos
+  // referencia al pedido creado para mostrar el link "Ver pedido →"
+  const [createdOrder, setCreatedOrder] = useState<{ id: string; number: string } | null>(null)
+  // FASE 0 — Modal de confirmación post-envío WhatsApp (estado falso desactivado)
+  const [showSendConfirmation, setShowSendConfirmation] = useState(false)
+  // Modal "Enviar al cliente" estilo StelOrder (split-screen con preview)
+  const [showSendModal, setShowSendModal] = useState(false)
   const [quoteNumber, setQuoteNumber] = useState('')
   const [docSubtype, setDocSubtype] = useState<'cotizacion' | 'presupuesto' | 'proforma' | 'packing_list' | 'oferta'>('cotizacion')
   const [items, setItems] = useState<QuoteLineItem[]>([])
@@ -134,6 +157,9 @@ export default function CotizadorPage() {
   const [irpfRate, setIrpfRate] = useState(0)
   const [reEnabled, setReEnabled] = useState(false)
   const [reRate, setReRate] = useState(0)
+  // Fuente del IVA aplicado (override / default cliente / fallback). Se actualiza
+  // cuando cambia (cliente, empresa). Sirve para mostrar un chip en la UI.
+  const [taxConfigSource, setTaxConfigSource] = useState<TaxConfig['source'] | null>(null)
   const [validUntil, setValidUntil] = useState('')
   const [paymentTerms, setPaymentTerms] = useState('')       // "30 dias FF"
   const [paymentDays, setPaymentDays] = useState<number>(0)   // 30
@@ -146,6 +172,14 @@ export default function CotizadorPage() {
   const [productResults, setProductResults] = useState<ProductSearchResult[]>([])
   const [searchingProducts, setSearchingProducts] = useState(false)
   const productDebounceRef = useRef<NodeJS.Timeout | null>(null)
+  // Cuando el usuario clickea el dot rojo (item sin match), guardamos qué item está
+  // vinculando. Al elegir un producto se actualiza ese item específico Y se guarda
+  // el alias en tt_sku_aliases para que la próxima OC lo encuentre solo.
+  const [linkingItemId, setLinkingItemId] = useState<string | null>(null)
+  // Cache de productos vinculados (key: product_id) para mostrar el SKU del
+  // catálogo bajo el SKU del cliente en cada línea matcheada. Se popula
+  // automáticamente cuando cambian los items.
+  const [linkedProducts, setLinkedProducts] = useState<Map<string, { sku: string; name: string; brand: string | null }>>(new Map())
 
   // Saved quotes list
   const [savedQuotes, setSavedQuotes] = useState<SavedQuote[]>([])
@@ -198,7 +232,7 @@ export default function CotizadorPage() {
 
     setConvertingOc(true)
     try {
-      // 1. Cargar items en el cotizador
+      // 1. Cargar items en el cotizador (sin match todavía)
       const newItems: QuoteLineItem[] = data.items.map((it) => ({
         id: Math.random().toString(36).slice(2),
         product_id: null,
@@ -210,6 +244,94 @@ export default function CotizadorPage() {
         notes: it.observaciones || '',
       }))
       setItems(newItems)
+
+      // 1.b Auto-match en 2 pasos:
+      //   (a) Aliases aprendidos (tt_sku_aliases): si falla la query, no
+      //       rompemos el flujo — solo seguimos sin alias.
+      //   (b) SKU exacto en tt_products.
+      const skusBuscados = newItems.map((i) => i.sku.trim()).filter((s) => s.length > 0)
+      if (skusBuscados.length > 0) {
+        const supabase = createClient()
+
+        // (a) Lookup de aliases (defensivo: cualquier error → aliasMap vacío)
+        let aliasMap = new Map<string, { productId: string; aliasId: string; scope: 'client' | 'global' }>()
+        if (selectedCompanyId) {
+          try {
+            const { lookupAliasesForSkus } = await import('@/lib/sku-aliases')
+            aliasMap = await lookupAliasesForSkus({
+              companyId: selectedCompanyId,
+              clientId: selectedClient?.id || null,
+              externalSkus: skusBuscados,
+            })
+          } catch (aliasErr) {
+            console.warn('Lookup de aliases falló — continuando con match directo:', aliasErr)
+          }
+        }
+
+        // (b) SKU exacto en tt_products para los que no tuvieron alias
+        const skusSinAlias = skusBuscados.filter((s) => !aliasMap.has(s.toUpperCase().trim()))
+        const { data: prods } = skusSinAlias.length > 0
+          ? await supabase
+              .from('tt_products')
+              .select('id, sku, name, price_eur, cost_eur, price_min')
+              .in('sku', skusSinAlias)
+              .eq('active', true)
+          : { data: [] }
+
+        // Productos referenciados por aliases (para tomar nombre/precio)
+        const aliasProductIds = Array.from(aliasMap.values()).map((v) => v.productId)
+        const { data: aliasProds } = aliasProductIds.length > 0
+          ? await supabase
+              .from('tt_products')
+              .select('id, sku, name, price_eur, cost_eur, price_min')
+              .in('id', aliasProductIds)
+          : { data: [] }
+
+        const productById = new Map<string, { id: string; sku: string; name: string; price_eur: number; cost_eur: number; price_min: number | null }>()
+        for (const p of ([...(aliasProds || []), ...(prods || [])]) as Array<{ id: string; sku: string; name: string; price_eur: number; cost_eur: number; price_min: number | null }>) {
+          productById.set(p.id, p)
+        }
+        const bySku = new Map<string, { id: string; sku: string; name: string; price_eur: number; cost_eur: number; price_min: number | null }>()
+        for (const p of (prods || []) as Array<{ id: string; sku: string; name: string; price_eur: number; cost_eur: number; price_min: number | null }>) {
+          bySku.set(p.sku.toUpperCase().trim(), p)
+        }
+
+        setItems((curr) => curr.map((item) => {
+          const key = item.sku.toUpperCase().trim()
+          const aliasHit = aliasMap.get(key)
+          const match = aliasHit ? productById.get(aliasHit.productId) : bySku.get(key)
+          if (!match) return item
+          // Si la OC trae precio, lo respetamos. Sino: price_eur del catálogo,
+          // y si no hay price_eur pero sí cost_eur, sugerimos cost*1.3
+          let suggestedPrice = match.price_eur || 0
+          if (suggestedPrice <= 0 && match.cost_eur && match.cost_eur > 0) {
+            suggestedPrice = Math.round(match.cost_eur * 1.3 * 100) / 100
+          }
+          const ocPrice = item.unitPrice > 0 ? item.unitPrice : suggestedPrice
+          const notesPrefix = (item.unitPrice <= 0 && suggestedPrice > 0 && (match.price_eur || 0) <= 0)
+            ? 'Precio sugerido = costo + 30%. '
+            : ''
+          return {
+            ...item,
+            product_id: match.id,
+            description: item.description && item.description.length > 3 ? item.description : match.name,
+            unitPrice: ocPrice,
+            notes: notesPrefix + (item.notes || ''),
+          }
+        }))
+        const aliasHits = aliasMap.size
+        const directHits = newItems.filter((i) => bySku.has(i.sku.toUpperCase().trim())).length
+        const total = aliasHits + directHits
+        if (total > 0) {
+          addToast({
+            type: 'info',
+            title: `${total}/${newItems.length} items matcheados con el catálogo`,
+            message: aliasHits > 0
+              ? `${aliasHits} desde historial de vinculación, ${directHits} por SKU directo`
+              : total < newItems.length ? 'Revisá los items en rojo (sin match)' : 'Todos los SKUs encontrados ✓',
+          })
+        }
+      }
 
       // 2. Pre-cargar moneda
       if (data.moneda) {
@@ -335,6 +457,59 @@ export default function CotizadorPage() {
     return () => { if (productDebounceRef.current) clearTimeout(productDebounceRef.current) }
   }, [productSearch])
 
+  // Cargar contactos del cliente seleccionado. Pre-selecciona el primario
+  // o los marcados como receives_quotes=true (default razonable).
+  useEffect(() => {
+    if (!selectedClient?.id) {
+      setClientContacts([])
+      // No tocamos participatingContactIds si estamos cargando una cotización guardada
+      return
+    }
+    const sb = createClient()
+    void sb.from('tt_client_contacts')
+      .select('id, name, position, email, phone, whatsapp, is_primary, receives_quotes')
+      .eq('client_id', selectedClient.id)
+      .eq('active', true)
+      .order('is_primary', { ascending: false })
+      .order('name')
+      .then(({ data }) => {
+        const contacts = (data || []) as ContactLite[]
+        setClientContacts(contacts)
+        // Pre-selección: si NO había contactos elegidos antes, marcamos los
+        // que reciben cotizaciones (o el primario si no hay).
+        setParticipatingContactIds((prev) => {
+          if (prev.length > 0) return prev
+          const auto = contacts
+            .filter((c) => c.receives_quotes || c.is_primary)
+            .map((c) => c.id)
+          return auto.length > 0 ? auto : (contacts[0] ? [contacts[0].id] : [])
+        })
+      })
+  }, [selectedClient?.id])
+
+  // Carga el SKU/nombre del catálogo para cada item vinculado, así podemos
+  // mostrar "[SKU cliente] → [SKU catálogo]" en cada línea. Se dispara cada
+  // vez que cambia el set de product_ids vinculados.
+  useEffect(() => {
+    const ids = Array.from(new Set(items.map((i) => i.product_id).filter(Boolean) as string[]))
+    if (ids.length === 0) { setLinkedProducts(new Map()); return }
+    // Si todos los ids ya están en el cache, no hace falta refetch
+    const missing = ids.filter((id) => !linkedProducts.has(id))
+    if (missing.length === 0) return
+    const sb = createClient()
+    void sb.from('tt_products').select('id, sku, name, brand').in('id', missing).then(({ data }) => {
+      setLinkedProducts((prev) => {
+        const next = new Map(prev)
+        for (const p of (data || []) as Array<{ id: string; sku: string; name: string; brand: string | null }>) {
+          next.set(p.id, { sku: p.sku, name: p.name, brand: p.brand })
+        }
+        return next
+      })
+    })
+    // No depende de linkedProducts (sólo de los ids) — usamos length+ids como key
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items.map((i) => i.product_id).filter(Boolean).join(',')])
+
   /**
    * REGLA DE ORO: las empresas del selector salen del contexto multi-empresa.
    * Si el topbar tiene Torquetools seleccionada → solo Torquetools aparece acá.
@@ -387,33 +562,73 @@ export default function CotizadorPage() {
       .or(`name.ilike.%${query}%,legal_name.ilike.%${query}%,tax_id.ilike.%${query}%,email.ilike.%${query}%`)
       .eq('active', true)
     q = filterByCompany(q)
-    const { data } = await q.limit(10)
-    setClientResults((data || []) as Client[])
+    // Traemos más filas porque hay duplicados por tax_id (~38% de la base
+    // está repetida por la migración de StelOrder). Después dedup en runtime.
+    const { data } = await q.limit(40)
+    const rows = (data || []) as Client[]
+    const SUFIJOS = /\b(SA|SRL|SAS|SL|S\.A\.|S\.R\.L\.|S\.A\.S\.|LLC|INC|LTD|BV|GMBH|OY|AB|PLC|CIA|LIMITED|SOCIEDAD|GROUP|HOLDING|CORP)\b/i
+    const normalizeTaxId = (s: string | null | undefined) => (s || '').replace(/[\s.\-]/g, '').toUpperCase()
+    const scoreClient = (c: Client) => {
+      let s = 0
+      if (c.legal_name && SUFIJOS.test(c.legal_name)) s += 3
+      if (c.legal_name && c.legal_name !== c.name) s += 1
+      if (c.tax_id && /\d{6,}/.test(c.tax_id)) s += 1
+      if (c.email) s += 1
+      return s
+    }
+    // Dedup por tax_id normalizado (cuando existe) o por id, preferimos
+    // la fila con mayor score (la que más parece "razón social del cliente").
+    const byKey = new Map<string, Client>()
+    for (const r of rows) {
+      const key = normalizeTaxId(r.tax_id) || `id:${r.id}`
+      const existing = byKey.get(key)
+      if (!existing || scoreClient(r) > scoreClient(existing)) byKey.set(key, r)
+    }
+    const deduped = Array.from(byKey.values()).slice(0, 10)
+    setClientResults(deduped)
     setShowClientDropdown(true)
   }
 
-  // Auto-apply IVA/IRPF/RE when client is selected — cada cliente trae su régimen fiscal
+  // Auto-apply IVA/IRPF/RE: resuelve por (cliente, empresa) con override v70 →
+  // fallback a defaults del cliente → fallback duro 21%/sin retenciones.
+  // Se redispara cuando cambia el cliente o la empresa activa. Después de esto,
+  // si el operador edita los toggles a mano, sus cambios persisten hasta que
+  // vuelva a cambiar cliente/empresa (no hay watcher de los toggles).
   useEffect(() => {
     if (!selectedClient) {
-      // Sin cliente → defaults razonables: IVA on, sin retenciones
       setIvaEnabled(true); setTaxRate(21)
       setIrpfEnabled(false); setIrpfRate(0); setReEnabled(false); setReRate(0)
+      setTaxConfigSource(null)
       return
     }
+
+    // Guard contra race conditions: si el efecto vuelve a dispararse antes
+    // que termine la query, descartamos la respuesta vieja.
+    let cancelled = false
+    const sb = createClient()
     const c = selectedClient as Client & {
+      id: string
       subject_iva?: boolean; iva_rate?: number;
       subject_irpf?: boolean; irpf_rate?: number;
       subject_re?: boolean; re_rate?: number;
     }
-    // IVA: default true si no está definido (compatibilidad con clientes viejos)
-    const ivaOn = c.subject_iva !== false
-    setIvaEnabled(ivaOn)
-    setTaxRate(ivaOn ? (c.iva_rate ?? 21) : 0)
-    if (c.subject_irpf) { setIrpfEnabled(true); setIrpfRate(c.irpf_rate || 15) }
-    else { setIrpfEnabled(false); setIrpfRate(0) }
-    if (c.subject_re) { setReEnabled(true); setReRate(c.re_rate || 5.2) }
-    else { setReEnabled(false); setReRate(0) }
-  }, [selectedClient?.id])
+
+    void resolveTaxConfigFromClient(sb, c, activeCompanyId).then((cfg) => {
+      if (cancelled) return
+      setIvaEnabled(cfg.subject_iva)
+      setTaxRate(cfg.subject_iva ? cfg.iva_rate : 0)
+      setIrpfEnabled(cfg.subject_irpf)
+      setIrpfRate(cfg.subject_irpf ? cfg.irpf_rate : 0)
+      setReEnabled(cfg.subject_re)
+      setReRate(cfg.subject_re ? cfg.re_rate : 0)
+      setTaxConfigSource(cfg.source)
+    })
+
+    return () => { cancelled = true }
+    // selectedClient.id es la signal real; selectedClient completo solo dispara
+    // el effect cuando se selecciona/deselecciona, no por mutaciones internas.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedClient?.id, activeCompanyId])
 
   // Client special prices (loaded when client is selected)
   const [clientPrices, setClientPrices] = useState<Record<string, { special_price: number | null; discount_pct: number }>>({})
@@ -450,12 +665,18 @@ export default function CotizadorPage() {
   }, [selectedClient?.id])
 
   // Resolve best price for a product: special price > price list > catalog
-  function resolvePrice(productId: string, catalogPrice: number): { price: number; source: string; discount: number } {
+  function resolvePrice(productId: string, catalogPrice: number, costPrice?: number): { price: number; source: string; discount: number } {
     const special = clientPrices[productId]
     if (special?.special_price != null) return { price: special.special_price, source: 'especial', discount: special.discount_pct }
     if (special?.discount_pct) return { price: catalogPrice * (1 - special.discount_pct / 100), source: 'dto_cliente', discount: special.discount_pct }
     const plPrice = clientPriceList[productId]
     if (plPrice != null) return { price: plPrice, source: 'tarifa', discount: 0 }
+    // Si el producto NO tiene price_eur pero tiene cost_eur, sugerimos cost+30%.
+    // Útil mientras se cargan los precios reales (la mayoría de productos no
+    // tienen price_eur tras la migración de StelOrder).
+    if ((!catalogPrice || catalogPrice <= 0) && costPrice && costPrice > 0) {
+      return { price: Math.round(costPrice * 1.3 * 100) / 100, source: 'sugerido_costo+30%', discount: 0 }
+    }
     return { price: catalogPrice, source: 'catalogo', discount: 0 }
   }
 
@@ -463,15 +684,114 @@ export default function CotizadorPage() {
     setSearchingProducts(true)
     const supabase = createClient()
     const tokens = query.trim().toLowerCase().split(/\s+/)
-    let q = supabase.from('tt_products').select('id, sku, name, brand, price_eur, cost_eur, image_url, product_type, price_min').eq('active', true).limit(20)
+    // Traemos más de 20 porque hay duplicados de la migración de StelOrder
+    // (mismo nombre con SKU auto-generado tipo PROXXXXX y el SKU real tipo
+    // TC.QSP o TE.HEAVY.55). Después dedup en runtime.
+    let q = supabase.from('tt_products').select('id, sku, name, brand, price_eur, cost_eur, image_url, product_type, price_min').eq('active', true).limit(80)
     for (const token of tokens) { q = q.or(`name.ilike.%${token}%,sku.ilike.%${token}%,brand.ilike.%${token}%`) }
     const { data } = await q
-    setProductResults((data || []) as ProductSearchResult[])
+    const rows = (data || []) as ProductSearchResult[]
+
+    // Dedup por nombre+marca, preferimos:
+    //   - SKU "real" (no patrón PROXXXXX o COSTOPROXXXXX auto-generado)
+    //   - Con precio_eur > 0 (mejor que precio cero)
+    //   - Con price_min definido
+    //   - Con imagen
+    const isAutoSku = (sku: string) => /^(PRO|COSTO|GASTO|SVC|SRV)\d{3,}$/i.test(sku) || /^[A-Z]{3,6}\d{5,}$/.test(sku)
+    const scoreProd = (p: ProductSearchResult) => {
+      let s = 0
+      if (!isAutoSku(p.sku)) s += 10
+      if (p.price_eur && p.price_eur > 0) s += 3
+      if (p.price_min && p.price_min > 0) s += 1
+      if (p.image_url) s += 1
+      if (p.brand) s += 1
+      return s
+    }
+    const byKey = new Map<string, ProductSearchResult>()
+    for (const p of rows) {
+      const key = `${(p.name || '').trim().toLowerCase()}__${(p.brand || '').trim().toLowerCase()}`
+      const existing = byKey.get(key)
+      if (!existing || scoreProd(p) > scoreProd(existing)) byKey.set(key, p)
+    }
+    setProductResults(Array.from(byKey.values()).slice(0, 20))
     setSearchingProducts(false)
   }
 
-  function addProductAsItem(product: ProductSearchResult) {
-    const resolved = resolvePrice(product.id, product.price_eur)
+  async function addProductAsItem(product: ProductSearchResult) {
+    // Si venimos del flujo "vincular ítem rojo", actualizamos el ítem existente
+    // (conservamos cantidad, sku original del cliente, descripción) y guardamos
+    // el alias para futuras OCs.
+    if (linkingItemId) {
+      const target = items.find((i) => i.id === linkingItemId)
+      if (target) {
+        setItems((prev) => prev.map((i) => i.id === linkingItemId ? {
+          ...i,
+          product_id: product.id,
+          // Mantenemos el SKU original del cliente — es lo que viene en su OC.
+          // El SKU del catálogo queda implícito vía product_id.
+          // Mantenemos también la cantidad y precio que ya estaban en la línea.
+        } : i))
+
+        // Si la cotización ya está guardada en DB, persistir el vínculo
+        // inmediatamente en tt_quote_items (no esperar a que el user vuelva a
+        // tocar "Guardar"). Hacemos match por quote_id + sku + product_id IS NULL
+        // para no pisar otros items que ya estuvieran vinculados.
+        if (currentQuoteId && target.sku.trim()) {
+          try {
+            const sb = createClient()
+            const { error } = await sb.from('tt_quote_items')
+              .update({ product_id: product.id })
+              .eq('quote_id', currentQuoteId)
+              .eq('sku', target.sku)
+              .is('product_id', null)
+            if (error) console.warn('No se pudo persistir el vínculo en tt_quote_items:', error)
+          } catch (err) {
+            console.warn('Error persistiendo vínculo en DB:', err)
+          }
+        }
+
+        // Guardar alias para que la próxima OC lo encuentre solo.
+        // Si no hay company seleccionada no podemos guardar (FK obligatoria).
+        if (selectedCompanyId && target.sku.trim()) {
+          try {
+            const { saveAlias } = await import('@/lib/sku-aliases')
+            const useClientScope = !!selectedClient?.id && confirm(
+              `¿Guardar este vínculo SOLO para "${selectedClient.legal_name || selectedClient.name}"?\n\n` +
+              `Aceptar = alias específico para ese cliente.\n` +
+              `Cancelar = alias GLOBAL (vale para cualquier cliente con SKU "${target.sku.trim()}").`
+            )
+            const saved = await saveAlias({
+              companyId: selectedCompanyId,
+              clientId: useClientScope ? selectedClient!.id : null,
+              externalSku: target.sku,
+              productId: product.id,
+              source: 'manual',
+            })
+            if (saved) {
+              addToast({
+                type: 'success',
+                title: 'Vínculo guardado',
+                message: useClientScope
+                  ? `Próxima OC de este cliente con SKU "${target.sku}" se va a matchear solo`
+                  : `SKU "${target.sku}" matcheado globalmente con ${product.sku}`,
+              })
+            } else {
+              addToast({ type: 'warning', title: 'Vinculado pero no se pudo guardar el alias' })
+            }
+          } catch (err) {
+            console.error('Error guardando alias:', err)
+            addToast({ type: 'warning', title: 'Vinculado pero falló guardar el alias' })
+          }
+        }
+      }
+      setLinkingItemId(null)
+      setShowProductSearch(false)
+      setProductSearch('')
+      return
+    }
+
+    // Flujo normal: agregar nuevo ítem a la cotización
+    const resolved = resolvePrice(product.id, product.price_eur, product.cost_eur)
     setItems((prev) => [...prev, {
       id: Math.random().toString(36).slice(2),
       product_id: product.id,
@@ -502,24 +822,28 @@ export default function CotizadorPage() {
   const total = subtotal + taxAmount - irpfAmount + reAmount
 
   async function saveQuote() {
+    if (currentQuoteId) { addToast({ type: 'info', title: 'Esta cotización ya está guardada', message: 'Usá los botones de enviar o convertir' }); return }
+    if (saving) return
     if (!selectedCompanyId) { addToast({ type: 'error', title: 'Selecciona una empresa emisora' }); return }
+    if (!selectedClient) { addToast({ type: 'error', title: 'Seleccioná un cliente antes de guardar' }); return }
     if (items.length === 0) { addToast({ type: 'error', title: 'Agrega al menos un item' }); return }
     setSaving(true)
     const supabase = createClient()
     try {
       const { data: quoteData, error: quoteError } = await supabase
         .from('tt_quotes')
-        .insert({ number: quoteNumber, company_id: selectedCompanyId, client_id: selectedClient?.id || null, user_id: (await supabase.from('tt_users').select('id').eq('role', 'admin').limit(1).single()).data?.id || null, status: 'borrador', doc_subtype: docSubtype, notes, internal_notes: internalNotes, incoterm: incoterm || null, payment_terms: paymentTerms || null, payment_days: paymentDays || null, payment_terms_type: paymentTermsType || null, currency, subtotal, subject_iva: ivaEnabled, tax_rate: ivaEnabled ? taxRate : 0, tax_amount: taxAmount, irpf_rate: irpfEnabled ? irpfRate : 0, irpf_amount: irpfAmount, re_rate: reEnabled ? reRate : 0, re_amount: reAmount, total, valid_until: validUntil ? new Date(validUntil).toISOString() : null })
+        .insert({ number: quoteNumber, company_id: selectedCompanyId, client_id: selectedClient?.id || null, user_id: (await supabase.from('tt_users').select('id').eq('role', 'admin').limit(1).single()).data?.id || null, status: 'borrador', doc_subtype: docSubtype, notes, internal_notes: internalNotes, incoterm: incoterm || null, payment_terms: paymentTerms || null, payment_days: paymentDays || null, payment_terms_type: paymentTermsType || null, currency, subtotal, subject_iva: ivaEnabled, tax_rate: ivaEnabled ? taxRate : 0, tax_amount: taxAmount, irpf_rate: irpfEnabled ? irpfRate : 0, irpf_amount: irpfAmount, re_rate: reEnabled ? reRate : 0, re_amount: reAmount, total, valid_until: validUntil ? new Date(validUntil).toISOString() : null, participating_contact_ids: participatingContactIds.length > 0 ? participatingContactIds : null })
         .select('id').single()
       if (quoteError) throw quoteError
       const quoteItems = items.map((item, idx) => ({ quote_id: quoteData.id, product_id: item.product_id, sort_order: idx + 1, sku: item.sku, description: item.description, quantity: item.quantity, unit_price: item.unitPrice, discount_pct: item.discount, subtotal: item.quantity * item.unitPrice * (1 - item.discount / 100), notes: item.notes || null }))
       const { error: itemsError } = await supabase.from('tt_quote_items').insert(quoteItems)
       if (itemsError) throw itemsError
-      await supabase.from('tt_activity_log').insert({ entity_type: 'quote', entity_id: quoteData.id, action: 'Cotizacion creada', detail: `${quoteNumber} - ${selectedClient?.name || 'Sin cliente'} - ${formatCurrency(total, currency)}` })
-      addToast({ type: 'success', title: 'Cotizacion guardada', message: 'Ahora podés adjuntar la OC, pliegos, etc.' })
+      await supabase.from('tt_activity_log').insert({ entity_type: 'quote', entity_id: quoteData.id, action: 'Cotizacion creada', detail: `${quoteNumber} - ${selectedClient?.legal_name || selectedClient?.name || 'Sin cliente'} - ${formatCurrency(total, currency)}` })
+      addToast({ type: 'success', title: 'Cotización guardada', message: 'Próximo paso: enviar al cliente' })
       // No reseteamos los datos — dejamos al usuario sobre la cotización recién creada
       // para que pueda adjuntar archivos. setCurrentQuoteId expone el ID al panel de adjuntos.
       setCurrentQuoteId(quoteData.id as string)
+      setQuoteStatus('borrador')
       loadSavedQuotes()
     } catch (err) {
       console.error('Error guardando cotizacion:', err)
@@ -534,12 +858,233 @@ export default function CotizadorPage() {
     } finally { setSaving(false) }
   }
 
+  async function transitionStatus(newStatus: 'enviada' | 'aceptada' | 'rechazada') {
+    if (!currentQuoteId) return
+    setTransitioning(true)
+    const sb = createClient()
+    try {
+      // FASE 1.4 — Al pasar a 'enviada' por primera vez, snapshoteamos
+      // la versión actual para tener el original que vio el cliente.
+      if (newStatus === 'enviada') {
+        const { data: authUser } = await sb.auth.getUser()
+        const snap = await snapshotQuoteVersion({
+          quoteId: currentQuoteId,
+          changeSummary: 'Versión enviada al cliente',
+          actorUserId: authUser?.user?.id ?? null,
+        })
+        if (!snap.ok) {
+          console.warn('[transitionStatus] snapshotQuoteVersion fallo:', snap.error)
+        }
+      }
+
+      // FASE 1.4 — Al aceptar, marcamos cuál versión aceptó el cliente.
+      // mark_quote_accepted_version setea status='aceptada' + accepted_at,
+      // así que no necesitamos el UPDATE manual abajo en ese caso.
+      if (newStatus === 'aceptada') {
+        const { data: authUser } = await sb.auth.getUser()
+        // Leer current_version_number ANTES del snapshot
+        const { data: q } = await sb
+          .from('tt_quotes')
+          .select('current_version_number')
+          .eq('id', currentQuoteId)
+          .maybeSingle()
+        // accepted_version = última versión existente (current - 1 si
+        // ya hubo al menos un snapshot; si no, 1 implícito)
+        const acceptedVersion = Math.max(1, ((q?.current_version_number as number) || 1) - 1)
+        const mark = await markAcceptedVersion({
+          quoteId: currentQuoteId,
+          versionNumber: acceptedVersion,
+          actorUserId: authUser?.user?.id ?? null,
+        })
+        if (!mark.ok) {
+          // Fallback: UPDATE manual sin marcar versión
+          await sb.from('tt_quotes').update({ status: newStatus }).eq('id', currentQuoteId)
+        }
+      } else {
+        const { error } = await sb.from('tt_quotes').update({ status: newStatus }).eq('id', currentQuoteId)
+        if (error) throw error
+      }
+      const labels: Record<typeof newStatus, string> = {
+        enviada: 'Marcada como enviada',
+        aceptada: 'Cotización aceptada',
+        rechazada: 'Cotización rechazada',
+      }
+      await sb.from('tt_activity_log').insert({
+        entity_type: 'quote', entity_id: currentQuoteId,
+        action: labels[newStatus], detail: quoteNumber,
+      })
+      setQuoteStatus(newStatus)
+      addToast({ type: 'success', title: labels[newStatus] })
+      loadSavedQuotes()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : JSON.stringify(err)
+      addToast({ type: 'error', title: 'No se pudo cambiar el estado', message: msg })
+    } finally { setTransitioning(false) }
+  }
+
+  // Convierte la cotización en un pedido real (tt_sales_orders) usando el helper
+  // unificado del ERP. Crea items, link en tt_document_links, marca la cotización
+  // como 'pedido' y redirige a /ventas?tab=pedidos&highlight=<id>.
+  async function convertToOrder() {
+    if (!currentQuoteId) return
+    // FASE 0 — Anti doble-click / retry: el botón ya está disabled
+    // mientras transitioning=true. La defensa de fondo es withIdempotency
+    // dentro de quoteToOrder() + el índice UNIQUE de la migración v71.
+    if (transitioning) return
+    setTransitioning(true)
+    try {
+      const sb = createClient()
+      // userId para que la clave de idempotencia distinga entre usuarios
+      // (un mismo usuario haciendo doble click obtiene el mismo PED;
+      //  el índice UNIQUE de DB bloquea cualquier intento posterior).
+      const { data: authUser } = await sb.auth.getUser()
+      const userId = authUser?.user?.id ?? null
+      const { orderId, orderNumber } = await quoteToOrder(currentQuoteId, 'local', { userId })
+      // Link de trazabilidad cotización ↔ pedido (tt_document_relations,
+      // renombrada desde tt_document_links en v61). Si el parent
+      // currentQuoteId vive en tt_quotes y no en tt_documents, el FK
+      // tira y dejamos pasar (el pedido ya está creado y registrado en
+      // tt_sales_orders.quote_id). El índice UNIQUE parcial de v71
+      // sobre (parent_id, relation_type) garantiza que no haya dos
+      // 'quote_to_order' del mismo origen, evitando duplicados aún
+      // ante carreras a nivel de DB.
+      try {
+        await sb.from('tt_document_relations').insert({
+          parent_id: currentQuoteId,
+          child_id: orderId,
+          relation_type: 'quote_to_order',
+        })
+      } catch { /* parent no en tt_documents (tt_quotes legacy) — no crítico */ }
+      // Marca la cotización como convertida en pedido (para el banner del cotizador)
+      await sb.from('tt_quotes').update({ status: 'pedido' }).eq('id', currentQuoteId)
+      setQuoteStatus('pedido')
+      setCreatedOrder({ id: orderId, number: orderNumber })
+      addToast({
+        type: 'success',
+        title: `Pedido ${orderNumber} creado`,
+        message: 'Te redirijo a la pantalla del pedido…',
+      })
+      // Redirect a /ventas con tab=pedidos y highlight del recién creado
+      setTimeout(() => {
+        router.push(`/ventas?tab=pedidos&highlight=${orderId}`)
+      }, 800)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : JSON.stringify(err)
+      addToast({ type: 'error', title: 'No se pudo crear el pedido', message: msg })
+    } finally { setTransitioning(false) }
+  }
+
+  // CTA principal "Enviar al cliente": abre el modal split-screen estilo StelOrder
+  // (formulario + preview del PDF en vivo). Reemplaza al wa.me directo.
+  function openSendModal() {
+    if (!currentQuoteId) {
+      addToast({ type: 'warning', title: 'Primero guardá la cotización' })
+      return
+    }
+    setShowSendModal(true)
+  }
+
+  // Mantiene compatibilidad: el botón "Reenviar por WhatsApp" del banner azul
+  // sigue siendo wa.me directo (envío rápido sin pasar por el modal).
+  function sendByWhatsApp() {
+    const text = `Cotización ${quoteNumber}\nCliente: ${selectedClient?.legal_name || selectedClient?.name || '-'}\nTotal: ${formatCurrency(total, currency)}\nItems: ${items.length}`
+    const phone = (selectedClient as Client & { phone?: string })?.phone || ''
+    const cleaned = phone.replace(/[^\d]/g, '')
+    const url = cleaned
+      ? `https://wa.me/${cleaned}?text=${encodeURIComponent(text)}`
+      : `https://wa.me/?text=${encodeURIComponent(text)}`
+    window.open(url, '_blank')
+    if (quoteStatus === 'borrador') setShowSendConfirmation(true)
+  }
+
+  async function handleWhatsAppConfirmed() {
+    await transitionStatus('enviada')
+    setShowSendConfirmation(false)
+  }
+
+  function sendByEmail() {
+    const email = (selectedClient as Client & { email?: string })?.email || ''
+    const subject = `Cotización ${quoteNumber}`
+    const body = `Estimado/a ${selectedClient?.legal_name || selectedClient?.name || ''},\n\nAdjunto cotización ${quoteNumber} por un total de ${formatCurrency(total, currency)}.\n\nSaludos cordiales.`
+    window.open(`mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, '_blank')
+    if (quoteStatus === 'borrador') void transitionStatus('enviada')
+  }
+
+  function downloadPdf() {
+    window.print()
+    if (quoteStatus === 'borrador') void transitionStatus('enviada')
+  }
+
+  // === ACCIONES NUEVAS para el menú "Más" ===
+
+  // Duplicar: limpia los flags de "ya guardada" y deja el form igual, listo
+  // para guardar como nueva cotización. Pide confirmación antes.
+  function duplicateQuote() {
+    if (!currentQuoteId) return
+    if (!confirm('¿Duplicar esta cotización? Se mantienen los items, cliente y condiciones, pero se guarda como una nueva.')) return
+    setCurrentQuoteId(null)
+    setQuoteStatus(null)
+    setCreatedOrder(null)
+    setOcImportSource(null)
+    generateQuoteNumber()
+    addToast({ type: 'success', title: 'Cotización duplicada', message: 'Ajustá lo que necesites y guardá como nueva' })
+  }
+
+  // Eliminar: borra la cotización y sus items. Pide confirmación + texto.
+  async function deleteQuote() {
+    if (!currentQuoteId) return
+    const confirmTxt = prompt(`Para eliminar la cotización ${quoteNumber} escribí "ELIMINAR" en mayúsculas:`)
+    if (confirmTxt !== 'ELIMINAR') return
+    setTransitioning(true)
+    const sb = createClient()
+    try {
+      await sb.from('tt_quote_items').delete().eq('quote_id', currentQuoteId)
+      await sb.from('tt_quotes').delete().eq('id', currentQuoteId)
+      await sb.from('tt_activity_log').insert({
+        entity_type: 'quote', entity_id: currentQuoteId,
+        action: 'Cotización eliminada', detail: quoteNumber,
+      })
+      addToast({ type: 'success', title: 'Cotización eliminada' })
+      // Reset form
+      setItems([]); setNotes(''); setInternalNotes(''); setSelectedClient(null)
+      setIvaEnabled(true); setTaxRate(21); setIrpfEnabled(false); setIrpfRate(0)
+      setReEnabled(false); setReRate(0); setOcImportSource(null)
+      setCurrentQuoteId(null); setQuoteStatus(null); setCreatedOrder(null)
+      generateQuoteNumber()
+      loadSavedQuotes()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : JSON.stringify(err)
+      addToast({ type: 'error', title: 'No se pudo eliminar', message: msg })
+    } finally { setTransitioning(false) }
+  }
+
+  // Reabrir: vuelve a 'borrador'. Útil cuando se marcó por error como enviada/aceptada.
+  async function reopenQuote() {
+    if (!currentQuoteId) return
+    if (!confirm('¿Reabrir esta cotización como borrador? Vas a poder editarla y volver a enviarla.')) return
+    setTransitioning(true)
+    const sb = createClient()
+    try {
+      await sb.from('tt_quotes').update({ status: 'borrador' }).eq('id', currentQuoteId)
+      await sb.from('tt_activity_log').insert({
+        entity_type: 'quote', entity_id: currentQuoteId,
+        action: 'Cotización reabierta', detail: quoteNumber,
+      })
+      setQuoteStatus('borrador')
+      addToast({ type: 'success', title: 'Cotización reabierta' })
+      loadSavedQuotes()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : JSON.stringify(err)
+      addToast({ type: 'error', title: 'No se pudo reabrir', message: msg })
+    } finally { setTransitioning(false) }
+  }
+
   async function loadSavedQuotes() {
     setLoadingQuotes(true)
     const sb = createClient()
     // Load locally created quotes (filtered by company)
     let qLocal = sb.from('tt_quotes')
-      .select('id, number, status, total, currency, created_at, subtotal, tax_amount, tax_rate, notes, internal_notes, incoterm, client_id, company_id, client:tt_clients(name, tax_id, country), company:tt_companies(name, country)')
+      .select('id, number, status, total, currency, created_at, subtotal, tax_amount, tax_rate, notes, internal_notes, incoterm, client_id, company_id, client:tt_clients(name, legal_name, tax_id, country), company:tt_companies(name, country)')
     qLocal = filterByCompany(qLocal)
     const { data: localData } = await qLocal.order('created_at', { ascending: false }).limit(50)
 
@@ -613,7 +1158,7 @@ export default function CotizadorPage() {
   }
 
   function shareWhatsApp() {
-    const text = `Cotizacion ${quoteNumber}\nCliente: ${selectedClient?.name || '-'}\nTotal: ${formatCurrency(total, currency)}\nItems: ${items.length}`
+    const text = `Cotizacion ${quoteNumber}\nCliente: ${selectedClient?.legal_name || selectedClient?.name || '-'}\nTotal: ${formatCurrency(total, currency)}\nItems: ${items.length}`
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank')
   }
 
@@ -709,7 +1254,7 @@ export default function CotizadorPage() {
   const savedQuoteRows = visibleSavedQuotes.map((q) => ({
     id: q.id,
     referencia: q.number || '-',
-    cliente: q.client?.name || 'Sin cliente',
+    cliente: q.client?.legal_name || q.client?.name || 'Sin cliente',
     titulo: q.notes || '',
     estado: mapStatus(q.status),
     fecha: q.created_at,
@@ -726,7 +1271,7 @@ export default function CotizadorPage() {
   const filteredQuotes = savedQuotes.filter((q) => {
     if (!listSearch) return true
     const s = listSearch.toLowerCase()
-    return q.number.toLowerCase().includes(s) || (q.client?.name || '').toLowerCase().includes(s)
+    return q.number.toLowerCase().includes(s) || (q.client?.legal_name || q.client?.name || '').toLowerCase().includes(s)
   })
 
   // ================================================================
@@ -778,6 +1323,24 @@ export default function CotizadorPage() {
               )}
             </button>
           )}
+          {/* Menú "Más" estilo StelOrder — aparece solo cuando hay una cotización
+              guardada (currentQuoteId) y agrupa acciones contextuales. Las
+              acciones se pueden habilitar/deshabilitar desde /admin. */}
+          {viewMode === 'create' && currentQuoteId && (
+            <DocumentMoreMenu
+              documentType="coti"
+              variant="ghost"
+              align="right"
+              handlers={{
+                send: openSendModal,
+                download_pdf: downloadPdf,
+                duplicate: duplicateQuote,
+                generate_order: quoteStatus === 'aceptada' ? convertToOrder : undefined,
+                reopen: (quoteStatus === 'enviada' || quoteStatus === 'aceptada' || quoteStatus === 'rechazada') ? reopenQuote : undefined,
+                delete: deleteQuote,
+              }}
+            />
+          )}
           <div className="flex bg-[#0B0E13] rounded-lg border border-[#2A3040] p-0.5">
             <button
               onClick={() => {
@@ -786,7 +1349,7 @@ export default function CotizadorPage() {
                   setItems([]); setNotes(''); setInternalNotes(''); setSelectedClient(null)
                   setIvaEnabled(true); setTaxRate(21); setIrpfEnabled(false); setIrpfRate(0)
                   setReEnabled(false); setReRate(0); setOcImportSource(null)
-                  setCurrentQuoteId(null); generateQuoteNumber()
+                  setCurrentQuoteId(null); setQuoteStatus(null); generateQuoteNumber()
                 }
                 setViewMode('create')
               }}
@@ -841,9 +1404,117 @@ export default function CotizadorPage() {
       {viewMode === 'create' && (
         <>
           {/* ══════════════════════════════════════════════════════════════
+              Banner POST-SAVE: cotización guardada, próximos pasos
+              ══════════════════════════════════════════════════════════════ */}
+          {currentQuoteId && quoteStatus && (
+            <div className={`rounded-xl border p-4 ${
+              quoteStatus === 'borrador' ? 'border-emerald-500/30 bg-gradient-to-r from-emerald-500/10 to-emerald-500/5'
+              : quoteStatus === 'enviada' ? 'border-blue-500/30 bg-gradient-to-r from-blue-500/10 to-blue-500/5'
+              : quoteStatus === 'aceptada' ? 'border-[#FF6600]/30 bg-gradient-to-r from-[#FF6600]/10 to-[#FF6600]/5'
+              : quoteStatus === 'pedido' ? 'border-purple-500/30 bg-gradient-to-r from-purple-500/10 to-purple-500/5'
+              : 'border-red-500/30 bg-gradient-to-r from-red-500/10 to-red-500/5'
+            }`}>
+              <div className="flex items-start gap-3">
+                <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
+                  quoteStatus === 'borrador' ? 'bg-emerald-500/20'
+                  : quoteStatus === 'enviada' ? 'bg-blue-500/20'
+                  : quoteStatus === 'aceptada' ? 'bg-[#FF6600]/20'
+                  : quoteStatus === 'pedido' ? 'bg-purple-500/20'
+                  : 'bg-red-500/20'
+                }`}>
+                  <Save size={18} className={
+                    quoteStatus === 'borrador' ? 'text-emerald-400'
+                    : quoteStatus === 'enviada' ? 'text-blue-400'
+                    : quoteStatus === 'aceptada' ? 'text-[#FF6600]'
+                    : quoteStatus === 'pedido' ? 'text-purple-400'
+                    : 'text-red-400'
+                  } />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-sm font-bold text-[#F0F2F5]">
+                      {quoteStatus === 'borrador' && `Cotización ${quoteNumber} guardada · Próximo paso: enviar al cliente`}
+                      {quoteStatus === 'enviada' && `Cotización ${quoteNumber} enviada · Esperando respuesta del cliente`}
+                      {quoteStatus === 'aceptada' && `Cliente aceptó · Convertí en pedido cuando estés listo`}
+                      {quoteStatus === 'pedido' && (createdOrder ? `✓ Convertida en pedido ${createdOrder.number}` : `Convertida en pedido de venta`)}
+                      {quoteStatus === 'rechazada' && `Cliente rechazó la cotización`}
+                    </p>
+                    {currentQuoteId && <QuoteVersionBadge quoteId={currentQuoteId} />}
+                  </div>
+                  {quoteStatus === 'borrador' && (
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      <Button size="sm" variant="primary" onClick={openSendModal} disabled={transitioning}>
+                        <MessageSquare size={14} /> Enviar al cliente
+                      </Button>
+                      <Button size="sm" variant="secondary" onClick={sendByEmail} disabled={transitioning}>
+                        Email
+                      </Button>
+                      <Button size="sm" variant="secondary" onClick={downloadPdf} disabled={transitioning}>
+                        <Printer size={14} /> PDF
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => transitionStatus('enviada')} disabled={transitioning}>
+                        Marcar enviada (sin enviar ahora)
+                      </Button>
+                    </div>
+                  )}
+                  {quoteStatus === 'enviada' && (
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      <Button size="sm" variant="primary" onClick={() => transitionStatus('aceptada')} disabled={transitioning}>
+                        ✓ Marcar aceptada
+                      </Button>
+                      <Button size="sm" variant="secondary" onClick={() => transitionStatus('rechazada')} disabled={transitioning}>
+                        Rechazada
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={sendByWhatsApp}>
+                        Reenviar por WhatsApp
+                      </Button>
+                    </div>
+                  )}
+                  {quoteStatus === 'aceptada' && (
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      <Button size="sm" variant="primary" onClick={convertToOrder} loading={transitioning} disabled={transitioning}>
+                        📦 Convertir en pedido
+                      </Button>
+                    </div>
+                  )}
+                  {quoteStatus === 'pedido' && (
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {createdOrder && (
+                        <Button size="sm" variant="primary" onClick={() => router.push(`/ventas?tab=pedidos&highlight=${createdOrder.id}`)}>
+                          📦 Ver pedido {createdOrder.number} →
+                        </Button>
+                      )}
+                      <Button size="sm" variant="secondary" onClick={() => {
+                        setItems([]); setNotes(''); setInternalNotes(''); setSelectedClient(null)
+                        setIvaEnabled(true); setTaxRate(21); setIrpfEnabled(false); setIrpfRate(0)
+                        setReEnabled(false); setReRate(0); setOcImportSource(null)
+                        setCurrentQuoteId(null); setQuoteStatus(null); setCreatedOrder(null); generateQuoteNumber()
+                      }}>
+                        <PlusCircle size={14} /> Nueva cotización
+                      </Button>
+                    </div>
+                  )}
+                  {quoteStatus === 'rechazada' && (
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      <Button size="sm" variant="primary" onClick={() => {
+                        setItems([]); setNotes(''); setInternalNotes(''); setSelectedClient(null)
+                        setIvaEnabled(true); setTaxRate(21); setIrpfEnabled(false); setIrpfRate(0)
+                        setReEnabled(false); setReRate(0); setOcImportSource(null)
+                        setCurrentQuoteId(null); setQuoteStatus(null); setCreatedOrder(null); generateQuoteNumber()
+                      }}>
+                        <PlusCircle size={14} /> Nueva cotización
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════════════════════
               Banner guía cuando se importó una OC: muestra próximos pasos
               ══════════════════════════════════════════════════════════════ */}
-          {ocImportSource && items.length > 0 && (
+          {!currentQuoteId && ocImportSource && items.length > 0 && (
             <div className="rounded-xl border border-[#FF6600]/30 bg-gradient-to-r from-[#FF6600]/10 to-[#FF6600]/5 p-4">
               <div className="flex items-start gap-3">
                 <div className="w-9 h-9 rounded-lg bg-[#FF6600]/20 flex items-center justify-center shrink-0">
@@ -862,7 +1533,7 @@ export default function CotizadorPage() {
                       <span>
                         <strong>Cliente:</strong>{' '}
                         {selectedClient ? (
-                          <span className="text-emerald-400">{selectedClient.name} ✓</span>
+                          <span className="text-emerald-400">{selectedClient.legal_name || selectedClient.name} ✓</span>
                         ) : (
                           <span className="text-[#FF6600]">Buscá y seleccioná el cliente abajo (lo intenté por CUIT pero no lo encontré)</span>
                         )}
@@ -921,17 +1592,32 @@ export default function CotizadorPage() {
               ══════════════════════════════════════════════════════════════ */}
           <DocumentProcessBar
             code={quoteNumber || 'COT-pendiente'}
-            badge={{
-              label: selectedClient && items.length > 0 ? 'Listo para guardar' : 'Borrador',
-              variant: selectedClient && items.length > 0 ? 'success' : 'warning',
-            }}
+            badge={
+              currentQuoteId && quoteStatus
+                ? {
+                    label: quoteStatus === 'borrador' ? 'Guardada · Sin enviar'
+                      : quoteStatus === 'enviada' ? 'Enviada al cliente'
+                      : quoteStatus === 'aceptada' ? 'Aceptada por el cliente'
+                      : quoteStatus === 'pedido' ? 'Convertida en pedido'
+                      : 'Rechazada',
+                    variant: quoteStatus === 'borrador' ? 'warning'
+                      : quoteStatus === 'enviada' ? 'info'
+                      : quoteStatus === 'aceptada' ? 'success'
+                      : quoteStatus === 'pedido' ? 'success'
+                      : 'danger',
+                  }
+                : {
+                    label: selectedClient && items.length > 0 ? 'Listo para guardar' : 'Borrador',
+                    variant: selectedClient && items.length > 0 ? 'success' : 'warning',
+                  }
+            }
             entity={
               <span>
                 {(() => {
                   const c = companies.find((c) => c.id === selectedCompanyId)
                   return c ? <><strong>{(c as any).trade_name || c.name}</strong>{c.country ? ` (${c.country})` : ''} · Moneda {currency}</> : 'Seleccioná empresa emisora'
                 })()}
-                {selectedClient && <> · Cliente: <strong>{selectedClient.name}</strong></>}
+                {selectedClient && <> · Cliente: <strong>{selectedClient.legal_name || selectedClient.name}</strong></>}
               </span>
             }
             alerts={[
@@ -942,14 +1628,36 @@ export default function CotizadorPage() {
               ...(!incoterm ? [{ type: 'info' as const, message: 'Incoterm sin definir (EXW/FOB/CIF/etc)' }] : []),
             ]}
             steps={buildSteps('quote',
-              !selectedCompanyId || !selectedClient ? 'draft'
+              // Si ya está guardada, el step viene del status real
+              currentQuoteId && quoteStatus === 'pedido' ? 'converted'
+              : currentQuoteId && quoteStatus === 'aceptada' ? 'accepted'
+              : currentQuoteId && quoteStatus === 'enviada' ? 'sent'
+              : currentQuoteId ? 'approval' // borrador guardado: en revisión, listo para enviar
+              // Pre-save: completitud del form
+              : !selectedCompanyId || !selectedClient ? 'draft'
               : items.length === 0 ? 'draft'
               : !paymentTerms || !incoterm ? 'conditions'
               : 'approval'
             )}
-            actions={[
-              { label: 'Guardar', onClick: saveQuote, icon: 'save', variant: 'primary', disabled: saving || !selectedClient || items.length === 0 },
-            ]}
+            actions={
+              !currentQuoteId
+                ? [{ label: 'Guardar', onClick: saveQuote, icon: 'save', variant: 'primary', disabled: saving || !selectedClient || items.length === 0 }]
+                : quoteStatus === 'borrador'
+                  ? [
+                      { label: 'Enviar al cliente', onClick: openSendModal, icon: 'play', variant: 'primary', disabled: transitioning },
+                      { label: 'Marcar enviada', onClick: () => transitionStatus('enviada'), variant: 'secondary', disabled: transitioning },
+                    ]
+                  : quoteStatus === 'enviada'
+                    ? [
+                        { label: 'Marcar aceptada', onClick: () => transitionStatus('aceptada'), icon: 'check', variant: 'primary', disabled: transitioning },
+                        { label: 'Rechazada', onClick: () => transitionStatus('rechazada'), variant: 'danger', disabled: transitioning },
+                      ]
+                    : quoteStatus === 'aceptada'
+                      ? [
+                          { label: 'Convertir en pedido', onClick: convertToOrder, icon: 'play', variant: 'primary', disabled: transitioning },
+                        ]
+                      : []
+            }
           />
 
           {/* Empresa & Cliente */}
@@ -1005,11 +1713,34 @@ export default function CotizadorPage() {
               <CardContent>
                 {selectedClient ? (
                   <div className="flex items-center justify-between p-3 rounded-lg bg-[#0F1218] border border-[#1E2330]">
-                    <div>
-                      <p className="text-sm font-medium text-[#F0F2F5]">{selectedClient.name}</p>
-                      <p className="text-xs text-[#6B7280]">{selectedClient.tax_id} - {selectedClient.email}</p>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm font-medium text-[#F0F2F5]">{selectedClient.legal_name || selectedClient.name}</p>
+                        {selectedClient.legal_name && selectedClient.name && selectedClient.legal_name !== selectedClient.name && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#1E2330] text-[#9CA3AF] border border-[#2A3040]" title="Contacto principal cargado en el cliente">
+                            👤 {selectedClient.name}
+                          </span>
+                        )}
+                        {taxConfigSource === 'override' && activeCompanyId && (
+                          <span
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+                            title="Aplicado override de IVA específico para esta empresa (v70)"
+                          >
+                            ✓ override empresa
+                          </span>
+                        )}
+                        {taxConfigSource === 'client_default' && (
+                          <span
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-[#1E2330] text-[#9CA3AF] border border-[#2A3040]"
+                            title="Sin override por empresa: se aplican los defaults fiscales del cliente"
+                          >
+                            default cliente
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-[#6B7280] mt-0.5">{selectedClient.tax_id} - {selectedClient.email}</p>
                     </div>
-                    <button onClick={() => setSelectedClient(null)} className="text-[#6B7280] hover:text-red-400"><X size={16} /></button>
+                    <button onClick={() => { setSelectedClient(null); setParticipatingContactIds([]) }} className="text-[#6B7280] hover:text-red-400 shrink-0"><X size={16} /></button>
                   </div>
                 ) : (
                   <div className="relative">
@@ -1017,9 +1748,22 @@ export default function CotizadorPage() {
                     {showClientDropdown && clientResults.length > 0 && (
                       <div className="absolute top-full left-0 right-0 mt-1 bg-[#141820] border border-[#1E2330] rounded-lg shadow-xl z-10 max-h-48 overflow-y-auto">
                         {clientResults.map((client) => (
-                          <button key={client.id} onClick={() => { setSelectedClient(client); setClientSearch(''); setShowClientDropdown(false) }} className="w-full text-left px-4 py-2.5 hover:bg-[#1E2330] transition-colors">
-                            <p className="text-sm text-[#F0F2F5]">{client.name}</p>
-                            <p className="text-xs text-[#6B7280]">{client.tax_id} - {client.email}</p>
+                          <button key={client.id} onClick={() => { setSelectedClient(client); setClientSearch(''); setShowClientDropdown(false) }} className="w-full text-left px-4 py-2.5 hover:bg-[#1E2330] transition-colors border-b border-[#1E2330] last:border-0">
+                            <p className="text-sm font-semibold text-[#F0F2F5]">{client.legal_name || client.name}</p>
+                            <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                              {client.tax_id && (
+                                <span className="text-[11px] font-mono text-[#FF6600] bg-[#FF6600]/10 px-1.5 py-0.5 rounded">
+                                  {client.tax_id}
+                                </span>
+                              )}
+                              {client.country && (
+                                <span className="text-[11px] text-[#6B7280]">{client.country}</span>
+                              )}
+                              {client.legal_name && client.name && client.legal_name !== client.name && (
+                                <span className="text-[11px] text-[#9CA3AF]">👤 {client.name}</span>
+                              )}
+                            </div>
+                            {client.email && <p className="text-[11px] text-[#6B7280] mt-0.5">{client.email}</p>}
                           </button>
                         ))}
                       </div>
@@ -1027,6 +1771,77 @@ export default function CotizadorPage() {
                     {showClientDropdown && clientSearch && clientResults.length === 0 && (
                       <div className="absolute top-full left-0 right-0 mt-1 bg-[#141820] border border-[#1E2330] rounded-lg shadow-xl z-10">
                         <p className="px-4 py-3 text-sm text-[#4B5563]">No se encontraron clientes</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ── CONTACTOS PARTICIPANTES (estilo StelOrder) ───────────
+                    Lista de contactos del cliente con checkboxes para marcar
+                    quiénes participan en la cotización. Pre-selecciona los
+                    marcados con receives_quotes=true o is_primary.
+                    Sus emails se pre-cargan en el modal de envío. */}
+                {selectedClient && (
+                  <div className="mt-3 rounded-lg border border-[#1E2330] bg-[#0F1218] overflow-hidden">
+                    <div className="flex items-center justify-between px-3 py-2 border-b border-[#1E2330] bg-[#141820]">
+                      <span className="text-[10px] uppercase tracking-wider text-[#9CA3AF] font-semibold flex items-center gap-1.5">
+                        <User size={11} /> Contactos participantes ({participatingContactIds.length}/{clientContacts.length})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => { setNewContactDraft({ name: '', position: '', email: '', phone: '' }); setShowNewContactModal(true) }}
+                        className="text-[10px] font-semibold text-[#FF6600] hover:text-[#FF8533] flex items-center gap-1"
+                      >
+                        <Plus size={10} /> Nuevo contacto
+                      </button>
+                    </div>
+                    {clientContacts.length === 0 ? (
+                      <div className="px-3 py-3 text-xs text-[#6B7280] text-center italic">
+                        Este cliente todavía no tiene contactos cargados.
+                        <button
+                          type="button"
+                          onClick={() => { setNewContactDraft({ name: '', position: '', email: '', phone: '' }); setShowNewContactModal(true) }}
+                          className="block w-full mt-1 text-[#FF6600] hover:text-[#FF8533] font-semibold"
+                        >
+                          + Agregar el primero
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="max-h-44 overflow-y-auto divide-y divide-[#1E2330]">
+                        {clientContacts.map((c) => {
+                          const checked = participatingContactIds.includes(c.id)
+                          return (
+                            <label
+                              key={c.id}
+                              className={`flex items-center gap-2 px-3 py-2 text-xs cursor-pointer transition-colors ${
+                                checked ? 'bg-[#FF6600]/5 hover:bg-[#FF6600]/10' : 'hover:bg-[#1C2230]'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(e) => {
+                                  setParticipatingContactIds((prev) =>
+                                    e.target.checked ? [...prev, c.id] : prev.filter((id) => id !== c.id)
+                                  )
+                                }}
+                                className="accent-[#FF6600] shrink-0"
+                              />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className={`font-semibold truncate ${checked ? 'text-[#F0F2F5]' : 'text-[#D1D5DB]'}`}>{c.name}</span>
+                                  {c.is_primary && <span className="text-[9px] px-1 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">PRINCIPAL</span>}
+                                  {c.position && <span className="text-[10px] text-[#6B7280]">— {c.position}</span>}
+                                </div>
+                                {(c.email || c.phone) && (
+                                  <div className="text-[10px] text-[#6B7280] truncate">
+                                    {c.email}{c.email && c.phone ? ' · ' : ''}{c.phone}
+                                  </div>
+                                )}
+                              </div>
+                            </label>
+                          )
+                        })}
                       </div>
                     )}
                   </div>
@@ -1086,7 +1901,49 @@ export default function CotizadorPage() {
                               {idx + 1}
                               {isService && <span className="ml-1 text-[8px] text-blue-400" title="Servicio">S</span>}
                             </td>
-                            <td className="py-2 px-2"><input value={item.sku} onChange={(e) => updateItem(item.id, 'sku', e.target.value)} className="w-full bg-transparent text-xs font-mono text-[#9CA3AF] outline-none" placeholder="SKU" /></td>
+                            <td className="py-2 px-2">
+                              <div className="flex items-start gap-1.5">
+                                {item.product_id ? (
+                                  <span
+                                    className="w-2 h-2 mt-1.5 rounded-full shrink-0 bg-emerald-400 print:hidden"
+                                    title="Producto matcheado con el catálogo"
+                                  />
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      setLinkingItemId(item.id)
+                                      // Pre-cargar con las primeras 3 palabras de la descripción —
+                                      // el SKU del cliente rara vez matchea en NUESTRO catálogo,
+                                      // pero la descripción suele tener marca + modelo identificables.
+                                      const desc = item.description?.trim() || ''
+                                      const seed = desc ? desc.split(/\s+/).slice(0, 3).join(' ') : (item.sku || '')
+                                      setProductSearch(seed)
+                                      setProductResults([])
+                                      setShowProductSearch(true)
+                                    }}
+                                    className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-500/15 hover:bg-red-500/30 border border-red-500/40 hover:border-red-500/70 text-red-400 hover:text-red-300 text-[10px] font-semibold print:hidden transition-all"
+                                    title="SIN MATCH — click para vincular este SKU con un producto del catálogo. Se guarda como alias para futuras OCs del cliente."
+                                  >
+                                    🔗 Vincular
+                                  </button>
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <input value={item.sku} onChange={(e) => updateItem(item.id, 'sku', e.target.value)} className="w-full bg-transparent text-xs font-mono text-[#9CA3AF] outline-none" placeholder="SKU cliente" />
+                                  {/* SKU del catálogo bajo el del cliente — solo si están vinculados y son distintos */}
+                                  {item.product_id && (() => {
+                                    const linked = linkedProducts.get(item.product_id)
+                                    if (!linked || linked.sku === item.sku) return null
+                                    return (
+                                      <div className="text-[10px] font-mono text-emerald-400/80 truncate" title={`Catálogo: ${linked.sku} · ${linked.name}`}>
+                                        → {linked.sku}
+                                      </div>
+                                    )
+                                  })()}
+                                </div>
+                              </div>
+                            </td>
                             <td className="py-2 px-2"><input value={item.description} onChange={(e) => updateItem(item.id, 'description', e.target.value)} className="w-full bg-transparent text-sm text-[#F0F2F5] outline-none" placeholder="Descripcion del producto" /></td>
                             <td className="py-2 px-2">
                               <div className="flex items-center justify-center gap-1">
@@ -1101,7 +1958,19 @@ export default function CotizadorPage() {
                             </td>
                             <td className="py-2 px-2"><input type="number" min="0" max="100" value={item.discount} onChange={(e) => updateItem(item.id, 'discount', Number(e.target.value))} className="w-full bg-[#0F1218] border border-[#1E2330] rounded px-2 py-1 text-center text-sm text-[#F0F2F5] outline-none focus:border-[#FF6600]" /></td>
                             <td className={`py-2 px-2 text-right text-sm font-medium ${isBelowMin ? 'text-red-400' : 'text-[#F0F2F5]'}`}>{formatCurrency(lineTotal, currency)}</td>
-                            <td className="py-2 px-2"><input value={item.notes} onChange={(e) => updateItem(item.id, 'notes', e.target.value)} className="w-full bg-transparent text-xs text-[#6B7280] outline-none" placeholder="Notas" /></td>
+                            <td className="py-2 px-2">
+                              <input
+                                value={item.notes}
+                                onChange={(e) => updateItem(item.id, 'notes', e.target.value)}
+                                className={`w-full text-xs outline-none rounded px-2 py-1 transition-colors border ${
+                                  item.notes
+                                    ? 'bg-[#FF6600]/5 border-[#FF6600]/30 text-[#F0F2F5]'
+                                    : 'bg-transparent border-dashed border-[#2A3040] text-[#6B7280] hover:border-[#FF6600]/50 hover:bg-[#FF6600]/5'
+                                } focus:border-[#FF6600] focus:bg-[#FF6600]/5 focus:text-[#F0F2F5]`}
+                                placeholder="+ Nota"
+                                title="Nota visible al cliente en la línea del producto (ej: 'incluye flete', 'entrega 30 días', etc.)"
+                              />
+                            </td>
                             <td className="py-2 px-1 print:hidden"><button onClick={() => removeItem(item.id)} className="p-1 rounded hover:bg-red-500/10 text-[#4B5563] hover:text-red-400 transition-colors"><Trash2 size={14} /></button></td>
                           </tr>
                         )
@@ -1289,8 +2158,8 @@ export default function CotizadorPage() {
                   <span className="text-2xl font-bold text-[#FF6600]">{formatCurrency(total, currency)}</span>
                 </div>
                 <div className="flex gap-2 pt-2 print:hidden">
-                  <Button variant="secondary" size="sm" className="flex-1" onClick={() => window.print()}><Printer size={14} /> PDF / Imprimir</Button>
-                  <Button variant="secondary" size="sm" className="flex-1" onClick={shareWhatsApp}><MessageSquare size={14} /> WhatsApp</Button>
+                  <Button variant="secondary" size="sm" className="flex-1" onClick={currentQuoteId ? downloadPdf : () => window.print()}><Printer size={14} /> PDF / Imprimir</Button>
+                  <Button variant="secondary" size="sm" className="flex-1" onClick={currentQuoteId ? sendByWhatsApp : shareWhatsApp}><MessageSquare size={14} /> WhatsApp</Button>
                 </div>
                 {/* Warning: items below minimum price */}
                 {items.some(item => {
@@ -1302,7 +2171,58 @@ export default function CotizadorPage() {
                     ⚠️ Hay items con precio por debajo del minimo/costo. Revisa las lineas marcadas en rojo.
                   </div>
                 )}
-                <Button variant="primary" className="w-full mt-2 print:hidden" onClick={saveQuote} loading={saving}><Save size={16} /> Guardar cotizacion</Button>
+                {/* CTA contextual según estado */}
+                {!currentQuoteId ? (
+                  <Button variant="primary" className="w-full mt-2 print:hidden" onClick={saveQuote} loading={saving}>
+                    <Save size={16} /> Guardar cotización
+                  </Button>
+                ) : quoteStatus === 'borrador' ? (
+                  <div className="space-y-2 mt-2 print:hidden">
+                    <Button variant="primary" className="w-full" onClick={openSendModal} loading={transitioning}>
+                      <MessageSquare size={16} /> Enviar al cliente (Email · WhatsApp · PDF)
+                    </Button>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button variant="secondary" size="sm" onClick={sendByEmail} disabled={transitioning}>Enviar por Email</Button>
+                      <Button variant="ghost" size="sm" onClick={() => transitionStatus('enviada')} disabled={transitioning}>Marcar enviada</Button>
+                    </div>
+                  </div>
+                ) : quoteStatus === 'enviada' ? (
+                  <div className="grid grid-cols-2 gap-2 mt-2 print:hidden">
+                    <Button variant="primary" onClick={() => transitionStatus('aceptada')} loading={transitioning}>
+                      ✓ Aceptada
+                    </Button>
+                    <Button variant="secondary" onClick={() => transitionStatus('rechazada')} disabled={transitioning}>
+                      Rechazada
+                    </Button>
+                  </div>
+                ) : quoteStatus === 'aceptada' ? (
+                  <Button variant="primary" className="w-full mt-2 print:hidden" onClick={convertToOrder} loading={transitioning}>
+                    📦 Convertir en pedido
+                  </Button>
+                ) : quoteStatus === 'pedido' && createdOrder ? (
+                  <div className="space-y-2 mt-2 print:hidden">
+                    <Button variant="primary" className="w-full" onClick={() => router.push(`/ventas?tab=pedidos&highlight=${createdOrder.id}`)}>
+                      📦 Ver pedido {createdOrder.number} →
+                    </Button>
+                    <Button variant="ghost" className="w-full" onClick={() => {
+                      setItems([]); setNotes(''); setInternalNotes(''); setSelectedClient(null)
+                      setIvaEnabled(true); setTaxRate(21); setIrpfEnabled(false); setIrpfRate(0)
+                      setReEnabled(false); setReRate(0); setOcImportSource(null)
+                      setCurrentQuoteId(null); setQuoteStatus(null); setCreatedOrder(null); generateQuoteNumber()
+                    }}>
+                      <PlusCircle size={16} /> Nueva cotización
+                    </Button>
+                  </div>
+                ) : (
+                  <Button variant="secondary" className="w-full mt-2 print:hidden" onClick={() => {
+                    setItems([]); setNotes(''); setInternalNotes(''); setSelectedClient(null)
+                    setIvaEnabled(true); setTaxRate(21); setIrpfEnabled(false); setIrpfRate(0)
+                    setReEnabled(false); setReRate(0); setOcImportSource(null)
+                    setCurrentQuoteId(null); setQuoteStatus(null); setCreatedOrder(null); generateQuoteNumber()
+                  }}>
+                    <PlusCircle size={16} /> Nueva cotización
+                  </Button>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -1310,10 +2230,92 @@ export default function CotizadorPage() {
       )}
 
       {/* Product Search Modal */}
-      <Modal isOpen={showProductSearch} onClose={() => { setShowProductSearch(false); setProductSearch(''); setProductResults([]) }} title="Buscar Producto" size="lg">
-        <SearchBar placeholder="Buscar por SKU, nombre, marca..." value={productSearch} onChange={setProductSearch} autoFocus className="mb-4" />
+      <Modal
+        isOpen={showProductSearch}
+        onClose={() => { setShowProductSearch(false); setProductSearch(''); setProductResults([]); setLinkingItemId(null) }}
+        title={linkingItemId ? 'Vincular ítem con producto del catálogo' : 'Buscar Producto'}
+        size="lg"
+      >
+        {/* Panel azul: muestra qué item del cliente estamos vinculando.
+            Crítico para que el operador sepa contra qué tiene que buscar
+            cuando el SKU del cliente no matchea nada. */}
+        {linkingItemId && (() => {
+          const target = items.find((i) => i.id === linkingItemId)
+          if (!target) return null
+          return (
+            <div className="mb-4 rounded-lg border border-[#FF6600]/30 bg-[#FF6600]/5 p-3">
+              <div className="text-[10px] uppercase tracking-wider text-[#FF6600] font-bold mb-1.5">
+                Estás vinculando este ítem del cliente:
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] text-[#9CA3AF]">SKU cliente:</span>
+                  <code className="font-mono text-sm font-bold text-[#FF6600] bg-[#FF6600]/15 px-2 py-0.5 rounded">
+                    {target.sku || '(sin SKU)'}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => navigator.clipboard?.writeText(target.sku || '')}
+                    className="text-[10px] text-[#6B7280] hover:text-[#F0F2F5]"
+                    title="Copiar SKU"
+                  >📋</button>
+                </div>
+                {target.description && (
+                  <div className="flex items-start gap-2">
+                    <span className="text-[10px] text-[#9CA3AF] shrink-0 mt-0.5">Descripción:</span>
+                    <span className="text-sm text-[#F0F2F5] font-medium">{target.description}</span>
+                  </div>
+                )}
+                <div className="flex items-center gap-4 text-[11px] text-[#9CA3AF]">
+                  <span>Cant: <strong className="text-[#F0F2F5]">{target.quantity}</strong></span>
+                  {target.unitPrice > 0 && (
+                    <span>P. unit (OC): <strong className="text-[#F0F2F5]">{formatCurrency(target.unitPrice, currency)}</strong></span>
+                  )}
+                </div>
+              </div>
+              {/* Atajos rápidos: bajo el panel un par de botones que pre-cargan
+                  la búsqueda con el SKU o con las primeras palabras de la
+                  descripción. El SKU del cliente probablemente NO matchea,
+                  por eso priorizamos la descripción. */}
+              <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                <span className="text-[10px] text-[#6B7280]">Buscar por:</span>
+                {target.description && (
+                  <button
+                    type="button"
+                    onClick={() => setProductSearch(target.description.split(/\s+/).slice(0, 3).join(' '))}
+                    className="text-[10px] font-semibold px-2 py-0.5 rounded bg-emerald-500/15 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/40"
+                  >
+                    {target.description.split(/\s+/).slice(0, 3).join(' ')}
+                  </button>
+                )}
+                {target.sku && (
+                  <button
+                    type="button"
+                    onClick={() => setProductSearch(target.sku)}
+                    className="text-[10px] font-semibold px-2 py-0.5 rounded bg-[#1E2330] hover:bg-[#2A3040] text-[#9CA3AF] border border-[#2A3040]"
+                  >
+                    SKU: {target.sku}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setProductSearch('')}
+                  className="text-[10px] font-semibold px-2 py-0.5 rounded bg-[#1E2330] hover:bg-[#2A3040] text-[#6B7280] border border-[#2A3040]"
+                >
+                  Borrar
+                </button>
+              </div>
+            </div>
+          )
+        })()}
+        <SearchBar placeholder="Buscar por SKU, nombre o marca..." value={productSearch} onChange={setProductSearch} autoFocus className="mb-4" />
         {searchingProducts && <div className="flex items-center justify-center py-8"><Loader2 size={24} className="animate-spin text-[#FF6600]" /></div>}
-        {!searchingProducts && productResults.length === 0 && productSearch && <p className="text-sm text-[#4B5563] text-center py-8">No se encontraron productos</p>}
+        {!searchingProducts && productResults.length === 0 && productSearch && (
+          <div className="text-center py-8">
+            <p className="text-sm text-[#9CA3AF] mb-2">No se encontraron productos con &quot;<span className="text-[#F0F2F5] font-mono">{productSearch}</span>&quot;</p>
+            <p className="text-xs text-[#6B7280]">Probá con palabras de la descripción o partes del SKU del catálogo.</p>
+          </div>
+        )}
         <div className="space-y-1 max-h-[400px] overflow-y-auto">
           {productResults.map((p) => (
             <button key={p.id} onClick={() => addProductAsItem(p)} className="w-full text-left flex items-center justify-between p-3 rounded-lg hover:bg-[#1E2330] transition-colors">
@@ -1343,6 +2345,167 @@ export default function CotizadorPage() {
           companyId={activeCompanyId}
           clientId={selectedClient?.id}
           onParsed={(result) => { void handleOCParsed(result) }}
+        />
+      )}
+
+      {/* Modal "Nuevo contacto" — crear contacto on-the-fly desde el cotizador */}
+      <Modal
+        isOpen={showNewContactModal}
+        onClose={() => setShowNewContactModal(false)}
+        title={`Nuevo contacto para ${selectedClient?.legal_name || selectedClient?.name || 'cliente'}`}
+        size="md"
+      >
+        <div className="space-y-3">
+          <Input
+            label="Nombre completo *"
+            value={newContactDraft.name}
+            onChange={(e) => setNewContactDraft((d) => ({ ...d, name: e.target.value }))}
+            placeholder="Ej: Ana Capatano"
+            autoFocus
+          />
+          <Input
+            label="Cargo / Posición"
+            value={newContactDraft.position}
+            onChange={(e) => setNewContactDraft((d) => ({ ...d, position: e.target.value }))}
+            placeholder="Ej: Compras"
+          />
+          <Input
+            label="Email"
+            type="email"
+            value={newContactDraft.email}
+            onChange={(e) => setNewContactDraft((d) => ({ ...d, email: e.target.value }))}
+            placeholder="ana@empresa.com"
+          />
+          <Input
+            label="Teléfono / WhatsApp"
+            value={newContactDraft.phone}
+            onChange={(e) => setNewContactDraft((d) => ({ ...d, phone: e.target.value }))}
+            placeholder="+598 ..."
+          />
+          <div className="flex justify-end gap-2 pt-2 border-t border-[#1E2330]">
+            <Button variant="secondary" onClick={() => setShowNewContactModal(false)} disabled={savingContact}>
+              Cancelar
+            </Button>
+            <Button
+              variant="primary"
+              loading={savingContact}
+              disabled={!newContactDraft.name.trim() || !selectedClient?.id}
+              onClick={async () => {
+                if (!selectedClient?.id || !newContactDraft.name.trim()) return
+                setSavingContact(true)
+                const sb = createClient()
+                try {
+                  const { data, error } = await sb.from('tt_client_contacts').insert({
+                    client_id: selectedClient.id,
+                    name: newContactDraft.name.trim(),
+                    position: newContactDraft.position.trim() || null,
+                    email: newContactDraft.email.trim() || null,
+                    phone: newContactDraft.phone.trim() || null,
+                    is_primary: clientContacts.length === 0,
+                    receives_quotes: true,
+                    receives_invoices: false,
+                    receives_remitos: false,
+                    is_collections: false,
+                    active: true,
+                  }).select('id, name, position, email, phone, whatsapp, is_primary, receives_quotes').single()
+                  if (error) throw error
+                  const created = data as ContactLite
+                  setClientContacts((prev) => [...prev, created])
+                  setParticipatingContactIds((prev) => [...prev, created.id])
+                  addToast({ type: 'success', title: `Contacto "${created.name}" agregado y marcado como participante` })
+                  setShowNewContactModal(false)
+                } catch (err) {
+                  addToast({ type: 'error', title: 'No se pudo crear el contacto', message: (err as Error).message })
+                } finally {
+                  setSavingContact(false)
+                }
+              }}
+            >
+              <Plus size={14} /> Crear y marcar
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* FASE 0 — Confirmación humana post-envío WhatsApp.
+          Reemplaza el auto-marca a 'enviada' al click del botón WA. */}
+      <SendConfirmationModal
+        isOpen={showSendConfirmation}
+        onClose={() => setShowSendConfirmation(false)}
+        onConfirmed={handleWhatsAppConfirmed}
+        onDeclined={() => setShowSendConfirmation(false)}
+        channel="whatsapp"
+        documentLabel="Cotizacion"
+        documentNumber={quoteNumber}
+        recipientHint={selectedClient?.legal_name || selectedClient?.name || undefined}
+        confirming={transitioning}
+      />
+
+      {/* Modal de envío estilo StelOrder: form de email + preview del PDF en split-screen.
+          Solo se abre cuando hay currentQuoteId (cotización ya guardada). */}
+      {currentQuoteId && (
+        <SendDocumentModal
+          isOpen={showSendModal}
+          onClose={() => setShowSendModal(false)}
+          documentType="coti"
+          documentNumber={quoteNumber}
+          documentId={currentQuoteId}
+          clientName={selectedClient?.legal_name || selectedClient?.name || ''}
+          clientEmail={(selectedClient as Client & { email?: string })?.email || ''}
+          extraRecipients={clientContacts
+            .filter((c) => participatingContactIds.includes(c.id) && c.email && c.email.includes('@'))
+            .map((c) => ({ email: c.email!, name: c.name }))}
+          clientId={selectedClient?.id}
+          total={total}
+          currency={currency}
+          items={items.map((it) => ({
+            sku: it.sku,
+            description: it.description,
+            quantity: it.quantity,
+            unit_price: it.unitPrice,
+            discount_pct: it.discount,
+            subtotal: it.quantity * it.unitPrice * (1 - it.discount / 100),
+            notes: it.notes,
+          }))}
+          document={{
+            type: 'coti',
+            display_ref: quoteNumber,
+            system_code: quoteNumber,
+            status: quoteStatus || 'borrador',
+            currency: currency,
+            subtotal: subtotal,
+            tax_amount: taxAmount,
+            tax_rate: ivaEnabled ? taxRate : 0,
+            total: total,
+            notes: notes,
+            created_at: new Date().toISOString(),
+            valid_until: validUntil,
+            incoterm: incoterm,
+            payment_terms: paymentTerms,
+          }}
+          client={selectedClient ? {
+            name: selectedClient.name,
+            legal_name: selectedClient.legal_name,
+            tax_id: selectedClient.tax_id,
+            email: (selectedClient as Client & { email?: string })?.email || null,
+            phone: (selectedClient as Client & { phone?: string })?.phone || null,
+            country: selectedClient.country,
+          } : undefined}
+          company={(() => {
+            const c = companies.find((c) => c.id === selectedCompanyId)
+            if (!c) return undefined
+            return {
+              name: c.name,
+              tax_id: (c as Company & { tax_id?: string })?.tax_id,
+              country: c.country,
+            }
+          })()}
+          onSent={() => {
+            // Al confirmar el envío desde el modal, marcamos la cotización
+            // como enviada automáticamente (a diferencia de wa.me que pide
+            // confirmación manual via SendConfirmationModal).
+            if (quoteStatus === 'borrador') void transitionStatus('enviada')
+          }}
         />
       )}
     </div>

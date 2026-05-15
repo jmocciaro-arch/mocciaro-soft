@@ -204,59 +204,58 @@ export function CommandPalette() {
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-start justify-center p-4 pt-[10vh]"
-      style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}
+      className="fixed inset-0 z-[100] flex items-start justify-center p-4 pt-[10vh] bg-black/40 backdrop-blur-sm"
       onClick={() => setOpen(false)}
     >
       <div
-        className="w-full max-w-xl rounded-xl shadow-2xl overflow-hidden border"
-        style={{ background: '#0F1218', borderColor: '#2A3040' }}
+        className="w-full max-w-xl rounded-lg shadow-[0_20px_50px_rgba(0,0,0,0.15)] overflow-hidden bg-white border border-[#E5E5E5]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-2 px-3 py-2.5 border-b" style={{ borderColor: '#2A3040' }}>
-          <Search className="w-4 h-4 opacity-60" />
+        <div className="flex items-center gap-2 px-3 py-2.5 border-b border-[#F0F0F0]">
+          <Search className="w-4 h-4 text-[#9CA3AF]" />
           <input
             ref={inputRef}
             value={query}
             onChange={(e) => { setQuery(e.target.value); setActive(0) }}
             onKeyDown={onKeyDown}
             placeholder="Buscá clientes, productos, documentos, leads o acciones..."
-            className="flex-1 bg-transparent outline-none text-sm"
+            className="flex-1 bg-transparent outline-none text-sm text-[#1F2937] placeholder:text-[#9CA3AF]"
           />
-          {searching && <Clock className="w-3 h-3 opacity-60 animate-spin" />}
-          <kbd className="text-[10px] opacity-60 border px-1.5 py-0.5 rounded" style={{ borderColor: '#2A3040' }}>Esc</kbd>
+          {searching && <Clock className="w-3 h-3 text-[#9CA3AF] animate-spin" />}
+          <kbd className="text-[10px] text-[#6B7280] border border-[#E5E5E5] bg-[#F9FAFB] px-1.5 py-0.5 rounded">Esc</kbd>
         </div>
 
         <div ref={listRef} className="max-h-[60vh] overflow-y-auto">
           {results.length === 0 ? (
-            <div className="p-6 text-center opacity-60 text-sm">Sin resultados para "{query}"</div>
+            <div className="p-6 text-center text-[#9CA3AF] text-sm">Sin resultados para "{query}"</div>
           ) : (
             <div>
               {groupByType(results).map((group) => (
                 <div key={group.type}>
-                  <div className="text-[10px] font-semibold uppercase opacity-60 px-3 pt-2 pb-1">
+                  <div className="text-[10px] font-semibold uppercase text-[#9CA3AF] px-3 pt-2 pb-1">
                     {groupLabel(group.type)}
                   </div>
-                  {group.items.map((item, i) => {
+                  {group.items.map((item) => {
                     const globalIdx = results.indexOf(item)
+                    const isActive = globalIdx === active
                     return (
                       <button
                         key={item.id}
                         data-idx={globalIdx}
                         onClick={() => { item.onSelect(); setOpen(false) }}
                         onMouseEnter={() => setActive(globalIdx)}
-                        className="w-full flex items-center gap-3 px-3 py-2 text-left text-sm"
-                        style={{
-                          background: globalIdx === active ? 'rgba(249,115,22,0.15)' : 'transparent',
-                          borderLeft: globalIdx === active ? '2px solid #f97316' : '2px solid transparent',
-                        }}
+                        className={`w-full flex items-center gap-3 px-3 py-2 text-left text-sm border-l-2 transition-colors ${
+                          isActive
+                            ? 'bg-[#FFF5EE] border-[#FF6600] text-[#FF6600]'
+                            : 'border-transparent text-[#1F2937] hover:bg-[#F8F8F8]'
+                        }`}
                       >
-                        <span className="opacity-70">{item.icon}</span>
+                        <span className={isActive ? 'text-[#FF6600]' : 'text-[#6B7280]'}>{item.icon}</span>
                         <div className="flex-1 min-w-0">
-                          <div className="truncate">{item.label}</div>
-                          {item.subtitle && <div className="text-xs opacity-60 truncate">{item.subtitle}</div>}
+                          <div className="truncate font-medium">{item.label}</div>
+                          {item.subtitle && <div className={`text-xs truncate ${isActive ? 'text-[#FF6600]/70' : 'text-[#9CA3AF]'}`}>{item.subtitle}</div>}
                         </div>
-                        {globalIdx === active && <ArrowRight className="w-3.5 h-3.5 opacity-60" />}
+                        {isActive && <ArrowRight className="w-3.5 h-3.5 text-[#FF6600]" />}
                       </button>
                     )
                   })}
@@ -266,7 +265,7 @@ export function CommandPalette() {
           )}
         </div>
 
-        <div className="flex items-center justify-between px-3 py-2 text-[10px] opacity-60 border-t" style={{ borderColor: '#2A3040' }}>
+        <div className="flex items-center justify-between px-3 py-2 text-[10px] text-[#9CA3AF] border-t border-[#F0F0F0] bg-[#FAFAFA]">
           <span>↑↓ navegar · Enter seleccionar · Esc cerrar</span>
           <span>{results.length} resultado{results.length !== 1 ? 's' : ''}</span>
         </div>

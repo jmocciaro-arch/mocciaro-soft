@@ -103,21 +103,17 @@ export function ClientCombobox({ value, onChange, clients, placeholder = 'Buscar
 
       {/* Dropdown */}
       {open && !disabled && (
-        <div
-          className="absolute top-full left-0 right-0 mt-1 z-50 rounded-lg overflow-hidden shadow-xl"
-          style={{ background: '#0F1218', border: '1px solid #2A3040' }}
-        >
+        <div className="absolute top-full left-0 right-0 mt-1 z-50 rounded-md overflow-hidden shadow-xl bg-white border border-[#E5E5E5]">
           {/* Search input */}
-          <div className="flex items-center gap-2 px-3 py-2 border-b" style={{ borderColor: '#1E2330' }}>
-            <Search size={14} style={{ color: '#6B7280' }} />
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-[#F0F0F0]">
+            <Search size={14} className="text-[#9CA3AF]" />
             <input
               type="text"
               autoFocus
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Escribí para buscar..."
-              className="flex-1 bg-transparent outline-none text-sm"
-              style={{ color: '#F0F2F5' }}
+              className="flex-1 bg-transparent outline-none text-sm text-[#1F2937] placeholder:text-[#9CA3AF]"
               onKeyDown={(e) => {
                 if (e.key === 'Escape') setOpen(false)
                 if (e.key === 'Enter' && filtered.length > 0) handleSelect(filtered[0])
@@ -127,8 +123,7 @@ export function ClientCombobox({ value, onChange, clients, placeholder = 'Buscar
               <button
                 type="button"
                 onClick={() => setSearch('')}
-                className="p-0.5 rounded hover:bg-black/20"
-                style={{ color: '#6B7280' }}
+                className="p-0.5 rounded hover:bg-[#F5F5F5] text-[#9CA3AF] hover:text-[#1F2937]"
               >
                 <X size={14} />
               </button>
@@ -138,7 +133,7 @@ export function ClientCombobox({ value, onChange, clients, placeholder = 'Buscar
           {/* Options */}
           <div className="max-h-72 overflow-y-auto">
             {filtered.length === 0 ? (
-              <div className="text-center py-6 text-sm" style={{ color: '#6B7280' }}>
+              <div className="text-center py-6 text-sm text-[#9CA3AF]">
                 {search ? 'Sin resultados' : 'Sin clientes'}
               </div>
             ) : (
@@ -149,17 +144,15 @@ export function ClientCombobox({ value, onChange, clients, placeholder = 'Buscar
                     key={c.id}
                     type="button"
                     onClick={() => handleSelect(c)}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left transition-colors hover:bg-black/20"
-                    style={{
-                      background: isSelected ? 'rgba(249, 115, 22, 0.1)' : 'transparent',
-                      color: isSelected ? '#F97316' : '#D1D5DB',
-                    }}
+                    className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-left transition-colors ${
+                      isSelected
+                        ? 'bg-[#FFF5EE] text-[#FF6600] font-semibold'
+                        : 'text-[#1F2937] hover:bg-[#F8F8F8]'
+                    }`}
                   >
                     <span className="flex-1">
                       <span className="block truncate">{c.name}</span>
-                      {c.city && (
-                        <span className="block text-xs" style={{ color: '#6B7280' }}>{c.city}</span>
-                      )}
+                      {c.city && <span className="block text-xs text-[#9CA3AF]">{c.city}</span>}
                     </span>
                     {isSelected && <Check size={14} />}
                   </button>
@@ -169,7 +162,7 @@ export function ClientCombobox({ value, onChange, clients, placeholder = 'Buscar
           </div>
 
           {clients.length > 50 && !search && (
-            <div className="text-xs text-center py-1.5 border-t" style={{ color: '#6B7280', borderColor: '#1E2330' }}>
+            <div className="text-xs text-center py-1.5 border-t border-[#F0F0F0] text-[#9CA3AF] bg-[#FAFAFA]">
               Mostrando primeros 50 — escribí para buscar entre {clients.length}
             </div>
           )}

@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { resolveTaxConfig, type TaxConfig } from '@/lib/tax-config'
+import { DocumentTracePanel } from '@/components/workflow/document-trace-panel'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
@@ -10,6 +12,8 @@ import { useToast } from '@/components/ui/toast'
 import { formatCurrency, formatDate, formatRelative, INCOTERMS } from '@/lib/utils'
 import { mapStatus } from '@/lib/document-helpers'
 import { DocumentActions, type DocumentActionType } from './document-actions'
+import { DocumentMoreMenu } from './document-more-menu'
+import type { DocumentActionScope } from '@/lib/document-actions-catalog'
 import { NextStepPanel } from './next-step-panel'
 import { EntityWorkflowsCard } from '@/components/workflow-builder/entity-workflows-card'
 import { DocumentAttachments } from '@/components/documents/document-attachments'
@@ -20,7 +24,7 @@ import { buildSteps, type DocumentType } from '@/lib/workflow-definitions'
 import { useCompanyContext } from '@/lib/company-context'
 import { useCompanyFilter } from '@/hooks/use-company-filter'
 import {
-  ArrowLeft, Edit3, Save, Printer, Mail, MoreVertical,
+  ArrowLeft, Edit3, Save, Printer, Mail,
   ChevronLeft, ChevronRight, Trash2, Copy, RefreshCw,
   Plus, X, Search, FileText, Link2, Clock, Paperclip,
   PenTool, Loader2, ExternalLink, GripVertical, Eye, Send,
@@ -355,6 +359,12 @@ export function DocumentForm({
   const [editDoc, setEditDoc] = useState<Partial<DocumentData>>({})
   const [editItems, setEditItems] = useState<ItemData[]>([])
 
+  // Última fuente del régimen fiscal aplicado por el botón "Aplicar régimen
+  // del cliente". Se setea solo después de un click explícito; null mientras
+  // tanto. Sirve para mostrar un chip al lado del botón.
+  const [taxConfigSource, setTaxConfigSource] = useState<TaxConfig['source'] | null>(null)
+  const [applyingTax, setApplyingTax] = useState(false)
+
   // Client search
   const [clientSearch, setClientSearch] = useState('')
   const [clientResults, setClientResults] = useState<ClientData[]>([])
@@ -362,7 +372,7 @@ export function DocumentForm({
   const clientDebounceRef = useRef<NodeJS.Timeout | null>(null)
 
   // Modals
-  const [showMoreMenu, setShowMoreMenu] = useState(false)
+  // showMoreMenu removed — replaced by reusable DocumentMoreMenu component
   const [showSendModal, setShowSendModal] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
@@ -389,6 +399,10 @@ export function DocumentForm({
   // Product search
   const [showProductSearch, setShowProductSearch] = useState(false)
   const [productSearchQuery, setProductSearchQuery] = useState('')
+  // Cuando el usuario clickea el dot rojo de una línea para vincularla manualmente:
+  // guardamos qué item se está vinculando. Al elegir un producto se actualiza ese
+  // item específico Y se guarda el alias en tt_sku_aliases.
+  const [linkingItemId, setLinkingItemId] = useState<string | null>(null)
   const [productResults, setProductResults] = useState<Row[]>([])
   const [searchingProducts, setSearchingProducts] = useState(false)
   const productDebounceRef = useRef<NodeJS.Timeout | null>(null)
@@ -932,16 +946,79 @@ export function DocumentForm({
     productDebounceRef.current = setTimeout(async () => {
       setSearchingProducts(true)
       const tokens = productSearchQuery.trim().toLowerCase().split(/\s+/)
-      let q = supabase.from('tt_products').select('id, sku, name, brand, price_eur').eq('active', true).limit(15)
+      // Traemos 80 y dedupeamos por nombre+marca (la migración de StelOrder
+      // duplicó productos con SKU auto-generado PROXXXXX además del real).
+      let q = supabase.from('tt_products').select('id, sku, name, brand, price_eur').eq('active', true).limit(80)
       for (const token of tokens) {
         q = q.or(`name.ilike.%${token}%,sku.ilike.%${token}%,brand.ilike.%${token}%`)
       }
       const { data } = await q
-      setProductResults(data || [])
+      const rows = (data || []) as Row[]
+      const isAutoSku = (sku: string) => /^(PRO|COSTO|GASTO|SVC|SRV)\d{3,}$/i.test(sku) || /^[A-Z]{3,6}\d{5,}$/.test(sku)
+      const scoreProd = (p: Row) => {
+        let s = 0
+        if (!isAutoSku((p.sku as string) || '')) s += 10
+        if (((p.price_eur as number) || 0) > 0) s += 3
+        if (p.brand) s += 1
+        return s
+      }
+      const byKey = new Map<string, Row>()
+      for (const p of rows) {
+        const key = `${((p.name as string) || '').trim().toLowerCase()}__${((p.brand as string) || '').trim().toLowerCase()}`
+        const existing = byKey.get(key)
+        if (!existing || scoreProd(p) > scoreProd(existing)) byKey.set(key, p)
+      }
+      setProductResults(Array.from(byKey.values()).slice(0, 15))
       setSearchingProducts(false)
     }, 300)
     return () => { if (productDebounceRef.current) clearTimeout(productDebounceRef.current) }
   }, [productSearchQuery, supabase])
+
+  // ---------------------------------------------------------------
+  // APPLY CLIENT TAX CONFIG (paso 4 de v70 — botón explícito en edit mode)
+  // ---------------------------------------------------------------
+  // Resuelve el régimen fiscal del cliente x empresa con prioridad:
+  //   1. override en tt_client_company_tax_config (cliente, empresa)
+  //   2. defaults del cliente
+  //   3. fallback duro
+  // Se ejecuta SOLO cuando el operador clickea el botón. No auto-aplicamos
+  // al cargar el doc para no pisar valores históricos guardados.
+  // El modelo de DocumentData solo tiene subject_iva / subject_irpf / tax_rate;
+  // si la config trae subject_re / re_rate / irpf_rate, se ignoran (no
+  // existe el campo en este formulario).
+  const applyClientTaxConfig = useCallback(async () => {
+    if (!doc) return
+    const clientId = (editDoc.client_id ?? doc.client_id) || null
+    const companyId = (editDoc.company_id ?? doc.company_id) || null
+    if (!clientId) {
+      addToast({ type: 'warning', title: 'No hay cliente asignado a este documento' })
+      return
+    }
+    setApplyingTax(true)
+    try {
+      const cfg = await resolveTaxConfig(supabase, clientId, companyId)
+      setEditDoc({
+        ...editDoc,
+        subject_iva: cfg.subject_iva,
+        subject_irpf: cfg.subject_irpf,
+        tax_rate: cfg.subject_iva ? cfg.iva_rate : 0,
+      })
+      setTaxConfigSource(cfg.source)
+      const sourceLabel =
+        cfg.source === 'override' ? 'override por empresa' :
+        cfg.source === 'client_default' ? 'defaults del cliente' :
+        'fallback (sin config)'
+      addToast({
+        type: 'success',
+        title: 'Régimen fiscal aplicado',
+        message: `IVA ${cfg.subject_iva ? cfg.iva_rate + '%' : 'exento'}, IRPF ${cfg.subject_irpf ? 'sí' : 'no'} — fuente: ${sourceLabel}`,
+      })
+    } catch (e) {
+      addToast({ type: 'error', title: 'Error al resolver régimen', message: (e as Error).message })
+    } finally {
+      setApplyingTax(false)
+    }
+  }, [doc, editDoc, supabase, addToast])
 
   // ---------------------------------------------------------------
   // SAVE
@@ -1181,7 +1258,87 @@ export function DocumentForm({
     setEditItems(editItems.filter((_, i) => i !== index))
   }
 
-  function addProductToItems(product: Row) {
+  async function addProductToItems(product: Row) {
+    // ── Modo "vincular item rojo": el usuario clickeó el dot rojo de una fila
+    // para vincularla con un producto del catálogo. NO agregamos nueva fila —
+    // actualizamos la existente. Y guardamos el alias para futuras OCs.
+    if (linkingItemId) {
+      const targetList = editMode ? editItems : items
+      const target = targetList.find((i) => i.id === linkingItemId)
+      if (!target) {
+        setLinkingItemId(null)
+        setShowProductSearch(false)
+        setProductSearchQuery('')
+        return
+      }
+      const productId = (product.id as string) || ''
+      const productSku = (product.sku as string) || ''
+
+      // 1. Actualizar el item localmente — mantenemos cantidad/precio/SKU del cliente
+      const updateFn = (curr: ItemData[]) => curr.map((it) =>
+        it.id === linkingItemId ? { ...it, product_id: productId } : it
+      )
+      if (editMode) setEditItems(updateFn)
+      else setItems(updateFn)
+
+      // 2. Persistir en DB si no estamos en editMode
+      if (!editMode) {
+        const itemTableMap: Record<string, string> = {
+          coti: 'tt_quote_items',
+          pedido: 'tt_so_items',
+          delivery_note: 'tt_dn_items',
+          invoice: 'tt_invoice_items',
+          factura: 'tt_invoice_items',
+        }
+        const table = itemTableMap[documentType]
+        if (table) {
+          try {
+            await supabase.from(table).update({ product_id: productId }).eq('id', target.id)
+          } catch (err) {
+            console.error('Error update item product_id:', err)
+          }
+        }
+      }
+
+      // 3. Guardar alias para futuras OCs con el mismo SKU del cliente
+      const docCompanyId = (doc as unknown as Record<string, unknown>)?.company_id as string | undefined
+      const docClientId = (doc as unknown as Record<string, unknown>)?.client_id as string | undefined
+      if (docCompanyId && target.sku.trim()) {
+        try {
+          const { saveAlias } = await import('@/lib/sku-aliases')
+          const useClientScope = !!docClientId && confirm(
+            `¿Guardar este vínculo SOLO para este cliente?\n\n` +
+            `Aceptar = alias específico para ese cliente.\n` +
+            `Cancelar = alias GLOBAL (vale para cualquier cliente con SKU "${target.sku.trim()}").`
+          )
+          const saved = await saveAlias({
+            companyId: docCompanyId,
+            clientId: useClientScope ? docClientId! : null,
+            externalSku: target.sku,
+            productId,
+            source: 'manual',
+          })
+          if (saved) {
+            addToast({
+              type: 'success',
+              title: 'Vínculo guardado',
+              message: useClientScope
+                ? `Próxima OC de este cliente con SKU "${target.sku}" se va a matchear sola`
+                : `SKU "${target.sku}" matcheado globalmente con ${productSku}`,
+            })
+          }
+        } catch (err) {
+          console.error('Error guardando alias:', err)
+        }
+      }
+
+      setLinkingItemId(null)
+      setShowProductSearch(false)
+      setProductSearchQuery('')
+      return
+    }
+
+    // ── Modo normal: agregar nueva línea
     const newItem: ItemData = {
       id: `new-${Date.now()}`,
       sku: (product.sku as string) || '',
@@ -1207,7 +1364,6 @@ export function DocumentForm({
   const handleDuplicate = async () => {
     if (!doc) return
     addToast({ type: 'info', title: 'Funcion en desarrollo', message: 'Duplicar documento' })
-    setShowMoreMenu(false)
   }
 
   // ---------------------------------------------------------------
@@ -1702,31 +1858,63 @@ export function DocumentForm({
               <Mail size={14} />
             </Button>
 
-            {/* More menu */}
-            <div className="relative">
-              <Button variant="outline" size="sm" onClick={() => setShowMoreMenu(!showMoreMenu)}>
-                <MoreVertical size={14} />
-              </Button>
-              {showMoreMenu && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setShowMoreMenu(false)} />
-                  <div className="absolute right-0 top-full mt-1 w-48 bg-[#1C2230] border border-[#2A3040] rounded-lg shadow-xl z-50 py-1">
-                    <button
-                      onClick={handleDuplicate}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[#9CA3AF] hover:bg-[#2A3040] hover:text-[#F0F2F5]"
-                    >
-                      <Copy size={14} /> Duplicar
-                    </button>
-                    <button
-                      onClick={() => { setShowDeleteConfirm(true); setShowMoreMenu(false) }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10"
-                    >
-                      <Trash2 size={14} /> Eliminar
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
+            {/* Menú "Más" configurable estilo StelOrder.
+                Las acciones de workflow (generate_*, register_payment, reopen)
+                se delegan a los botones existentes de DocumentActions vía
+                data-doc-action — NO duplicamos la lógica.
+                Las admin-actions (duplicate, delete, download_pdf) usan los
+                handlers locales que ya existían (handleDuplicate, etc.). */}
+            {(() => {
+              // Normaliza documentType al scope que entiende el catálogo
+              const scope: DocumentActionScope = (
+                documentType === 'factura' ? 'invoice'
+                : documentType === 'coti' || documentType === 'pedido' || documentType === 'delivery_note' || documentType === 'invoice' || documentType === 'pap' || documentType === 'recepcion' || documentType === 'factura_compra' ? documentType
+                : '*'
+              ) as DocumentActionScope
+
+              const triggerWorkflowAction = (actionKey: string) => {
+                // Busca el botón de DocumentActions más abajo en el árbol y
+                // hace click programático. Si no existe (estado no aplicable),
+                // dispatch genérico para que cualquier listener pueda manejarlo.
+                const btn = window.document.querySelector<HTMLButtonElement>(
+                  `[data-doc-action="${actionKey}"]`
+                )
+                if (btn && !btn.disabled) {
+                  btn.click()
+                } else {
+                  window.dispatchEvent(new CustomEvent('doc:next-step', {
+                    detail: { actionKey, docId: doc?.id },
+                  }))
+                  addToast({
+                    type: 'info',
+                    title: 'Esa acción no aplica en el estado actual del documento',
+                  })
+                }
+              }
+
+              return (
+                <DocumentMoreMenu
+                  documentType={scope}
+                  variant="ghost"
+                  align="right"
+                  handlers={{
+                    // Genéricas (handlers locales del form)
+                    send: () => setShowSendModal(true),
+                    download_pdf: handlePrint,
+                    duplicate: handleDuplicate,
+                    delete: () => setShowDeleteConfirm(true),
+                    // Workflow (delegadas a DocumentActions con click programático)
+                    generate_order:    () => triggerWorkflowAction('generate_order'),
+                    generate_delivery: () => triggerWorkflowAction('generate_delivery'),
+                    generate_invoice:  () => triggerWorkflowAction(scope === 'pedido' ? 'invoice_direct' : 'generate_invoice'),
+                    register_payment:  () => triggerWorkflowAction('register_payment'),
+                    reopen:            () => triggerWorkflowAction('reopen'),
+                    // Dispatcha evento que escucha EntityWorkflowsCard para abrir su modal "nuevo flujo"
+                    create_workflow:   () => window.dispatchEvent(new CustomEvent('entity-workflows:new', { detail: { entityId: doc?.id } })),
+                  }}
+                />
+              )
+            })()}
           </div>
         </div>
       </div>
@@ -1779,7 +1967,10 @@ export function DocumentForm({
         </div>
       )}
 
-      {/* ====== VISUAL WORKFLOWS DEL DOCUMENTO ====== */}
+      {/* ====== VISUAL WORKFLOWS DEL DOCUMENTO ======
+          hideIfEmpty=true → si no hay workflows asociados, el componente
+          desaparece. Se sigue pudiendo crear uno desde el menú "Más → Crear
+          flujo visual" (que dispatcha el evento 'entity-workflows:new'). */}
       {!editMode && doc?.id && (
         <div className="mt-3 print:hidden">
           <EntityWorkflowsCard
@@ -1787,6 +1978,7 @@ export function DocumentForm({
             entityId={doc.id as string}
             entityName={(doc.display_ref || doc.system_code || doc.id) as string}
             companyId={(doc.company_id as string) || undefined}
+            hideIfEmpty
           />
         </div>
       )}
@@ -2224,6 +2416,37 @@ export function DocumentForm({
             </div>
           )}
 
+          {/* Botón: aplicar régimen del cliente (v70 — solo si hay client_id, no PAP) */}
+          {editMode && (editDoc.client_id ?? doc.client_id) && documentType !== 'pap' && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={applyClientTaxConfig}
+                disabled={applyingTax}
+                className="h-7 px-2 rounded border border-[#FF6600]/40 hover:bg-[#FF6600]/10 disabled:opacity-50 text-[#FF6600] text-[11px] font-medium transition flex items-center gap-1"
+                title="Aplica IVA / IRPF según override por empresa (si existe) o defaults del cliente"
+              >
+                {applyingTax ? '...' : '↻'} Aplicar régimen del cliente
+              </button>
+              {taxConfigSource === 'override' && (
+                <span
+                  className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+                  title="Aplicado override de IVA específico para esta empresa (v70)"
+                >
+                  ✓ override empresa
+                </span>
+              )}
+              {taxConfigSource === 'client_default' && (
+                <span
+                  className="text-[10px] px-1.5 py-0.5 rounded bg-[#1E2330] text-[#9CA3AF] border border-[#2A3040]"
+                  title="Sin override por empresa: se aplicaron los defaults fiscales del cliente"
+                >
+                  default cliente
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Payment status badge for invoices */}
           {isInvoiceType && doc && (
             <div className="flex items-center gap-2">
@@ -2399,6 +2622,125 @@ export function DocumentForm({
                 <StockReservationsPanel documentId={doc.id} documentType={documentType} />
               </div>
             )}
+            {/* Banner de conciliación con catálogo — muestra cuántos items están
+                vinculados a tt_products y permite hacer match en batch por SKU.
+                Solo se muestra si hay al menos un item real (no sección). */}
+            {(() => {
+              const realItems = displayItems.filter((i) => !i.is_section)
+              if (realItems.length === 0) return null
+              const matched = realItems.filter((i) => i.product_id).length
+              const unmatched = realItems.length - matched
+              const allMatched = unmatched === 0
+              return (
+                <div className={`mb-3 rounded-xl border p-3 flex items-center gap-3 ${allMatched ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-amber-500/30 bg-amber-500/5'}`}>
+                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${allMatched ? 'bg-emerald-500/20' : 'bg-amber-500/20'}`}>
+                    <FileText size={16} className={allMatched ? 'text-emerald-400' : 'text-amber-400'} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-[#F0F2F5]">
+                      {allMatched
+                        ? `✓ Los ${matched} items están vinculados al catálogo`
+                        : `${matched}/${realItems.length} items vinculados al catálogo`}
+                    </p>
+                    {!allMatched && (
+                      <p className="text-xs text-[#9CA3AF] mt-0.5">
+                        {unmatched} ítem{unmatched !== 1 ? 's' : ''} sin match: descuentan stock como texto libre. Probá &quot;Conciliar por SKU&quot; o vinculá manualmente desde la fila (🔴).
+                      </p>
+                    )}
+                  </div>
+                  {!allMatched && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const skusBuscados = realItems
+                          .filter((i) => !i.product_id && i.sku.trim())
+                          .map((i) => i.sku.trim())
+                        if (skusBuscados.length === 0) {
+                          addToast({ type: 'warning', title: 'No hay items con SKU para conciliar' })
+                          return
+                        }
+                        const supabase = createClient()
+                        // (a) Primero buscamos en aliases aprendidos (priorizando los del cliente)
+                        const { lookupAliasesForSkus } = await import('@/lib/sku-aliases')
+                        const docClientId = (doc as unknown as Record<string, unknown>)?.client_id as string | undefined
+                        const docCompanyId = (doc as unknown as Record<string, unknown>)?.company_id as string | undefined
+                        const aliasMap = docCompanyId
+                          ? await lookupAliasesForSkus({
+                              companyId: docCompanyId,
+                              clientId: docClientId || null,
+                              externalSkus: skusBuscados,
+                            })
+                          : new Map()
+                        // (b) Después buscamos por SKU exacto los que no tuvieron alias
+                        const skusSinAlias = skusBuscados.filter((s) => !aliasMap.has(s.toUpperCase().trim()))
+                        const { data: prods } = skusSinAlias.length > 0
+                          ? await supabase
+                              .from('tt_products')
+                              .select('id, sku, name, price_eur')
+                              .in('sku', skusSinAlias)
+                              .eq('active', true)
+                          : { data: [] }
+                        const bySku = new Map<string, { id: string; sku: string; name: string; price_eur: number }>()
+                        for (const p of (prods || []) as Array<{ id: string; sku: string; name: string; price_eur: number }>) {
+                          bySku.set(p.sku.toUpperCase().trim(), p)
+                        }
+                        // Update local state (edit o read mode). Alias gana sobre match directo.
+                        const updateFn = (curr: ItemData[]) => curr.map((it) => {
+                          if (it.product_id || !it.sku.trim()) return it
+                          const key = it.sku.toUpperCase().trim()
+                          const aliasHit = aliasMap.get(key)
+                          if (aliasHit) return { ...it, product_id: aliasHit.productId }
+                          const m = bySku.get(key)
+                          if (!m) return it
+                          return { ...it, product_id: m.id }
+                        })
+                        if (editMode) setEditItems(updateFn)
+                        else setItems(updateFn)
+
+                        // Update DB si no estamos en editMode (los cambios del editMode se persisten al guardar)
+                        if (!editMode) {
+                          const itemTableMap: Record<string, { table: string }> = {
+                            coti: { table: 'tt_quote_items' },
+                            pedido: { table: 'tt_so_items' },
+                            delivery_note: { table: 'tt_dn_items' },
+                            invoice: { table: 'tt_invoice_items' },
+                          }
+                          const cfg = itemTableMap[documentType]
+                          if (cfg) {
+                            for (const it of realItems) {
+                              if (it.product_id || !it.sku.trim()) continue
+                              const key = it.sku.toUpperCase().trim()
+                              const aliasHit = aliasMap.get(key)
+                              const m = bySku.get(key)
+                              const productId = aliasHit?.productId || m?.id
+                              if (!productId) continue
+                              try {
+                                await supabase.from(cfg.table).update({ product_id: productId }).eq('id', it.id)
+                              } catch { /* ignore individual error */ }
+                            }
+                          }
+                        }
+                        const aliasHits = realItems.filter((it) => !it.product_id && it.sku.trim() && aliasMap.has(it.sku.toUpperCase().trim())).length
+                        const directHits = realItems.filter((it) => !it.product_id && it.sku.trim() && bySku.has(it.sku.toUpperCase().trim())).length
+                        const nuevos = aliasHits + directHits
+                        addToast({
+                          type: nuevos > 0 ? 'success' : 'info',
+                          title: nuevos > 0 ? `${nuevos} nuevos matches` : 'Sin matches nuevos',
+                          message: aliasHits > 0
+                            ? `${aliasHits} desde historial (alias), ${directHits} por SKU directo`
+                            : nuevos === skusBuscados.length
+                              ? 'Todos los SKUs encontrados ✓'
+                              : `${nuevos} de ${skusBuscados.length} SKUs encontrados — los demás no existen (creá productos o ajustá los SKUs)`,
+                        })
+                      }}
+                      className="shrink-0 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-white text-xs font-bold transition-colors"
+                    >
+                      Conciliar por SKU
+                    </button>
+                  )}
+                </div>
+              )
+            })()}
             <div data-testid="doc-items-card" className="bg-[#141820] rounded-xl border border-[#2A3040] overflow-hidden">
             {/* Items table */}
             <div className="overflow-x-auto">
@@ -2471,7 +2813,32 @@ export function DocumentForm({
                               className="h-8 w-full rounded bg-[#0B0E13] border border-[#2A3040] focus:border-[#FF6600] px-2 text-xs text-[#F0F2F5] font-mono focus:outline-none"
                             />
                           ) : (
-                            <code className="text-xs text-[#9CA3AF] font-mono">{item.sku || '-'}</code>
+                            <div className="flex items-center gap-1.5">
+                              {item.product_id ? (
+                                <span
+                                  className="w-2 h-2 rounded-full shrink-0 bg-emerald-400"
+                                  title="Producto vinculado al catálogo"
+                                />
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setLinkingItemId(item.id)
+                                    // Pre-carga con palabras de la descripción (mejor match que el SKU del cliente)
+                                    const desc = item.description?.trim() || ''
+                                    const seed = desc ? desc.split(/\s+/).slice(0, 3).join(' ') : (item.sku || '')
+                                    setProductSearchQuery(seed)
+                                    setShowProductSearch(true)
+                                  }}
+                                  className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-500/15 hover:bg-red-500/30 border border-red-500/40 hover:border-red-500/70 text-red-400 hover:text-red-300 text-[10px] font-semibold transition-all"
+                                  title="SIN MATCH — click para vincular este SKU con un producto del catálogo. Se guarda como alias para futuras OCs."
+                                >
+                                  🔗 Vincular
+                                </button>
+                              )}
+                              <code className="text-xs text-[#9CA3AF] font-mono">{item.sku || '-'}</code>
+                            </div>
                           )}
                         </td>
                         <td className="px-4 py-3">
@@ -3075,6 +3442,24 @@ export function DocumentForm({
         {/* ====== TAB: RELACIONADOS ====== */}
         {activeTab === 'relacionados' && (
           <div className="bg-[#141820] rounded-xl border border-[#2A3040] p-5 space-y-6">
+            {/* FASE 1.3 — Panel de trazabilidad COT←PED←REM←FAC←Cobro
+                vía FK directas (cubre flujo legacy). Complementa a
+                parentLinks/childLinks que cubren tt_document_relations. */}
+            <DocumentTracePanel
+              docId={documentId}
+              source={
+                source === 'tt_documents'
+                  ? 'tt_documents'
+                  : documentType === 'pedido' || documentType === 'sales_order'
+                  ? 'sales_order'
+                  : documentType === 'delivery_note' || documentType === 'albaran' || documentType === 'remito'
+                  ? 'delivery_note'
+                  : documentType === 'factura' || documentType === 'invoice'
+                  ? 'invoice'
+                  : 'quote'
+              }
+            />
+
             {/* Parent docs */}
             {parentLinks.length > 0 && (
               <div>
@@ -3735,14 +4120,66 @@ export function DocumentForm({
         </div>
       </Modal>
 
-      {/* Product search modal */}
+      {/* Product search modal — dual purpose: agregar item nuevo O vincular item existente */}
       <Modal
         isOpen={showProductSearch}
-        onClose={() => { setShowProductSearch(false); setProductSearchQuery('') }}
-        title="Buscar producto"
+        onClose={() => { setShowProductSearch(false); setProductSearchQuery(''); setLinkingItemId(null) }}
+        title={linkingItemId ? 'Vincular ítem con producto del catálogo' : 'Buscar producto'}
         size="lg"
       >
         <div className="space-y-4">
+          {/* Panel naranja: muestra qué item del cliente estamos vinculando */}
+          {linkingItemId && (() => {
+            const target = (editMode ? editItems : items).find((i) => i.id === linkingItemId)
+            if (!target) return null
+            return (
+              <div className="rounded-lg border border-[#FF6600]/30 bg-[#FF6600]/5 p-3 space-y-1">
+                <div className="text-[10px] uppercase tracking-wider text-[#FF6600] font-bold">
+                  Estás vinculando este ítem del cliente:
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] text-[#9CA3AF]">SKU cliente:</span>
+                  <code className="font-mono text-sm font-bold text-[#FF6600] bg-[#FF6600]/15 px-2 py-0.5 rounded">
+                    {target.sku || '(sin SKU)'}
+                  </code>
+                </div>
+                {target.description && (
+                  <div className="flex items-start gap-2">
+                    <span className="text-[10px] text-[#9CA3AF] shrink-0 mt-0.5">Descripción:</span>
+                    <span className="text-sm text-[#F0F2F5] font-medium">{target.description}</span>
+                  </div>
+                )}
+                <div className="flex items-center gap-1.5 pt-1 flex-wrap">
+                  <span className="text-[10px] text-[#6B7280]">Buscar por:</span>
+                  {target.description && (
+                    <button
+                      type="button"
+                      onClick={() => setProductSearchQuery(target.description.split(/\s+/).slice(0, 3).join(' '))}
+                      className="text-[10px] font-semibold px-2 py-0.5 rounded bg-emerald-500/15 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/40"
+                    >
+                      {target.description.split(/\s+/).slice(0, 3).join(' ')}
+                    </button>
+                  )}
+                  {target.sku && (
+                    <button
+                      type="button"
+                      onClick={() => setProductSearchQuery(target.sku)}
+                      className="text-[10px] font-semibold px-2 py-0.5 rounded bg-[#1E2330] hover:bg-[#2A3040] text-[#9CA3AF] border border-[#2A3040]"
+                    >
+                      SKU: {target.sku}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setProductSearchQuery('')}
+                    className="text-[10px] font-semibold px-2 py-0.5 rounded bg-[#1E2330] hover:bg-[#2A3040] text-[#6B7280] border border-[#2A3040]"
+                  >
+                    Borrar
+                  </button>
+                </div>
+              </div>
+            )
+          })()}
           <Input
             placeholder="Buscar por SKU, nombre o marca..."
             value={productSearchQuery}
