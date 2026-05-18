@@ -46,6 +46,7 @@ import { FeedsManager } from '@/components/catalogo/feeds-manager'
 import { ScheduledExportsManager } from '@/components/catalogo/scheduled-exports-manager'
 import { RulesManager } from '@/components/catalogo/rules-manager'
 import { ExpiringWidget } from '@/components/catalogo/expiring-widget'
+import { DuplicateWarningModal, type DuplicateCheckResult } from '@/components/catalogo/duplicate-warning-modal'
 import { triggerRules } from '@/lib/catalog-rules-engine'
 import { useCatalogPresets } from '@/hooks/use-catalog-presets'
 
@@ -241,6 +242,11 @@ function ProductosTab() {
 
   // Specs editor (key-value pairs)
   const [specRows, setSpecRows] = useState<Array<{ key: string; value: string }>>([])
+
+  // Duplicate detection (pre-save)
+  const [duplicateResult, setDuplicateResult] = useState<DuplicateCheckResult | null>(null)
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false)
+  const [pendingPayload, setPendingPayload] = useState<Record<string, unknown> | null>(null)
 
   // Per-company pricing
   type CompanyMeta = { id: string; name: string; currency: string; country: string }
@@ -640,62 +646,10 @@ function ProductosTab() {
   }, [])
 
   // ---------- Save product (create or update) ----------
-  const saveProduct = useCallback(async () => {
-    if (!productForm.sku?.trim()) {
-      addToast({ type: 'warning', title: 'El SKU es obligatorio' })
-      return
-    }
-    if (!productForm.name?.trim()) {
-      addToast({ type: 'warning', title: 'El nombre es obligatorio' })
-      return
-    }
-
+  // Ejecuta el insert/update real. Se llama directamente o desde el modal de duplicados.
+  const executeSaveProduct = useCallback(async (payload: Record<string, unknown>) => {
     setProductSaving(true)
     const sb = createClient()
-
-    // Build specs from specRows
-    const specs: Record<string, string> = {}
-    for (const row of specRows) {
-      if (row.key.trim()) {
-        specs[row.key.trim()] = row.value.trim()
-      }
-    }
-
-    const payload = {
-      sku: productForm.sku!.trim(),
-      name: productForm.name!.trim(),
-      description: productForm.description?.trim() || null,
-      brand: productForm.brand?.trim() || '',
-      product_type: productForm.product_type || 'product',
-      family_id: productForm.family_id || null,
-      category: productForm.category?.trim() || null,
-      subcategory: productForm.subcategory?.trim() || null,
-      active: productForm.active ?? true,
-      price_eur: productForm.price_eur || 0,
-      price_usd: productForm.price_usd || null,
-      price_ars: productForm.price_ars || null,
-      cost_eur: productForm.cost_eur || 0,
-      price_min: productForm.price_min || null,
-      encastre: productForm.encastre?.trim() || null,
-      torque_min: productForm.torque_min || null,
-      torque_max: productForm.torque_max || null,
-      rpm: productForm.rpm || null,
-      weight_kg: productForm.weight_kg || null,
-      modelo: productForm.modelo?.trim() || null,
-      serie: productForm.serie?.trim() || null,
-      origin: productForm.origin?.trim() || null,
-      image_url: productForm.image_url?.trim() || null,
-      diagram_url: productForm.diagram_url?.trim() || null,
-      gallery_urls: Array.isArray(productForm.gallery_urls) && productForm.gallery_urls.length
-        ? productForm.gallery_urls.filter(g => g && g.url?.trim())
-        : [],
-      specs: Object.keys(specs).length > 0 ? specs : null,
-      ean: productForm.ean?.toString().trim() || null,
-      manufacturer_code: productForm.manufacturer_code?.toString().trim() || null,
-      supplier_code: productForm.supplier_code?.toString().trim() || null,
-      barcode: productForm.barcode?.toString().trim() || null,
-      lifecycle_status: (productForm.lifecycle_status as LifecycleStatus | undefined) || null,
-    }
 
     let error
     let savedProductId: string | null = editingProduct?.id ?? null
@@ -758,7 +712,97 @@ function ProductosTab() {
       loadProducts(selectedCategory, selectedSubcategory, page, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter)
     }
     loadCategories()
-  }, [productForm, specRows, editingProduct, companyPrices, selectedCategory, selectedSubcategory, page, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter, addToast, loadProducts, loadCategories])
+  }, [editingProduct, companyPrices, selectedCategory, selectedSubcategory, page, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter, addToast, loadProducts, loadCategories])
+
+  const saveProduct = useCallback(async () => {
+    if (!productForm.sku?.trim()) {
+      addToast({ type: 'warning', title: 'El SKU es obligatorio' })
+      return
+    }
+    if (!productForm.name?.trim()) {
+      addToast({ type: 'warning', title: 'El nombre es obligatorio' })
+      return
+    }
+
+    // Build specs from specRows
+    const specs: Record<string, string> = {}
+    for (const row of specRows) {
+      if (row.key.trim()) {
+        specs[row.key.trim()] = row.value.trim()
+      }
+    }
+
+    const payload = {
+      sku: productForm.sku!.trim(),
+      name: productForm.name!.trim(),
+      description: productForm.description?.trim() || null,
+      brand: productForm.brand?.trim() || '',
+      product_type: productForm.product_type || 'product',
+      family_id: productForm.family_id || null,
+      category: productForm.category?.trim() || null,
+      subcategory: productForm.subcategory?.trim() || null,
+      active: productForm.active ?? true,
+      price_eur: productForm.price_eur || 0,
+      price_usd: productForm.price_usd || null,
+      price_ars: productForm.price_ars || null,
+      cost_eur: productForm.cost_eur || 0,
+      price_min: productForm.price_min || null,
+      encastre: productForm.encastre?.trim() || null,
+      torque_min: productForm.torque_min || null,
+      torque_max: productForm.torque_max || null,
+      rpm: productForm.rpm || null,
+      weight_kg: productForm.weight_kg || null,
+      modelo: productForm.modelo?.trim() || null,
+      serie: productForm.serie?.trim() || null,
+      origin: productForm.origin?.trim() || null,
+      image_url: productForm.image_url?.trim() || null,
+      diagram_url: productForm.diagram_url?.trim() || null,
+      gallery_urls: Array.isArray(productForm.gallery_urls) && productForm.gallery_urls.length
+        ? productForm.gallery_urls.filter(g => g && g.url?.trim())
+        : [],
+      specs: Object.keys(specs).length > 0 ? specs : null,
+      ean: productForm.ean?.toString().trim() || null,
+      manufacturer_code: productForm.manufacturer_code?.toString().trim() || null,
+      supplier_code: productForm.supplier_code?.toString().trim() || null,
+      barcode: productForm.barcode?.toString().trim() || null,
+      lifecycle_status: (productForm.lifecycle_status as LifecycleStatus | undefined) || null,
+    }
+
+    // Chequeo de duplicados ANTES de persistir (score multi-criterio).
+    setProductSaving(true)
+    const sb = createClient()
+    const { data: dupData, error: dupErr } = await sb.rpc('check_product_duplicates_candidates', {
+      p_sku:               payload.sku,
+      p_name:              payload.name,
+      p_description:       payload.description,
+      p_ean:               payload.ean,
+      p_barcode:           payload.barcode,
+      p_manufacturer_code: payload.manufacturer_code,
+      p_supplier_code:     payload.supplier_code,
+      p_brand:             payload.brand || null,
+      p_price:             payload.price_eur ?? null,
+      p_exclude_id:        editingProduct?.id ?? null,
+      p_min_score:         60,
+      p_limit:             10,
+    })
+    setProductSaving(false)
+
+    if (dupErr) {
+      console.warn('check_product_duplicates_candidates failed, continuando:', dupErr.message)
+      await executeSaveProduct(payload)
+      return
+    }
+
+    const result = (dupData ?? null) as DuplicateCheckResult | null
+    if (result && result.count > 0) {
+      setDuplicateResult(result)
+      setPendingPayload(payload)
+      setShowDuplicateModal(true)
+      return
+    }
+
+    await executeSaveProduct(payload)
+  }, [productForm, specRows, editingProduct, addToast, executeSaveProduct])
 
   // ---------- Soft delete product ----------
   const softDeleteProduct = useCallback(async (product: Product) => {
@@ -2216,6 +2260,74 @@ function ProductosTab() {
           </div>
         )}
       </Modal>
+
+      {/* ======== DUPLICATE WARNING MODAL (pre-save) ======== */}
+      <DuplicateWarningModal
+        open={showDuplicateModal}
+        isEditing={!!editingProduct}
+        result={duplicateResult}
+        incomingSummary={{
+          sku: productForm.sku || '',
+          name: productForm.name || '',
+          brand: productForm.brand ?? null,
+        }}
+        onCancel={() => {
+          setShowDuplicateModal(false)
+          setDuplicateResult(null)
+          setPendingPayload(null)
+        }}
+        onContinueAnyway={async () => {
+          if (!pendingPayload) return
+          const payload = pendingPayload
+          setShowDuplicateModal(false)
+          setDuplicateResult(null)
+          setPendingPayload(null)
+          await executeSaveProduct(payload)
+        }}
+        onMergeInto={async (targetId) => {
+          const sb = createClient()
+          if (editingProduct) {
+            // Edicion -> merge: el target se queda como master, este id se fusiona.
+            const { error } = await sb.rpc('merge_products', {
+              p_master_id: targetId,
+              p_duplicate_ids: [editingProduct.id],
+              p_match_reason: 'duplicate-warning-modal',
+              p_notes: 'Merge desde aviso pre-save al editar',
+            })
+            if (error) {
+              addToast({ type: 'error', title: 'Error mergeando', message: error.message })
+              return
+            }
+            addToast({ type: 'success', title: 'Producto fusionado', message: `Se mergeó con ${targetId.slice(0,8)}` })
+            setShowDuplicateModal(false)
+            setDuplicateResult(null)
+            setPendingPayload(null)
+            setShowProductForm(false)
+            setEditingProduct(null)
+            if (selectedCategory) {
+              loadProducts(selectedCategory, selectedSubcategory, page, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter)
+            }
+            loadCategories()
+          } else {
+            // Creacion -> abrir el existente, descartar el nuevo.
+            setShowDuplicateModal(false)
+            setDuplicateResult(null)
+            setPendingPayload(null)
+            setShowProductForm(false)
+            const { data } = await sb
+              .from('tt_products')
+              .select('*')
+              .eq('id', targetId)
+              .single()
+            if (data) {
+              setEditingProduct(data as Product)
+              setProductForm(data as Partial<Product>)
+              setShowProductForm(true)
+              addToast({ type: 'info', title: 'Abriste el producto existente', message: data.sku as string })
+            }
+          }
+        }}
+      />
 
       {/* ======== PRODUCT FORM MODAL (Create / Edit) ======== */}
       <Modal
