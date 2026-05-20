@@ -294,6 +294,7 @@ html[data-theme="light"] :not([data-theme-scope="dark"] *).bg-\[\#0A0D12\]    { 
 html[data-theme="light"] :not([data-theme-scope="dark"] *).bg-\[\#141820\]    { background-color: #FFFFFF !important; }
 html[data-theme="light"] :not([data-theme-scope="dark"] *).bg-\[\#151821\]    { background-color: #FFFFFF !important; }
 html[data-theme="light"] :not([data-theme-scope="dark"] *).bg-\[\#1A1F2E\]    { background-color: #F8F8F8 !important; }
+html[data-theme="light"] :not([data-theme-scope="dark"] *).bg-\[\#1A2030\]    { background-color: #FFFFFF !important; }
 html[data-theme="light"] :not([data-theme-scope="dark"] *).bg-\[\#1C2230\]    { background-color: #F9F9F9 !important; }
 html[data-theme="light"] :not([data-theme-scope="dark"] *).bg-\[\#1E2330\]    { background-color: #EAEAEA !important; }
 html[data-theme="light"] :not([data-theme-scope="dark"] *).bg-\[\#2A3040\]    { background-color: #E5E5E5 !important; }

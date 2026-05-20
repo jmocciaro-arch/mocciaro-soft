@@ -91,7 +91,7 @@ export function AlertsBell() {
 
       {open && (
         <div
-          className="absolute right-0 mt-2 rounded-md shadow-xl overflow-hidden z-50 bg-white border border-[#E5E5E5]"
+          className="absolute right-0 mt-2 rounded-md shadow-xl overflow-hidden z-[60] bg-white border border-[#E5E5E5]"
           style={{ width: 380, maxHeight: 500 }}
         >
           <div className="flex items-center justify-between px-3 py-2 border-b border-[#F0F0F0] bg-[#F9FAFB]">

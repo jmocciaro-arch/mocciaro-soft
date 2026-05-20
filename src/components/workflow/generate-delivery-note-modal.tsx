@@ -87,12 +87,13 @@ export function GenerateDeliveryNoteModal({
     try {
       const loadedOrders: OrderForDelivery[] = []
 
-      // Load local orders (tt_sales_orders)
+      // Load local orders (tt_sales_orders) — la columna real es "number", no "doc_number"
+      const PENDING_STATUSES = ['open', 'partially_delivered', 'accepted', 'confirmado', 'confirmed', 'draft', 'borrador', 'pending', 'new', 'nuevo', 'sent', 'enviada']
       const { data: localOrders } = await supabase
         .from('tt_sales_orders')
-        .select('id, doc_number, status, client_id')
+        .select('id, number, status, client_id')
         .eq('client_id', clientId)
-        .in('status', ['open', 'partially_delivered', 'accepted'])
+        .in('status', PENDING_STATUSES)
         .order('created_at', { ascending: false })
 
       for (const so of (localOrders || [])) {
@@ -116,15 +117,15 @@ export function GenerateDeliveryNoteModal({
             toDeliver: pending, // default: deliver all pending
             unit_price: (it.unit_price as number) || 0,
             selected: pending > 0,
-            so_ref: so.doc_number || so.id,
+            so_ref: (so.number as string) || so.id,
           }
         }).filter((it: DeliveryItemLine) => it.pending > 0)
 
         if (mappedItems.length > 0) {
           loadedOrders.push({
             id: so.id,
-            doc_number: so.doc_number || '-',
-            display_ref: so.doc_number || '-',
+            doc_number: (so.number as string) || '-',
+            display_ref: (so.number as string) || '-',
             source: 'local',
             items: mappedItems,
             expanded: so.id === currentOrderId,
@@ -133,13 +134,13 @@ export function GenerateDeliveryNoteModal({
         }
       }
 
-      // Load tt_documents orders
+      // Load tt_documents orders (mismo conjunto de status válidos)
       const { data: docOrders } = await supabase
         .from('tt_documents')
         .select('id, display_ref, system_code, status, client_id')
         .eq('client_id', clientId)
         .eq('doc_type', 'pedido')
-        .in('status', ['open', 'partially_delivered', 'accepted'])
+        .in('status', PENDING_STATUSES)
         .order('created_at', { ascending: false })
 
       for (const so of (docOrders || [])) {
@@ -436,7 +437,7 @@ export function GenerateDeliveryNoteModal({
         processing={creating}
       />
       <Modal
-      isOpen={isOpen}
+      isOpen={isOpen && !shortfallModalOpen}
       onClose={onClose}
       title="Generar Remito / Albaran"
       size="xl"

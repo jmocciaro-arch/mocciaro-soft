@@ -5,6 +5,8 @@
  * Muestra una fila de precios (compra / venta / mínimo / moneda)
  * por cada empresa disponible.  El padre maneja el estado; este
  * componente solo renderiza y llama `onChange`.
+ *
+ * Estilo: StelOrder light (fondo blanco, borde gris claro, focus naranja).
  */
 
 import { DollarSign, TrendingUp, TrendingDown, Info } from 'lucide-react'
@@ -31,7 +33,7 @@ interface CompanyMeta {
 
 interface Props {
   companies: CompanyMeta[]
-  prices:    Record<string, CompanyPriceRow>   // keyed by company_id
+  prices:    Record<string, CompanyPriceRow>
   onChange:  (companyId: string, field: keyof CompanyPriceRow, value: string | number | null) => void
 }
 
@@ -46,10 +48,15 @@ function margin(sale: number | null, purchase: number | null): string | null {
   return pct.toFixed(1)
 }
 
+// Inputs StelOrder-style: fondo blanco, borde gris claro, focus naranja.
+const INPUT_BASE =
+  'w-full h-9 rounded-md bg-white border border-[#E5E5E5] text-sm text-[#1F2937] placeholder:text-[#9CA3AF] ' +
+  'focus:outline-none focus:ring-2 focus:ring-[#FF6600]/30 focus:border-[#FF6600] transition-colors'
+
 export function ProductPricesTab({ companies, prices, onChange }: Props) {
   if (companies.length === 0) {
     return (
-      <div className="flex items-center gap-2 p-4 rounded-xl bg-[#0F1218] border border-[#1E2330] text-sm text-[#6B7280]">
+      <div className="flex items-center gap-2 p-4 rounded-md bg-[#F9FAFB] border border-[#E5E5E5] text-sm text-[#6B7280]">
         <Info size={16} />
         No hay empresas configuradas.
       </div>
@@ -64,7 +71,7 @@ export function ProductPricesTab({ companies, prices, onChange }: Props) {
       </p>
 
       {/* Cabecera de columnas */}
-      <div className="hidden sm:grid sm:grid-cols-[1fr_80px_1fr_1fr_1fr_60px] gap-2 px-3 text-[10px] font-semibold uppercase tracking-wider text-[#4B5563]">
+      <div className="hidden sm:grid sm:grid-cols-[1fr_80px_1fr_1fr_1fr_60px] gap-2 px-3 text-[10px] font-semibold uppercase tracking-wider text-[#9CA3AF]">
         <span>Empresa</span>
         <span>Moneda</span>
         <span>Precio compra</span>
@@ -88,13 +95,13 @@ export function ProductPricesTab({ companies, prices, onChange }: Props) {
         return (
           <div
             key={c.id}
-            className="rounded-xl border border-[#1E2330] bg-[#0F1218] p-3 space-y-3 sm:space-y-0 sm:grid sm:grid-cols-[1fr_80px_1fr_1fr_1fr_60px] sm:gap-2 sm:items-center"
+            className="rounded-md border border-[#E5E5E5] bg-white p-3 space-y-3 sm:space-y-0 sm:grid sm:grid-cols-[1fr_80px_1fr_1fr_1fr_60px] sm:gap-2 sm:items-center shadow-[0_1px_2px_rgba(0,0,0,0.03)]"
           >
             {/* Nombre empresa */}
             <div className="flex items-center gap-2 min-w-0">
               <span className="text-base shrink-0">{flag}</span>
               <div className="min-w-0">
-                <p className="text-xs font-semibold text-[#F0F2F5] truncate">{c.name}</p>
+                <p className="text-xs font-semibold text-[#1F2937] truncate">{c.name}</p>
               </div>
             </div>
 
@@ -106,7 +113,7 @@ export function ProductPricesTab({ companies, prices, onChange }: Props) {
                 maxLength={3}
                 value={row.currency_code}
                 onChange={(e) => onChange(c.id, 'currency_code', e.target.value.toUpperCase())}
-                className="w-full h-9 rounded-lg bg-[#1A2030] border border-[#2A3040] px-2 text-center text-sm font-mono text-[#F0F2F5] focus:outline-none focus:ring-1 focus:ring-orange-500/50 uppercase"
+                className={`${INPUT_BASE} px-2 text-center font-mono uppercase`}
               />
             </div>
 
@@ -114,7 +121,7 @@ export function ProductPricesTab({ companies, prices, onChange }: Props) {
             <div>
               <label className="sm:hidden block text-[10px] text-[#6B7280] mb-1">Precio compra</label>
               <div className="relative">
-                <TrendingDown size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none" />
+                <TrendingDown size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-[#3B82F6] pointer-events-none" />
                 <input
                   type="number"
                   min="0"
@@ -122,7 +129,7 @@ export function ProductPricesTab({ companies, prices, onChange }: Props) {
                   value={row.purchase_price ?? ''}
                   placeholder="0.00"
                   onChange={(e) => onChange(c.id, 'purchase_price', numOrNull(e.target.value))}
-                  className="w-full h-9 rounded-lg bg-[#1A2030] border border-[#2A3040] pl-6 pr-2 text-sm text-[#F0F2F5] placeholder:text-[#374151] focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+                  className={`${INPUT_BASE} pl-6 pr-2`}
                 />
               </div>
             </div>
@@ -131,7 +138,7 @@ export function ProductPricesTab({ companies, prices, onChange }: Props) {
             <div>
               <label className="sm:hidden block text-[10px] text-[#6B7280] mb-1">Precio venta</label>
               <div className="relative">
-                <TrendingUp size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-orange-400 pointer-events-none" />
+                <TrendingUp size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-[#FF6600] pointer-events-none" />
                 <input
                   type="number"
                   min="0"
@@ -139,7 +146,7 @@ export function ProductPricesTab({ companies, prices, onChange }: Props) {
                   value={row.sale_price ?? ''}
                   placeholder="0.00"
                   onChange={(e) => onChange(c.id, 'sale_price', numOrNull(e.target.value))}
-                  className="w-full h-9 rounded-lg bg-[#1A2030] border border-[#2A3040] pl-6 pr-2 text-sm text-[#F0F2F5] placeholder:text-[#374151] focus:outline-none focus:ring-1 focus:ring-orange-500/50"
+                  className={`${INPUT_BASE} pl-6 pr-2`}
                 />
               </div>
             </div>
@@ -148,7 +155,7 @@ export function ProductPricesTab({ companies, prices, onChange }: Props) {
             <div>
               <label className="sm:hidden block text-[10px] text-[#6B7280] mb-1">Precio mínimo</label>
               <div className="relative">
-                <DollarSign size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-emerald-400 pointer-events-none" />
+                <DollarSign size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-[#10B981] pointer-events-none" />
                 <input
                   type="number"
                   min="0"
@@ -156,7 +163,7 @@ export function ProductPricesTab({ companies, prices, onChange }: Props) {
                   value={row.min_price ?? ''}
                   placeholder="0.00"
                   onChange={(e) => onChange(c.id, 'min_price', numOrNull(e.target.value))}
-                  className="w-full h-9 rounded-lg bg-[#1A2030] border border-[#2A3040] pl-6 pr-2 text-sm text-[#F0F2F5] placeholder:text-[#374151] focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
+                  className={`${INPUT_BASE} pl-6 pr-2`}
                 />
               </div>
             </div>
@@ -165,19 +172,19 @@ export function ProductPricesTab({ companies, prices, onChange }: Props) {
             <div className="sm:text-right">
               <label className="sm:hidden block text-[10px] text-[#6B7280] mb-1">Margen</label>
               {mgn !== null ? (
-                <span className={`text-sm font-bold ${mgmPositive ? 'text-emerald-400' : 'text-red-400'}`}>
+                <span className={`text-sm font-bold ${mgmPositive ? 'text-[#10B981]' : 'text-[#DC2626]'}`}>
                   {mgn}%
                 </span>
               ) : (
-                <span className="text-xs text-[#374151]">—</span>
+                <span className="text-xs text-[#9CA3AF]">—</span>
               )}
             </div>
           </div>
         )
       })}
 
-      <p className="text-[10px] text-[#374151]">
-        El margen se calcula sobre precio de venta: (venta − compra) / venta × 100
+      <p className="text-[11px] text-[#9CA3AF] pt-2">
+        El margen se calcula sobre precio de venta: (venta – compra) / venta × 100
       </p>
     </div>
   )

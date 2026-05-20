@@ -191,29 +191,51 @@ function nextStepPedido(doc: Doc): NextStepResult {
     }
   }
 
-  if (status === 'open' || status === 'accepted' || status === 'confirmado' || status === '') {
-    if (stockOk === false) blockers.push('Falta stock — generar pedido de compra primero')
+  if (status === 'closed' || status === 'invoiced' || status === 'fully_invoiced' || status === 'cancelled' || status === 'cancelado') {
     return {
-      currentLabel: 'Confirmado — listo para preparar',
-      done: false,
-      primary: {
-        key: 'generate_delivery',
-        label: 'Crear remito / albarán',
-        hint: blockers.length ? blockers[0] : 'Reserva el stock y genera el documento de entrega',
-        icon: Truck,
-        tone: 'primary',
-        blocked: blockers.length > 0,
-        blockedReason: blockers[0],
-      },
-      secondary: [
-        { key: 'invoice_direct', label: 'Facturar directo', hint: 'Saltear remito (servicios)', icon: CreditCard, tone: 'neutral' },
-        { key: 'send', label: 'Enviar confirmación', hint: 'Avisar al cliente', icon: Mail, tone: 'neutral' },
-      ],
+      currentLabel: status === 'cancelled' || status === 'cancelado' ? 'Cancelado' : 'Facturado',
+      done: true,
+      primary: null,
+      secondary: [],
       blockers,
     }
   }
 
-  return { currentLabel: status || 'Sin estado', done: false, primary: null, secondary: [], blockers }
+  // Default: cualquier estado intermedio (open, accepted, confirmado, draft, borrador,
+  // pending, new, nuevo, sent, enviada, '') → sugerir crear remito
+  if (stockOk === false) blockers.push('Falta stock — generar pedido de compra primero')
+  const labels: Record<string, string> = {
+    draft: 'Borrador — listo para confirmar',
+    borrador: 'Borrador — listo para confirmar',
+    pending: 'Pendiente de confirmación',
+    new: 'Pedido nuevo',
+    nuevo: 'Pedido nuevo',
+    sent: 'Enviado al cliente',
+    enviada: 'Enviado al cliente',
+    open: 'Confirmado — listo para preparar',
+    accepted: 'Confirmado — listo para preparar',
+    confirmado: 'Confirmado — listo para preparar',
+    confirmed: 'Confirmado — listo para preparar',
+    '': 'Confirmado — listo para preparar',
+  }
+  return {
+    currentLabel: labels[status] || `Estado: ${status} — listo para preparar`,
+    done: false,
+    primary: {
+      key: 'generate_delivery',
+      label: 'Crear remito / albarán',
+      hint: blockers.length ? blockers[0] : 'Reserva el stock y genera el documento de entrega',
+      icon: Truck,
+      tone: 'primary',
+      blocked: blockers.length > 0,
+      blockedReason: blockers[0],
+    },
+    secondary: [
+      { key: 'invoice_direct', label: 'Facturar directo', hint: 'Saltear remito (servicios)', icon: CreditCard, tone: 'neutral' },
+      { key: 'send', label: 'Enviar confirmación', hint: 'Avisar al cliente', icon: Mail, tone: 'neutral' },
+    ],
+    blockers,
+  }
 }
 
 // ---------------------------------------------------------------

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/modal'
 import { Input } from '@/components/ui/input'
@@ -55,10 +56,12 @@ function getAvailableActions(type: DocumentActionType, status: string): string[]
       return ['send', 'pdf', 'accept', 'generate_order', 'reopen']
     }
     case 'pedido': {
-      if (s === 'open' || s === 'accepted' || s === 'confirmado') return ['send', 'generate_delivery', 'invoice_direct', 'reopen']
+      if (s === 'fully_delivered') return ['invoice_direct', 'send']
       if (s === 'partially_delivered') return ['send', 'generate_delivery', 'invoice_direct']
-      if (s === 'fully_delivered') return ['invoice_direct']
-      return ['send', 'reopen']
+      if (s === 'closed' || s === 'invoiced' || s === 'fully_invoiced' || s === 'cancelled' || s === 'cancelado') return ['reopen']
+      // Cualquier otro estado intermedio (open, accepted, confirmado, draft, borrador,
+      // pending, new, nuevo, sent, enviada, '') permite generar remito y facturar.
+      return ['send', 'generate_delivery', 'invoice_direct', 'reopen']
     }
     case 'delivery_note': {
       if (s === 'pending' || s === 'open') return ['generate_invoice', 'reopen']
@@ -89,6 +92,7 @@ export function DocumentActions({
   onAction,
 }: DocumentActionsProps) {
   const { addToast } = useToast()
+  const router = useRouter()
   const [loading, setLoading] = useState<string | null>(null)
   const [showSendModal, setShowSendModal] = useState(false)
   const [showRejectModal, setShowRejectModal] = useState(false)
@@ -185,15 +189,44 @@ export function DocumentActions({
   }
 
   const handleGenerateOrder = async () => {
+    // Anti doble-click: si ya hay una acción en curso, ignorar
+    if (loading !== null) return
     setLoading('generate_order')
     try {
+      // Para docs en tt_documents (flujo nuevo): usar el endpoint /api/documents/convert
+      // que crea el pedido en tt_documents (visible en la pestaña Pedidos).
+      if (source === 'tt_documents') {
+        const companyId = (document.company_id as string) || ''
+        if (!companyId) throw new Error('Falta company_id en la cotización')
+        const res = await fetch('/api/documents/convert', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sourceDocId: docId, targetType: 'pedido', companyId }),
+        })
+        const data = await res.json() as { newDocId?: string; newCode?: string; error?: string; stockAlert?: { insufficient: boolean } }
+        if (!res.ok || !data.newDocId) throw new Error(data.error || `HTTP ${res.status}`)
+        addToast({
+          type: 'success',
+          title: 'Pedido generado',
+          message: `${data.newCode || data.newDocId} — abriendo...`,
+        })
+        if (data.stockAlert?.insufficient) {
+          addToast({ type: 'warning', title: 'Atención: stock insuficiente', message: 'Algunos items no tienen stock — revisá el pedido.' })
+        }
+        onAction('order_created', { orderId: data.newDocId, orderNumber: data.newCode || '' } as unknown as Row)
+        router.push(`/ventas?tab=pedidos&highlight=${data.newDocId}`)
+        return
+      }
+
+      // Flujo legacy (cotización local en tt_quotes → pedido en tt_sales_orders)
       const result = await quoteToOrder(docId, source)
       addToast({
         type: 'success',
         title: 'Pedido generado',
-        message: result.orderNumber,
+        message: `${result.orderNumber} — abriendo...`,
       })
       onAction('order_created', result as unknown as Row)
+      router.push(`/ventas?tab=pedidos&highlight=${result.orderId}`)
     } catch (err) {
       addToast({ type: 'error', title: 'Error generando pedido', message: (err as Error).message })
     } finally {

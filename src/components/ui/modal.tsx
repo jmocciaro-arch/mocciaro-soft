@@ -51,7 +51,7 @@ export function Modal({ isOpen, onClose, title, children, size = 'md', className
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center print:hidden p-2 sm:p-4">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center print:hidden p-2 sm:p-4">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
       <div
         className={cn(

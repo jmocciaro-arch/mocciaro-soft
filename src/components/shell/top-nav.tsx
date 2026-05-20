@@ -88,7 +88,7 @@ export function TopNav({ userName, onMobileMenu }: TopNavProps) {
   return (
     <header
       data-theme-scope="dark"
-      className="h-14 bg-[#0F0F0F] flex items-center sticky top-0 z-40 print:hidden shadow-sm"
+      className="h-14 bg-[#0F0F0F] flex items-center sticky top-0 z-50 print:hidden shadow-sm"
     >
       {/* Hamburguesa mobile */}
       <button
@@ -139,7 +139,7 @@ export function TopNav({ userName, onMobileMenu }: TopNavProps) {
         {moreOpen && (
           <div
             data-theme-scope="dark"
-            className="absolute right-0 top-full mt-1 w-[420px] bg-white border border-[#E5E5E5] shadow-xl rounded-md overflow-hidden z-50 animate-fade-in"
+            className="absolute right-0 top-full mt-1 w-[420px] bg-white border border-[#E5E5E5] shadow-xl rounded-md overflow-hidden z-[60] animate-fade-in"
           >
             {moreSection.groups.map((group, gi) => {
               const visibleItems = group.items.filter(canSeeLeaf)
@@ -207,7 +207,7 @@ export function TopNav({ userName, onMobileMenu }: TopNavProps) {
           <div
             data-theme-scope="dark"
             role="menu"
-            className="absolute right-0 top-full mt-1 w-60 bg-white border border-[#E5E5E5] shadow-xl rounded-md overflow-hidden z-50 animate-fade-in py-1"
+            className="absolute right-0 top-full mt-1 w-60 bg-white border border-[#E5E5E5] shadow-xl rounded-md overflow-hidden z-[60] animate-fade-in py-1"
           >
             {userDropdown.map((item, idx) => {
               const Icon = item.icon

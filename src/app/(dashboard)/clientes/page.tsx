@@ -32,6 +32,8 @@ import { SyncContactsButton } from '@/components/clients/sync-contacts-button'
 import { ContactCard } from '@/components/clients/contact-card'
 import { ClientDetailModal } from '@/components/clientes/client-detail-modal'
 import { ClientProductsHistory } from '@/components/clientes/client-products-history'
+import { CuentaCorrienteTab } from '@/components/clientes/cuenta-corriente-tab'
+import { useCompanyContext } from '@/lib/company-context'
 import { ProductDetailModal } from '@/components/catalogo/product-detail-modal'
 import { BulkImportClientsModal } from '@/components/clientes/bulk-import-modal'
 import { BulkActionsBar, BulkCheckbox, COMMON_BULK_ACTIONS } from '@/components/ui/bulk-actions-bar'
@@ -176,6 +178,8 @@ function CompanyDetail({ company, onClose, onUpdate }: {
 }) {
   const { addToast } = useToast()
   const supabase = createClient()
+  const { activeCompanyId, companies: ctxCompanies } = useCompanyContext()
+  const activeCompanyName = ctxCompanies.find((c) => c.id === activeCompanyId)?.name || null
   const [activeDetailTab, setActiveDetailTab] = useState('datos')
   const [editing, setEditing] = useState(false)
   const [editData, setEditData] = useState<Partial<Client>>({})
@@ -462,6 +466,7 @@ function CompanyDetail({ company, onClose, onUpdate }: {
 
   const detailTabs = [
     { id: 'datos', label: 'Datos' },
+    { id: 'cuenta_corriente', label: 'Cuenta Corriente' },
     { id: 'contactos', label: `Contactos (${allContacts.length})` },
     { id: 'relacionadas', label: 'Relacionadas' },
     { id: 'oc_glosario', label: `OC Recibidas (${clientOCs.length})` },
@@ -852,6 +857,18 @@ function CompanyDetail({ company, onClose, onUpdate }: {
                 </div>
               )}
             </div>
+          )}
+
+          {/* TAB: Cuenta Corriente */}
+          {activeDetailTab === 'cuenta_corriente' && (
+            <CuentaCorrienteTab
+              clientId={allClientIds}
+              clientName={company.legal_name}
+              clientRef={company.tax_id}
+              clientTaxId={company.tax_id}
+              companyId={activeCompanyId}
+              companyName={activeCompanyName}
+            />
           )}
 
           {/* TAB: Contactos */}

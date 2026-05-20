@@ -11,7 +11,7 @@ import {
   Cpu, Box, Layers, BookOpen, Pause, History,
   Banknote, Sparkles, TrendingUp, GitBranch, FormInput, Bot,
   RefreshCw, Zap, Globe, MessageCircle, ArrowLeft, HelpCircle,
-  Inbox, Workflow,
+  Inbox, Workflow, Wallet,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
@@ -64,6 +64,7 @@ const navItems: NavItem[] = [
   { label: 'Facturas', href: '/ventas?tab=facturas', icon: CreditCard, requiredPermissions: ['view_financials', 'create_invoice'] },
   { label: 'Recurrentes', href: '/ventas/recurrentes', icon: RefreshCw, requiredPermissions: ['create_invoice'] },
   { label: 'Cobros', href: '/cobros', icon: Banknote, requiredPermissions: ['view_financials'] },
+  { label: 'Cuenta Corriente', href: '/cuenta-corriente', icon: Wallet, requiredPermissions: ['view_financials'] },
   { label: 'Finanzas', href: '/finanzas', icon: TrendingUp, requiredPermissions: ['view_financials'] },
   { label: 'Compras', href: '/compras?tab=pedidos', icon: ShoppingCart, badgeKey: 'po_pending', requiredPermissions: ['create_purchase_order', 'view_suppliers'] },
   { label: 'Stock', href: '/stock', icon: Warehouse, requiredPermissions: ['view_stock'] },

@@ -202,6 +202,37 @@ export function DataTable({
   // Period filter
   const [period, setPeriod] = useState('all')
 
+  // Status filter (multi-select)
+  const statusCol = useMemo(() => columns.find(c => c.type === 'status'), [columns])
+  const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set())
+  const [showStatusMenu, setShowStatusMenu] = useState(false)
+  const statusMenuRef = useRef<HTMLDivElement>(null)
+
+  // Available statuses from data
+  const availableStatuses = useMemo(() => {
+    if (!statusCol) return []
+    const seen = new Map<string, string>()
+    for (const row of data) {
+      const raw = row[statusCol.key]
+      if (raw === null || raw === undefined || raw === '') continue
+      const norm = String(raw).toLowerCase().trim()
+      if (!seen.has(norm)) seen.set(norm, String(raw))
+    }
+    return Array.from(seen.entries())
+      .map(([norm, label]) => ({ norm, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'es'))
+  }, [data, statusCol])
+
+  useEffect(() => {
+    function handle(e: MouseEvent) {
+      if (statusMenuRef.current && !statusMenuRef.current.contains(e.target as Node)) {
+        setShowStatusMenu(false)
+      }
+    }
+    if (showStatusMenu) document.addEventListener('mousedown', handle)
+    return () => document.removeEventListener('mousedown', handle)
+  }, [showStatusMenu])
+
   // Pagination
   const [currentPage, setCurrentPage] = useState(0)
 
@@ -220,7 +251,7 @@ export function DataTable({
   }, [showColMenu])
 
   // Reset page when data/filters change
-  useEffect(() => { setCurrentPage(0) }, [data, colSearches, sortKey, sortDir, period])
+  useEffect(() => { setCurrentPage(0) }, [data, colSearches, sortKey, sortDir, period, statusFilter])
 
   // Visible columns list
   const activeColumns = useMemo(() => columns.filter(c => visibleCols.has(c.key)), [columns, visibleCols])
@@ -243,6 +274,15 @@ export function DataTable({
       }
     }
 
+    // Status filter (multi-select)
+    if (statusCol && statusFilter.size > 0) {
+      result = result.filter(row => {
+        const raw = row[statusCol.key]
+        if (raw === null || raw === undefined) return false
+        return statusFilter.has(String(raw).toLowerCase().trim())
+      })
+    }
+
     // Per-column search
     for (const [key, term] of Object.entries(colSearches)) {
       if (!term.trim()) continue
@@ -255,7 +295,7 @@ export function DataTable({
     }
 
     return result
-  }, [data, period, dateCol, colSearches])
+  }, [data, period, dateCol, colSearches, statusCol, statusFilter])
 
   // ---- Sorting ----
   const sorted = useMemo(() => {
@@ -361,6 +401,77 @@ export function DataTable({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Status filter (multi-select) */}
+          {statusCol && availableStatuses.length > 0 && (
+            <div className="relative" ref={statusMenuRef}>
+              <button
+                onClick={() => setShowStatusMenu(v => !v)}
+                className={`px-3 py-2 text-xs rounded-lg border transition-colors flex items-center gap-1.5 ${
+                  statusFilter.size > 0
+                    ? 'bg-[#FF6600]/15 border-[#FF6600]/40 text-[#FF6600]'
+                    : 'bg-[#141820] border-[#2A3040] text-[#9CA3AF] hover:text-[#F0F2F5]'
+                }`}
+              >
+                <span>Estado</span>
+                {statusFilter.size > 0 && (
+                  <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#FF6600] text-white text-[10px] font-bold">
+                    {statusFilter.size}
+                  </span>
+                )}
+                <svg width="10" height="10" viewBox="0 0 12 12" fill="none" className="opacity-60">
+                  <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </button>
+              {showStatusMenu && (
+                <div className="absolute right-0 mt-1 w-56 bg-[#141820] border border-[#2A3040] rounded-lg shadow-xl z-20 overflow-hidden">
+                  <div className="px-3 py-2 border-b border-[#2A3040] flex items-center justify-between">
+                    <span className="text-[10px] uppercase tracking-wide text-[#6B7280] font-semibold">Filtrar por estado</span>
+                    {statusFilter.size > 0 && (
+                      <button
+                        onClick={() => setStatusFilter(new Set())}
+                        className="text-[10px] text-[#FF6600] hover:text-[#FF7711]"
+                      >
+                        Limpiar
+                      </button>
+                    )}
+                  </div>
+                  <div className="max-h-72 overflow-y-auto py-1">
+                    {availableStatuses.map(({ norm, label }) => {
+                      const checked = statusFilter.has(norm)
+                      const c = STATUS_COLORS[norm] || { bg: 'rgba(107,114,128,0.15)', text: '#6B7280' }
+                      return (
+                        <label
+                          key={norm}
+                          className="flex items-center gap-2 px-3 py-1.5 hover:bg-[#1E2330] cursor-pointer"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => {
+                              setStatusFilter(prev => {
+                                const next = new Set(prev)
+                                if (next.has(norm)) next.delete(norm)
+                                else next.add(norm)
+                                return next
+                              })
+                            }}
+                            className="w-3.5 h-3.5 accent-[#FF6600]"
+                          />
+                          <span
+                            className="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase whitespace-nowrap"
+                            style={{ background: c.bg, color: c.text }}
+                          >
+                            {label}
+                          </span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Period filter */}
           <select
             value={period}

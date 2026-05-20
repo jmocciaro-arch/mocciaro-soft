@@ -463,7 +463,16 @@ export function DocumentForm({
             total: docData.total || 0,
             subtotal: docData.subtotal || 0,
             tax_amount: docData.tax_amount || 0,
-            tax_rate: (docData.metadata as Row)?.tax_rate as number || 21,
+            tax_rate: (() => {
+              const meta = (docData.metadata as Row) || {}
+              if (typeof meta.tax_rate === 'number') return meta.tax_rate
+              // Derivar de la realidad: si tax_amount==0 y subtotal>0, IVA=0%
+              const subt = Number(docData.subtotal || 0)
+              const tax = Number(docData.tax_amount || 0)
+              if (subt > 0 && tax === 0) return 0
+              if (subt > 0 && tax > 0) return Math.round((tax / subt) * 100)
+              return 21
+            })(),
             notes: docData.notes || (raw?.addendum as string) || '',
             internal_notes: (docData.metadata as Row)?.internal_notes as string || '',
             created_at: docData.created_at || '',
@@ -473,7 +482,12 @@ export function DocumentForm({
             delivery_date: (docData.metadata as Row)?.delivery_date as string || '',
             valid_until: (docData.metadata as Row)?.valid_until as string || '',
             shipping_address: (docData.metadata as Row)?.shipping_address as string || '',
-            subject_iva: (docData.metadata as Row)?.subject_iva !== false,
+            subject_iva: (() => {
+              const meta = (docData.metadata as Row) || {}
+              if (typeof meta.subject_iva === 'boolean') return meta.subject_iva
+              // Derivar de la realidad: tax_amount==0 ⇒ no sujeto a IVA
+              return Number(docData.tax_amount || 0) > 0
+            })(),
             subject_irpf: (docData.metadata as Row)?.subject_irpf === true,
             created_by: (raw?.['employee-name'] as string) || '',
             agent: (docData.metadata as Row)?.agent as string || '',
@@ -630,7 +644,14 @@ export function DocumentForm({
             total: d.total || 0,
             subtotal: d.subtotal || 0,
             tax_amount: d.tax_amount || 0,
-            tax_rate: isPAP ? (d.tax_rate ?? 0) : (d.tax_rate || 21),
+            tax_rate: isPAP ? (d.tax_rate ?? 0) : (() => {
+              if (typeof d.tax_rate === 'number') return d.tax_rate as number
+              const subt = Number(d.subtotal || 0)
+              const tax = Number(d.tax_amount || 0)
+              if (subt > 0 && tax === 0) return 0
+              if (subt > 0 && tax > 0) return Math.round((tax / subt) * 100)
+              return 21
+            })(),
             notes: d.notes || '',
             internal_notes: d.internal_notes || '',
             created_at: d.created_at || '',
@@ -640,7 +661,10 @@ export function DocumentForm({
             delivery_date: d.expected_date || d.delivery_date || '',
             valid_until: d.valid_until || '',
             shipping_address: d.shipping_address || '',
-            subject_iva: isPAP ? false : (d.subject_iva !== false),
+            subject_iva: isPAP ? false : (() => {
+              if (typeof d.subject_iva === 'boolean') return d.subject_iva as boolean
+              return Number(d.tax_amount || 0) > 0
+            })(),
             subject_irpf: d.subject_irpf === true,
             created_by: d.created_by || '',
             agent: d.agent || '',
@@ -1946,7 +1970,7 @@ export function DocumentForm({
           document={doc as unknown as Row}
           documentType={documentType as DocumentActionType}
           source={source}
-          clientName={client?.name || client?.legal_name || ''}
+          clientName={client?.legal_name || client?.name || ''}
           clientEmail={client?.email || undefined}
           clientId={client?.id || doc?.client_id || undefined}
           onAction={(action) => {

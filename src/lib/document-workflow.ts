@@ -53,16 +53,16 @@ export async function generateDocNumber(prefix: string): Promise<string> {
     }
   }
 
-  // Para PED, tambien chequear tt_sales_orders
+  // Para PED, tambien chequear tt_sales_orders (columna real: "number", no "doc_number")
   if (prefix === 'PED') {
     const { data: localSO } = await supabase
       .from('tt_sales_orders')
-      .select('doc_number')
-      .like('doc_number', pattern)
-      .order('doc_number', { ascending: false })
+      .select('number')
+      .like('number', pattern)
+      .order('number', { ascending: false })
       .limit(1)
     if (localSO?.[0]) {
-      const m = (localSO[0].doc_number as string).match(/(\d+)$/)
+      const m = (localSO[0].number as string).match(/(\d+)$/)
       if (m) maxNum = Math.max(maxNum, parseInt(m[1]))
     }
   }

@@ -47,6 +47,8 @@ import { ScheduledExportsManager } from '@/components/catalogo/scheduled-exports
 import { RulesManager } from '@/components/catalogo/rules-manager'
 import { ExpiringWidget } from '@/components/catalogo/expiring-widget'
 import { DuplicateWarningModal, type DuplicateCheckResult } from '@/components/catalogo/duplicate-warning-modal'
+import { StockBreakdownModal } from '@/components/catalogo/stock-breakdown-modal'
+import { ProductColumnSettings, type ColumnDef as ProductColumnDef } from '@/components/catalogo/product-column-settings'
 import { triggerRules } from '@/lib/catalog-rules-engine'
 import { useCatalogPresets } from '@/hooks/use-catalog-presets'
 
@@ -221,6 +223,77 @@ function ProductosTab() {
   // Filtro por estado de ciclo de vida (multi-select). Default: solo activos.
   const [lifecycleFilter, setLifecycleFilter] = useState<LifecycleStatus[]>(['activo'])
 
+  // Filtro por estado de stock — pre-filtra IDs via RPC y aplica .in() al query principal.
+  type StockFilter = 'all' | 'with_real' | 'no_real' | 'with_committed' | 'with_requested'
+  const [stockFilter, setStockFilter] = useState<StockFilter>('all')
+
+  // Configurador de columnas (estilo StelOrder). Persistido en localStorage.
+  const ALL_COLUMNS: ProductColumnDef[] = useMemo(() => ([
+    { key: 'image',             label: 'Imagen',             group: 'basic',    defaultOn: true },
+    { key: 'sku',               label: 'Referencia (SKU)',   group: 'basic',    defaultOn: true },
+    { key: 'name',              label: 'Nombre',             group: 'basic',    defaultOn: true },
+    { key: 'brand',             label: 'Marca',              group: 'basic',    defaultOn: true },
+    { key: 'category',          label: 'Categoría',          group: 'basic',    defaultOn: true },
+    { key: 'subcategory',       label: 'Subcategoría',       group: 'basic' },
+    { key: 'ean',               label: 'EAN / Cód. barras',  group: 'codes' },
+    { key: 'manufacturer_code', label: 'Cód. fabricante',    group: 'codes' },
+    { key: 'supplier_code',     label: 'Cód. proveedor',     group: 'codes' },
+    { key: 'price',             label: 'Precio',             group: 'pricing',  defaultOn: true },
+    { key: 'cost',              label: 'Precio de compra',   group: 'pricing' },
+    { key: 'margin',            label: 'Margen %',           group: 'pricing' },
+    { key: 'price_usd',         label: 'Precio USD',         group: 'pricing' },
+    { key: 'price_ars',         label: 'Precio ARS',         group: 'pricing' },
+    { key: 'stock',             label: 'Stock (Real/↑/↓)',   group: 'stock',    defaultOn: true },
+    { key: 'stock_real',        label: 'Stock real',         group: 'stock' },
+    { key: 'stock_virtual',     label: 'Stock virtual',      group: 'stock' },
+    { key: 'stock_committed',   label: 'Comprometido',       group: 'stock' },
+    { key: 'stock_requested',   label: 'Solicitado',         group: 'stock' },
+    { key: 'stock_min',         label: 'Stock mínimo',       group: 'stock' },
+    { key: 'weight',            label: 'Peso (kg)',          group: 'physical' },
+    { key: 'hs_code',           label: 'HS code',            group: 'meta' },
+    { key: 'origin',            label: 'País origen',        group: 'meta' },
+    { key: 'lifecycle',         label: 'Estado',             group: 'meta' },
+    { key: 'created_at',        label: 'Fecha alta',         group: 'meta' },
+    // Atributos típicos de catálogos de torque (specs)
+    { key: 'torque',            label: 'Torque (Nm)',        group: 'spec' },
+    { key: 'rpm',               label: 'RPM',                group: 'spec' },
+    { key: 'encastre',          label: 'Encastre',           group: 'spec' },
+    { key: 'drive',             label: 'Drive',              group: 'spec' },
+    { key: 'tip_type',          label: 'Tipo punta',         group: 'spec' },
+    { key: 'length',            label: 'Longitud',           group: 'spec' },
+    { key: 'cotizar',           label: 'Acción (Cotizar)',   group: 'meta',     defaultOn: true },
+  ]), [])
+
+  const DEFAULT_VISIBLE_COLUMNS = useMemo(
+    () => ALL_COLUMNS.filter(c => c.defaultOn).map(c => c.key),
+    [ALL_COLUMNS],
+  )
+
+  const [visibleColumns, setVisibleColumns] = useState<string[]>(DEFAULT_VISIBLE_COLUMNS)
+
+  // Cargar de localStorage al montar
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('mocciaro:catalog:visible_columns')
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setVisibleColumns(parsed)
+        }
+      }
+    } catch { /* noop */ }
+  }, [])
+
+  // Persistir al cambiar
+  useEffect(() => {
+    try {
+      localStorage.setItem('mocciaro:catalog:visible_columns', JSON.stringify(visibleColumns))
+    } catch { /* noop */ }
+  }, [visibleColumns])
+
+  // Buscador inline por columna (filtra client-side la página visible)
+  const [columnSearches, setColumnSearches] = useState<Record<string, string>>({})
+
   // Selección múltiple para bulk actions
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
@@ -229,6 +302,11 @@ function ProductosTab() {
 
   // Product detail modal
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
+
+  // Stock breakdown modal + cache de stock por producto visible
+  const [stockModalProductId, setStockModalProductId] = useState<string | null>(null)
+  const [stockModalTab, setStockModalTab] = useState<'real' | 'committed' | 'requested' | 'movements'>('real')
+  const [stockMap, setStockMap] = useState<Record<string, { real: number; committed: number; requested: number }>>({})
 
   // Product form modal (create + edit)
   const [showProductForm, setShowProductForm] = useState(false)
@@ -398,6 +476,7 @@ function ProductosTab() {
     encastres: string[] = [],
     dynamicAttrs: Record<string, string[]> = {},
     lifecycle: LifecycleStatus[] = ['activo'],
+    stock: StockFilter = 'all',
   ) => {
     setProductsLoading(true)
     const sb = createClient()
@@ -409,11 +488,33 @@ function ProductosTab() {
     else if (sort === 'price_asc') { orderCol = 'price_eur'; orderAsc = true }
     else if (sort === 'price_desc') { orderCol = 'price_eur'; orderAsc = false }
 
+    // Pre-filtro por stock — si está seteado, traemos los IDs que cumplen y los pasamos como .in().
+    let stockIds: string[] | null = null
+    if (stock !== 'all') {
+      const { data: ids, error: idsErr } = await sb.rpc('get_product_ids_by_stock_filter', { p_filter: stock })
+      if (idsErr) {
+        console.error('stock filter rpc error', idsErr)
+      } else {
+        stockIds = (ids as string[] | null) ?? []
+      }
+      // Si no hay coincidencias, cortamos temprano
+      if (stockIds && stockIds.length === 0) {
+        setProducts([])
+        setTotalCount(0)
+        setProductsLoading(false)
+        return
+      }
+    }
+
     let query = sb
       .from('tt_products')
       .select('*', { count: 'exact' })
       .order(orderCol, { ascending: orderAsc })
       .range(fromOffset, fromOffset + PAGE_SIZE - 1)
+
+    if (stockIds) {
+      query = query.in('id', stockIds)
+    }
 
     // Filtro por ciclo de vida — si incluye 'activo', además filtramos active=true.
     // Si no se eligió ningún estado, mostramos todos (no aplicamos filtro).
@@ -467,6 +568,32 @@ function ProductosTab() {
     setProductsLoading(false)
   }, [])
 
+  // Fetch stock breakdown para los productos visibles de la página
+  useEffect(() => {
+    if (products.length === 0) {
+      setStockMap({})
+      return
+    }
+    const ids = products.map(p => p.id)
+    let cancelled = false
+    void createClient()
+      .rpc('get_product_stock_breakdown', { p_product_ids: ids, p_movements_limit: 1 })
+      .then(({ data, error }) => {
+        if (cancelled || error || !data) return
+        const obj = data as Record<string, { stock_real_total: number; stock_committed_total: number; stock_requested_total: number }>
+        const next: Record<string, { real: number; committed: number; requested: number }> = {}
+        for (const [pid, payload] of Object.entries(obj)) {
+          next[pid] = {
+            real: Number(payload.stock_real_total ?? 0),
+            committed: Number(payload.stock_committed_total ?? 0),
+            requested: Number(payload.stock_requested_total ?? 0),
+          }
+        }
+        setStockMap(next)
+      })
+    return () => { cancelled = true }
+  }, [products])
+
   // ---------- Select a category ----------
   const selectCategory = useCallback((categoryName: string) => {
     setSelectedCategory(categoryName)
@@ -484,7 +611,7 @@ function ProductosTab() {
     setSortBy('name_asc')
     setDynamicFilters({})
     setSelectedIds(new Set())
-    loadProducts(categoryName, null, 1, 'name_asc', [], [], {}, lifecycleFilter)
+    loadProducts(categoryName, null, 1, 'name_asc', [], [], {}, lifecycleFilter, stockFilter)
 
     // Load available facet values for this category
     const loadFacets = async () => {
@@ -525,20 +652,20 @@ function ProductosTab() {
     filterDebounceRef.current = setTimeout(() => {
       setPage(1)
       setSelectedIds(new Set())
-      loadProducts(selectedCategory, selectedSubcategory, 1, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter)
+      loadProducts(selectedCategory, selectedSubcategory, 1, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter, stockFilter)
     }, 400)
     return () => {
       if (filterDebounceRef.current) clearTimeout(filterDebounceRef.current)
     }
-  }, [sortBy, selectedCategory, selectedSubcategory, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter, loadProducts])
+  }, [sortBy, selectedCategory, selectedSubcategory, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter, stockFilter, loadProducts])
 
   // ---------- Pagination ----------
   const changePage = useCallback((newPage: number) => {
     if (!selectedCategory || newPage < 1 || newPage > totalPages) return
     setPage(newPage)
-    loadProducts(selectedCategory, selectedSubcategory, newPage, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter)
+    loadProducts(selectedCategory, selectedSubcategory, newPage, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter, stockFilter)
     window.scrollTo({ top: 0, behavior: 'smooth' })
-  }, [totalPages, selectedCategory, selectedSubcategory, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter, loadProducts])
+  }, [totalPages, selectedCategory, selectedSubcategory, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter, stockFilter, loadProducts])
 
   // ---------- Navigate to search result product ----------
   const openSearchProduct = useCallback(async (result: SearchResult) => {
@@ -709,10 +836,10 @@ function ProductosTab() {
 
     // Reload
     if (selectedCategory) {
-      loadProducts(selectedCategory, selectedSubcategory, page, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter)
+      loadProducts(selectedCategory, selectedSubcategory, page, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter, stockFilter)
     }
     loadCategories()
-  }, [editingProduct, companyPrices, selectedCategory, selectedSubcategory, page, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter, addToast, loadProducts, loadCategories])
+  }, [editingProduct, companyPrices, selectedCategory, selectedSubcategory, page, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter, stockFilter, addToast, loadProducts, loadCategories])
 
   const saveProduct = useCallback(async () => {
     if (!productForm.sku?.trim()) {
@@ -825,10 +952,10 @@ function ProductosTab() {
     setSelectedProduct(null)
 
     if (selectedCategory) {
-      loadProducts(selectedCategory, selectedSubcategory, page, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter)
+      loadProducts(selectedCategory, selectedSubcategory, page, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter, stockFilter)
     }
     loadCategories()
-  }, [selectedCategory, selectedSubcategory, page, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter, addToast, loadProducts, loadCategories])
+  }, [selectedCategory, selectedSubcategory, page, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter, stockFilter, addToast, loadProducts, loadCategories])
 
   // ---------- WooCommerce CSV Parse ----------
   const parseWooCSV = useCallback(async (file: File) => {
@@ -1009,21 +1136,23 @@ function ProductosTab() {
       // Reload everything
       loadCategories()
       if (selectedCategory) {
-        loadProducts(selectedCategory, selectedSubcategory, page, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter)
+        loadProducts(selectedCategory, selectedSubcategory, page, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter, stockFilter)
       }
     } catch (err) {
       setWooImporting(false)
       setWooProgress('')
       addToast({ type: 'error', title: 'Error en importacion', message: String(err) })
     }
-  }, [wooParsedRows, addToast, loadCategories, selectedCategory, selectedSubcategory, page, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter, loadProducts])
+  }, [wooParsedRows, addToast, loadCategories, selectedCategory, selectedSubcategory, page, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter, stockFilter, loadProducts])
 
   // ---------- Get table columns for current category ----------
   const getColumns = useCallback(() => {
-    const defaultCols = ['image', 'sku', 'name', 'brand', 'category', 'price', 'cotizar']
+    // Prioridad: configurador del usuario (persistido). Si no hay, usa categoría o default.
+    if (visibleColumns.length > 0) return visibleColumns
+    const defaultCols = ['image', 'sku', 'name', 'brand', 'category', 'stock', 'price', 'cotizar']
     if (!selectedCategory || selectedCategory === '__todos__') return defaultCols
     return CATEGORY_COLUMNS[selectedCategory.toLowerCase()] || defaultCols
-  }, [selectedCategory])
+  }, [selectedCategory, visibleColumns])
 
   // ---------- Clear subcategory filter ----------
   const clearSubcategoryFilter = useCallback(() => {
@@ -1074,9 +1203,9 @@ function ProductosTab() {
   // Refresca productos con los filtros activos (helper local)
   const refreshAfterBulk = useCallback(() => {
     if (selectedCategory) {
-      loadProducts(selectedCategory, selectedSubcategory, page, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter)
+      loadProducts(selectedCategory, selectedSubcategory, page, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter, stockFilter)
     }
-  }, [selectedCategory, selectedSubcategory, page, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter, loadProducts])
+  }, [selectedCategory, selectedSubcategory, page, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter, stockFilter, loadProducts])
 
   // ─── Bulk handlers ───
   const bulkActivate = useCallback(async () => {
@@ -1241,7 +1370,7 @@ function ProductosTab() {
           ]}
           onComplete={() => {
             if (selectedCategory) {
-              loadProducts(selectedCategory, selectedSubcategory, page, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter)
+              loadProducts(selectedCategory, selectedSubcategory, page, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter, stockFilter)
             }
             loadCategories()
           }}
@@ -1275,6 +1404,12 @@ function ProductosTab() {
             Duplicados
           </Button>
         </Link>
+        <ProductColumnSettings
+          available={ALL_COLUMNS}
+          value={visibleColumns}
+          onChange={setVisibleColumns}
+          defaultOn={DEFAULT_VISIBLE_COLUMNS}
+        />
         <LabelsButton
           products={
             (selectedIds.size > 0
@@ -1679,6 +1814,33 @@ function ProductosTab() {
                 </div>
               </div>
 
+              {/* Filtro por Stock */}
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-[#4B5563] mb-2">Stock</p>
+                <div className="flex flex-wrap gap-2">
+                  {([
+                    { value: 'all',            label: 'Todos',                cls: '' },
+                    { value: 'with_real',      label: 'Con stock real',       cls: 'border-emerald-500 bg-emerald-500/15 text-emerald-400' },
+                    { value: 'no_real',        label: 'Sin stock real',       cls: 'border-red-500 bg-red-500/15 text-red-400' },
+                    { value: 'with_committed', label: '↑ Comprometido',       cls: 'border-amber-500 bg-amber-500/15 text-amber-400' },
+                    { value: 'with_requested', label: '↓ Solicitado',         cls: 'border-blue-500 bg-blue-500/15 text-blue-400' },
+                  ] as Array<{ value: StockFilter; label: string; cls: string }>).map(opt => {
+                    const active = stockFilter === opt.value
+                    return (
+                      <button
+                        key={opt.value}
+                        onClick={() => setStockFilter(opt.value)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all duration-200 ${
+                          active && opt.cls ? opt.cls : active ? 'border-[#FF6600] bg-[#FF6600]/15 text-[#FF6600]' : 'border-[#2A3040] bg-[#0F1218] text-[#9CA3AF] hover:border-[#3A4050] hover:text-[#F0F2F5]'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
               {/* Filtros dinámicos por atributo de categoría */}
               {selectedCategory && selectedCategory !== '__todos__' && (
                 <DynamicFacetFilters
@@ -1862,13 +2024,16 @@ function ProductosTab() {
                         </th>
                       )}
                       {getColumns().map((col) => {
-                        const colDefs: Record<string, { label: string; align: string; sortable?: boolean; sortKey?: SortOption }> = {
+                        const colDefs: Record<string, { label: string; align: string; sortable?: boolean; sortKey?: SortOption; searchable?: boolean }> = {
                           image: { label: '', align: 'text-center', },
-                          sku: { label: 'SKU', align: 'text-left' },
-                          name: { label: 'Producto', align: 'text-left', sortable: true, sortKey: 'name_asc' },
-                          brand: { label: 'Marca', align: 'text-left' },
-                          category: { label: 'Categoria', align: 'text-left' },
-                          subcategory: { label: 'Subcategoria', align: 'text-left' },
+                          sku: { label: 'Referencia', align: 'text-left', searchable: true },
+                          name: { label: 'Nombre', align: 'text-left', sortable: true, sortKey: 'name_asc', searchable: true },
+                          brand: { label: 'Marca', align: 'text-left', searchable: true },
+                          category: { label: 'Categoría', align: 'text-left', searchable: true },
+                          subcategory: { label: 'Subcategoría', align: 'text-left', searchable: true },
+                          ean: { label: 'EAN', align: 'text-left', searchable: true },
+                          manufacturer_code: { label: 'Cód. fabric.', align: 'text-left', searchable: true },
+                          supplier_code: { label: 'Cód. prov.', align: 'text-left', searchable: true },
                           torque: { label: 'Torque (Nm)', align: 'text-center' },
                           rpm: { label: 'RPM', align: 'text-center' },
                           encastre: { label: 'Encastre', align: 'text-center' },
@@ -1876,7 +2041,21 @@ function ProductosTab() {
                           drive: { label: 'Drive', align: 'text-center' },
                           tip_type: { label: 'Tipo Punta', align: 'text-center' },
                           length: { label: 'Longitud', align: 'text-center' },
+                          stock: { label: 'Stock', align: 'text-center' },
+                          stock_real: { label: 'Stock real', align: 'text-right' },
+                          stock_virtual: { label: 'Stock virtual', align: 'text-right' },
+                          stock_committed: { label: 'Comprometido', align: 'text-right' },
+                          stock_requested: { label: 'Solicitado', align: 'text-right' },
+                          stock_min: { label: 'Stock min', align: 'text-right' },
                           price: { label: 'Precio', align: 'text-right', sortable: true, sortKey: 'price_asc' },
+                          cost: { label: 'Precio compra', align: 'text-right' },
+                          margin: { label: 'Margen %', align: 'text-right' },
+                          price_usd: { label: 'Precio USD', align: 'text-right' },
+                          price_ars: { label: 'Precio ARS', align: 'text-right' },
+                          hs_code: { label: 'HS code', align: 'text-left' },
+                          origin: { label: 'Origen', align: 'text-left' },
+                          lifecycle: { label: 'Estado', align: 'text-left' },
+                          created_at: { label: 'Fecha alta', align: 'text-left' },
                           cotizar: { label: '', align: 'text-center' },
                         }
                         const def = colDefs[col]
@@ -1884,7 +2063,7 @@ function ProductosTab() {
                         return (
                           <th
                             key={col}
-                            className={`px-3 py-3 text-xs font-semibold text-[#6B7280] uppercase tracking-wider ${def.align} ${
+                            className={`px-3 py-2 text-xs font-semibold text-[#6B7280] uppercase tracking-wider ${def.align} ${
                               col === 'image' ? 'w-[60px]' : col === 'cotizar' ? 'w-[100px]' : ''
                             } ${def.sortable ? 'cursor-pointer hover:text-[#FF6600] transition-colors' : ''}`}
                             onClick={def.sortable ? () => {
@@ -1900,9 +2079,49 @@ function ProductosTab() {
                         )
                       })}
                     </tr>
+                    {/* Fila de buscadores inline por columna (estilo StelOrder) */}
+                    <tr className="bg-[#0A0D12] border-b border-[#1E2330]">
+                      {isAdmin && <th className="px-3 py-1 w-[40px]"></th>}
+                      {getColumns().map((col) => {
+                        const searchable = ['sku','name','brand','category','subcategory','ean','manufacturer_code','supplier_code'].includes(col)
+                        return (
+                          <th key={col} className="px-2 py-1">
+                            {searchable && (
+                              <input
+                                type="text"
+                                value={columnSearches[col] || ''}
+                                onChange={(e) => setColumnSearches(prev => ({ ...prev, [col]: e.target.value }))}
+                                placeholder="Buscar..."
+                                onClick={(e) => e.stopPropagation()}
+                                className="w-full h-7 px-2 text-xs rounded bg-[#141820] border border-[#1E2330] text-[#F0F2F5] placeholder:text-[#4B5563] focus:outline-none focus:border-[#FF6600]/50"
+                              />
+                            )}
+                          </th>
+                        )
+                      })}
+                    </tr>
                   </thead>
                   <tbody className="divide-y divide-[#1E2330]">
-                    {products.map((product) => (
+                    {products.filter(p => {
+                      const entries = Object.entries(columnSearches).filter(([, v]) => v && v.trim())
+                      if (entries.length === 0) return true
+                      return entries.every(([col, q]) => {
+                        const needle = q.trim().toLowerCase()
+                        let hay: string | null | undefined = ''
+                        switch (col) {
+                          case 'sku':               hay = p.sku; break
+                          case 'name':              hay = p.name; break
+                          case 'brand':             hay = p.brand; break
+                          case 'category':          hay = (p as Product & { category?: string }).category ?? null; break
+                          case 'subcategory':       hay = (p as Product & { subcategory?: string | null }).subcategory ?? null; break
+                          case 'ean':               hay = (p as Product & { ean?: string | null }).ean ?? null; break
+                          case 'manufacturer_code': hay = (p as Product & { manufacturer_code?: string | null }).manufacturer_code ?? null; break
+                          case 'supplier_code':     hay = (p as Product & { supplier_code?: string | null }).supplier_code ?? null; break
+                          default: return true
+                        }
+                        return (hay ?? '').toLowerCase().includes(needle)
+                      })
+                    }).map((product) => (
                       <tr
                         key={product.id}
                         onClick={() => setSelectedProduct(product)}
@@ -2026,6 +2245,39 @@ function ProductosTab() {
                                   {product.specs?.longitud || '-'}
                                 </td>
                               )
+                            case 'stock': {
+                              const s = stockMap[product.id]
+                              const real = s?.real ?? 0
+                              const committed = s?.committed ?? 0
+                              const requested = s?.requested ?? 0
+                              return (
+                                <td key={col} className="px-3 py-2 text-center" onClick={(e) => e.stopPropagation()}>
+                                  <div className="inline-flex items-stretch gap-0.5 text-[11px] font-mono">
+                                    <button
+                                      title="Stock real en almacén — click para detalle"
+                                      onClick={() => { setStockModalProductId(product.id); setStockModalTab('real') }}
+                                      className={`px-1.5 py-0.5 rounded ${real > 0 ? 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20' : 'bg-[#1A1F2E] text-[#4B5563] hover:bg-[#2A3040]'}`}
+                                    >
+                                      {real}
+                                    </button>
+                                    <button
+                                      title="Comprometido en pedidos de cliente"
+                                      onClick={() => { setStockModalProductId(product.id); setStockModalTab('committed') }}
+                                      className={`px-1.5 py-0.5 rounded ${committed > 0 ? 'bg-amber-500/10 text-amber-400 hover:bg-amber-500/20' : 'bg-[#1A1F2E] text-[#4B5563] hover:bg-[#2A3040]'}`}
+                                    >
+                                      ↑{committed}
+                                    </button>
+                                    <button
+                                      title="Solicitado a proveedores"
+                                      onClick={() => { setStockModalProductId(product.id); setStockModalTab('requested') }}
+                                      className={`px-1.5 py-0.5 rounded ${requested > 0 ? 'bg-blue-500/10 text-blue-400 hover:bg-blue-500/20' : 'bg-[#1A1F2E] text-[#4B5563] hover:bg-[#2A3040]'}`}
+                                    >
+                                      ↓{requested}
+                                    </button>
+                                  </div>
+                                </td>
+                              )
+                            }
                             case 'price':
                               return (
                                 <td key={col} className="px-3 py-2 text-right whitespace-nowrap">
@@ -2034,6 +2286,121 @@ function ProductosTab() {
                                   </span>
                                 </td>
                               )
+                            case 'cost':
+                              return (
+                                <td key={col} className="px-3 py-2 text-right whitespace-nowrap text-[#9CA3AF]">
+                                  {product.cost_eur > 0 ? formatCurrency(product.cost_eur, 'EUR') : '-'}
+                                </td>
+                              )
+                            case 'margin': {
+                              const margin = product.cost_eur > 0 && product.price_eur > 0
+                                ? ((product.price_eur - product.cost_eur) / product.price_eur) * 100
+                                : null
+                              return (
+                                <td key={col} className="px-3 py-2 text-right whitespace-nowrap">
+                                  {margin == null
+                                    ? <span className="text-[#4B5563]">-</span>
+                                    : <span className={margin < 10 ? 'text-red-400' : margin < 25 ? 'text-amber-400' : 'text-emerald-400'}>{margin.toFixed(1)}%</span>}
+                                </td>
+                              )
+                            }
+                            case 'price_usd':
+                              return (
+                                <td key={col} className="px-3 py-2 text-right whitespace-nowrap text-[#9CA3AF]">
+                                  {(product as Product & { price_usd?: number }).price_usd ? formatCurrency((product as Product & { price_usd?: number }).price_usd!, 'USD') : '-'}
+                                </td>
+                              )
+                            case 'price_ars':
+                              return (
+                                <td key={col} className="px-3 py-2 text-right whitespace-nowrap text-[#9CA3AF]">
+                                  {(product as Product & { price_ars?: number }).price_ars ? formatCurrency((product as Product & { price_ars?: number }).price_ars!, 'ARS') : '-'}
+                                </td>
+                              )
+                            case 'ean':
+                              return (
+                                <td key={col} className="px-3 py-2 text-left whitespace-nowrap font-mono text-xs text-[#9CA3AF]">
+                                  {(product as Product & { ean?: string | null }).ean || '-'}
+                                </td>
+                              )
+                            case 'manufacturer_code':
+                              return (
+                                <td key={col} className="px-3 py-2 text-left whitespace-nowrap font-mono text-xs text-[#9CA3AF]">
+                                  {(product as Product & { manufacturer_code?: string | null }).manufacturer_code || '-'}
+                                </td>
+                              )
+                            case 'supplier_code':
+                              return (
+                                <td key={col} className="px-3 py-2 text-left whitespace-nowrap font-mono text-xs text-[#9CA3AF]">
+                                  {(product as Product & { supplier_code?: string | null }).supplier_code || '-'}
+                                </td>
+                              )
+                            case 'stock_real': {
+                              const real = stockMap[product.id]?.real ?? 0
+                              return (
+                                <td key={col} className="px-3 py-2 text-right whitespace-nowrap" onClick={(e) => { e.stopPropagation(); setStockModalProductId(product.id); setStockModalTab('real') }}>
+                                  <span className={`font-semibold ${real > 0 ? 'text-emerald-400' : 'text-[#4B5563]'}`}>{real}</span>
+                                </td>
+                              )
+                            }
+                            case 'stock_virtual': {
+                              const s = stockMap[product.id]
+                              const virtual = (s?.real ?? 0) + (s?.requested ?? 0) - (s?.committed ?? 0)
+                              return (
+                                <td key={col} className="px-3 py-2 text-right whitespace-nowrap" title="Real + Solicitado - Comprometido">
+                                  <span className={`font-semibold ${virtual > 0 ? 'text-blue-400' : virtual < 0 ? 'text-red-400' : 'text-[#4B5563]'}`}>{virtual}</span>
+                                </td>
+                              )
+                            }
+                            case 'stock_committed': {
+                              const committed = stockMap[product.id]?.committed ?? 0
+                              return (
+                                <td key={col} className="px-3 py-2 text-right whitespace-nowrap" onClick={(e) => { e.stopPropagation(); setStockModalProductId(product.id); setStockModalTab('committed') }}>
+                                  <span className={`font-semibold ${committed > 0 ? 'text-amber-400' : 'text-[#4B5563]'}`}>↑{committed}</span>
+                                </td>
+                              )
+                            }
+                            case 'stock_requested': {
+                              const requested = stockMap[product.id]?.requested ?? 0
+                              return (
+                                <td key={col} className="px-3 py-2 text-right whitespace-nowrap" onClick={(e) => { e.stopPropagation(); setStockModalProductId(product.id); setStockModalTab('requested') }}>
+                                  <span className={`font-semibold ${requested > 0 ? 'text-blue-400' : 'text-[#4B5563]'}`}>↓{requested}</span>
+                                </td>
+                              )
+                            }
+                            case 'stock_min':
+                              return (
+                                <td key={col} className="px-3 py-2 text-right whitespace-nowrap text-[#9CA3AF]">
+                                  {(product as Product & { stock_min?: number | null }).stock_min ?? '-'}
+                                </td>
+                              )
+                            case 'hs_code':
+                              return (
+                                <td key={col} className="px-3 py-2 text-left whitespace-nowrap font-mono text-xs text-[#9CA3AF]">
+                                  {(product as Product & { hs_code?: string | null }).hs_code || '-'}
+                                </td>
+                              )
+                            case 'origin':
+                              return (
+                                <td key={col} className="px-3 py-2 text-left whitespace-nowrap text-[#9CA3AF]">
+                                  {(product as Product & { origin_country?: string | null }).origin_country || '-'}
+                                </td>
+                              )
+                            case 'lifecycle':
+                              return (
+                                <td key={col} className="px-3 py-2 text-left whitespace-nowrap">
+                                  {product.lifecycle_status
+                                    ? <Badge variant={LIFECYCLE_VARIANT[product.lifecycle_status]} size="sm">{LIFECYCLE_LABEL[product.lifecycle_status]}</Badge>
+                                    : <span className="text-[#4B5563]">-</span>}
+                                </td>
+                              )
+                            case 'created_at': {
+                              const ca = (product as Product & { created_at?: string | null }).created_at
+                              return (
+                                <td key={col} className="px-3 py-2 text-left whitespace-nowrap text-xs text-[#9CA3AF]">
+                                  {ca ? formatDate(ca) : '-'}
+                                </td>
+                              )
+                            }
                             case 'cotizar':
                               return (
                                 <td key={col} className="px-3 py-2 text-center">
@@ -2261,6 +2628,14 @@ function ProductosTab() {
         )}
       </Modal>
 
+      {/* ======== STOCK BREAKDOWN MODAL ======== */}
+      <StockBreakdownModal
+        isOpen={!!stockModalProductId}
+        onClose={() => setStockModalProductId(null)}
+        productId={stockModalProductId}
+        initialTab={stockModalTab}
+      />
+
       {/* ======== DUPLICATE WARNING MODAL (pre-save) ======== */}
       <DuplicateWarningModal
         open={showDuplicateModal}
@@ -2305,7 +2680,7 @@ function ProductosTab() {
             setShowProductForm(false)
             setEditingProduct(null)
             if (selectedCategory) {
-              loadProducts(selectedCategory, selectedSubcategory, page, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter)
+              loadProducts(selectedCategory, selectedSubcategory, page, sortBy, filterBrands, filterEncastres, dynamicFilters, lifecycleFilter, stockFilter)
             }
             loadCategories()
           } else {
