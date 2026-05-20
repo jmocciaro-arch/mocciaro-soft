@@ -1,7 +1,10 @@
 // ============================================================================
 // Mocciaro Soft ERP — Offline Sync Queue
-// Cola de acciones para sincronizar cuando vuelve la conexión
+// Cola de acciones para sincronizar cuando vuelve la conexión.
+// Comparte la misma IndexedDB que offline-store (mismo DB_NAME y DB_VERSION).
 // ============================================================================
+
+import { openDB } from '@/lib/offline-store';
 
 export type SyncActionType =
   | 'create_lead'
@@ -13,8 +16,23 @@ export type SyncActionType =
   | 'delete_quote_line'
   | 'update_sat_step'
   | 'create_sat_ticket'
+  | 'update_sat_ticket'
   | 'create_client'
   | 'update_client'
+  | 'create_supplier'
+  | 'update_supplier'
+  | 'create_purchase_order'
+  | 'update_purchase_order'
+  | 'create_purchase_invoice'
+  | 'update_purchase_invoice'
+  | 'create_document'
+  | 'update_document'
+  | 'delete_document'
+  | 'update_stock'
+  | 'create_sales_order'
+  | 'update_sales_order'
+  | 'create_invoice'
+  | 'update_invoice'
   | string;
 
 export interface SyncQueueItem {
@@ -28,43 +46,10 @@ export interface SyncQueueItem {
   lastError?: string;
 }
 
-// ============================================================================
-// IndexedDB helpers (sin dependencias externas)
-// ============================================================================
-
-const DB_NAME = 'torquetools-offline';
-const DB_VERSION = 1;
 const STORE_NAME = 'pending_actions';
 
-function openSyncDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    if (typeof indexedDB === 'undefined') {
-      reject(new Error('IndexedDB no disponible'));
-      return;
-    }
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = (e) => {
-      const db = (e.target as IDBOpenDBRequest).result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
-        store.createIndex('createdAt', 'createdAt', { unique: false });
-        store.createIndex('synced', 'synced', { unique: false });
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-function idbRun<T>(req: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
 // ============================================================================
-// localStorage fallback (para entornos sin IndexedDB)
+// localStorage fallback (entornos sin IndexedDB)
 // ============================================================================
 
 const LS_KEY = 'mocciaro-sync-queue';
@@ -86,21 +71,24 @@ function lsSaveQueue(items: SyncQueueItem[]): void {
   }
 }
 
-// ============================================================================
-// Detección de soporte
-// ============================================================================
+function idbRun<T>(req: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
 
 function isIndexedDBAvailable(): boolean {
   return typeof window !== 'undefined' && typeof indexedDB !== 'undefined';
 }
 
 // ============================================================================
-// API pública del sync queue
+// API pública
 // ============================================================================
 
 /**
  * Agrega una acción a la cola de sincronización.
- * Retorna el id generado.
+ * Para updates con LWW, usar enqueueUpdate() que marca __client_updated_at.
  */
 export async function enqueue(
   action: SyncActionType,
@@ -119,7 +107,7 @@ export async function enqueue(
 
   if (isIndexedDBAvailable()) {
     try {
-      const db = await openSyncDB();
+      const db = await openDB();
       const tx = db.transaction(STORE_NAME, 'readwrite');
       await idbRun(tx.objectStore(STORE_NAME).put(item));
       console.log(`[SyncQueue] Encolado: ${action} en ${table} (${item.id})`);
@@ -129,7 +117,6 @@ export async function enqueue(
     }
   }
 
-  // Fallback: localStorage
   const queue = lsGetQueue();
   queue.push(item);
   lsSaveQueue(queue);
@@ -137,12 +124,26 @@ export async function enqueue(
 }
 
 /**
- * Obtiene todos los items de la cola (no sincronizados primero).
+ * Encola un update con marca de tiempo local para resolución LWW.
+ * Cuando el sync procese este item, comparará __client_updated_at contra
+ * el updated_at del server. Si el server es más nuevo, descarta y loguea.
  */
+export async function enqueueUpdate(
+  action: SyncActionType,
+  table: string,
+  data: Record<string, unknown> & { id: string }
+): Promise<string> {
+  return enqueue(action, table, {
+    ...data,
+    __client_updated_at: Date.now(),
+    __table: table,
+  });
+}
+
 export async function getQueue(): Promise<SyncQueueItem[]> {
   if (isIndexedDBAvailable()) {
     try {
-      const db = await openSyncDB();
+      const db = await openDB();
       const tx = db.transaction(STORE_NAME, 'readonly');
       const all = await idbRun<SyncQueueItem[]>(tx.objectStore(STORE_NAME).getAll());
       return all.sort((a, b) => a.createdAt - b.createdAt);
@@ -153,21 +154,15 @@ export async function getQueue(): Promise<SyncQueueItem[]> {
   return lsGetQueue().sort((a, b) => a.createdAt - b.createdAt);
 }
 
-/**
- * Obtiene la cantidad de items pendientes (no sincronizados).
- */
 export async function getPendingCount(): Promise<number> {
   const queue = await getQueue();
   return queue.filter((i) => !i.synced).length;
 }
 
-/**
- * Marca un item como sincronizado.
- */
 export async function markSynced(id: string): Promise<void> {
   if (isIndexedDBAvailable()) {
     try {
-      const db = await openSyncDB();
+      const db = await openDB();
       const tx = db.transaction(STORE_NAME, 'readwrite');
       const store = tx.objectStore(STORE_NAME);
       const item = await idbRun<SyncQueueItem | undefined>(store.get(id));
@@ -188,13 +183,10 @@ export async function markSynced(id: string): Promise<void> {
   }
 }
 
-/**
- * Elimina todos los items ya sincronizados.
- */
 export async function clearSynced(): Promise<void> {
   if (isIndexedDBAvailable()) {
     try {
-      const db = await openSyncDB();
+      const db = await openDB();
       const tx = db.transaction(STORE_NAME, 'readwrite');
       const store = tx.objectStore(STORE_NAME);
       const all = await idbRun<SyncQueueItem[]>(store.getAll());
@@ -202,7 +194,6 @@ export async function clearSynced(): Promise<void> {
       for (const item of synced) {
         store.delete(item.id);
       }
-      console.log(`[SyncQueue] ${synced.length} items sincronizados eliminados`);
       return;
     } catch {
       // fallback
@@ -214,30 +205,33 @@ export async function clearSynced(): Promise<void> {
 
 /**
  * Procesa la cola: ejecuta cada acción pendiente contra Supabase REST API.
- * Retorna estadísticas de la operación.
+ * Soporta LWW: para updates con __client_updated_at, compara contra server
+ * y descarta si el server es más nuevo (loguea en tt_activity_log).
  */
 export async function sync(): Promise<{
   processed: number;
   failed: number;
+  conflicts: number;
   errors: Array<{ id: string; error: string }>;
 }> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   if (!supabaseUrl || !supabaseKey) {
-    console.warn('[SyncQueue] Supabase no configurado, no se puede sincronizar');
-    return { processed: 0, failed: 0, errors: [] };
+    console.warn('[SyncQueue] Supabase no configurado');
+    return { processed: 0, failed: 0, conflicts: 0, errors: [] };
   }
 
   const queue = await getQueue();
   const pending = queue.filter((i) => !i.synced);
 
-  if (pending.length === 0) return { processed: 0, failed: 0, errors: [] };
+  if (pending.length === 0) return { processed: 0, failed: 0, conflicts: 0, errors: [] };
 
   console.log(`[SyncQueue] Sincronizando ${pending.length} acciones...`);
 
   let processed = 0;
   let failed = 0;
+  let conflicts = 0;
   const errors: Array<{ id: string; error: string }> = [];
 
   const headers: Record<string, string> = {
@@ -251,38 +245,82 @@ export async function sync(): Promise<{
     try {
       let url = `${supabaseUrl}/rest/v1/${item.table}`;
       let method = 'POST';
+      const isUpdate = item.action.startsWith('update_');
+      const isDelete = item.action.startsWith('delete_');
 
-      // Determinar método HTTP según la acción
-      if (item.action.startsWith('update_')) {
+      if (isUpdate) {
         method = 'PATCH';
-        if (item.data.id) {
-          url += `?id=eq.${item.data.id}`;
-        }
-      } else if (item.action.startsWith('delete_')) {
+        if (item.data.id) url += `?id=eq.${item.data.id}`;
+      } else if (isDelete) {
         method = 'DELETE';
-        if (item.data.id) {
-          url += `?id=eq.${item.data.id}`;
+        if (item.data.id) url += `?id=eq.${item.data.id}`;
+      }
+
+      // LWW: comparar timestamps para updates
+      const clientUpdatedAt = typeof item.data.__client_updated_at === 'number'
+        ? (item.data.__client_updated_at as number)
+        : 0;
+
+      if (isUpdate && clientUpdatedAt > 0 && item.data.id) {
+        const checkUrl = `${supabaseUrl}/rest/v1/${item.table}?id=eq.${item.data.id}&select=updated_at`;
+        try {
+          const checkRes = await fetch(checkUrl, {
+            headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` },
+          });
+          if (checkRes.ok) {
+            const rows = (await checkRes.json()) as Array<{ updated_at?: string }>;
+            if (rows.length > 0 && rows[0].updated_at) {
+              const serverTs = new Date(rows[0].updated_at).getTime();
+              if (serverTs > clientUpdatedAt) {
+                // Server gana — descartar y loguear conflicto
+                await fetch(`${supabaseUrl}/rest/v1/tt_activity_log`, {
+                  method: 'POST',
+                  headers,
+                  body: JSON.stringify({
+                    entity_type: item.table,
+                    entity_id: item.data.id,
+                    action: 'sync_conflict_lww',
+                    detail: {
+                      action: item.action,
+                      client_updated_at: new Date(clientUpdatedAt).toISOString(),
+                      server_updated_at: rows[0].updated_at,
+                      dropped_payload: item.data,
+                    },
+                  }),
+                }).catch(() => null);
+
+                conflicts++;
+                await markSynced(item.id);
+                console.warn(`[SyncQueue] LWW conflict — server más nuevo: ${item.id}`);
+                continue;
+              }
+            }
+          }
+        } catch {
+          // si el check falla, continuamos con el update normal
         }
       }
 
-      const body =
-        method === 'DELETE' ? undefined : JSON.stringify(item.data);
+      // Limpiar metadata interna antes de enviar
+      const cleanData: Record<string, unknown> = { ...item.data };
+      delete cleanData.__client_updated_at;
+      delete cleanData.__table;
 
+      const body = method === 'DELETE' ? undefined : JSON.stringify(cleanData);
       const res = await fetch(url, { method, headers, body });
 
       if (res.ok || res.status === 201 || res.status === 204) {
         await markSynced(item.id);
         processed++;
-        console.log(`[SyncQueue] OK: ${item.action} (${item.id})`);
       } else {
         const errText = await res.text().catch(() => `HTTP ${res.status}`);
         failed++;
         errors.push({ id: item.id, error: errText });
 
-        // Incrementar retries en IDB
+        // Bump retries
         if (isIndexedDBAvailable()) {
           try {
-            const db = await openSyncDB();
+            const db = await openDB();
             const tx = db.transaction(STORE_NAME, 'readwrite');
             const store = tx.objectStore(STORE_NAME);
             const fresh = await idbRun<SyncQueueItem | undefined>(store.get(item.id));
@@ -291,7 +329,9 @@ export async function sync(): Promise<{
               fresh.lastError = errText;
               store.put(fresh);
             }
-          } catch { /* ignorar */ }
+          } catch {
+            /* ignorar */
+          }
         }
       }
     } catch (err) {
@@ -303,6 +343,6 @@ export async function sync(): Promise<{
   }
 
   await clearSynced();
-  console.log(`[SyncQueue] Sync terminado: ${processed} ok, ${failed} fallidos`);
-  return { processed, failed, errors };
+  console.log(`[SyncQueue] Sync: ${processed} ok, ${conflicts} conflicts LWW, ${failed} fallidos`);
+  return { processed, failed, conflicts, errors };
 }

@@ -10,6 +10,7 @@ import { useEffect } from 'react';
 import { registerServiceWorker, setupInstallPrompt } from '@/lib/pwa';
 import { InstallPrompt } from '@/components/pwa/install-prompt';
 import { OfflineIndicator } from '@/components/pwa/offline-indicator';
+import { SwUpdatePrompt } from '@/components/pwa/sw-update-prompt';
 
 export function PWAInit() {
   useEffect(() => {
@@ -26,6 +27,7 @@ export function PWAInit() {
     <>
       <OfflineIndicator />
       <InstallPrompt />
+      <SwUpdatePrompt />
     </>
   );
 }

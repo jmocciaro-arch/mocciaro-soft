@@ -35,6 +35,8 @@ export interface DataTableProps {
   newLabel?: string
   exportFilename?: string
   exportTargetTable?: string
+  /** Render alternativo para mobile (<sm). Si no se provee, mobile usa scroll-x sobre la tabla. */
+  mobileCardRender?: (row: Record<string, unknown>) => React.ReactNode
   /** Extra actions in the top bar */
   actions?: {
     label: string
@@ -179,6 +181,7 @@ export function DataTable({
   newLabel = 'Nuevo',
   exportFilename,
   exportTargetTable,
+  mobileCardRender,
   actions,
 }: DataTableProps) {
   // Column visibility
@@ -424,8 +427,81 @@ export function DataTable({
         </div>
       </div>
 
-      {/* Table */}
-      <div className="rounded-xl border border-[#1E2330] overflow-hidden">
+      {/* Mobile cards (sm:hidden) — usa mobileCardRender si está, o un auto-render basado en las columnas visibles */}
+      <div className="sm:hidden space-y-2">
+        {loading ? (
+          <div className="py-16 text-center">
+            <Loader2 className="animate-spin text-[#FF6600] mx-auto" size={28} />
+          </div>
+        ) : pageData.length === 0 ? (
+          <div className="py-12 text-center text-[#6B7280] text-sm">
+            No hay {totalLabel}
+          </div>
+        ) : (
+          pageData.map((row, ri) => {
+            const rowId = String(row.id ?? row.referencia ?? ri)
+            return (
+              <div
+                key={rowId}
+                onClick={() => onRowClick?.(row)}
+                className={cn(
+                  'rounded-xl border border-[#1E2330] bg-[#141820] p-3 transition-colors',
+                  onRowClick && 'cursor-pointer active:bg-[#1A1F2E]'
+                )}
+              >
+                {mobileCardRender ? (
+                  mobileCardRender(row)
+                ) : (
+                  // Auto card: 1ra columna prominente arriba, resto como Label: valor
+                  <div className="space-y-1.5">
+                    {activeColumns.slice(0, 1).map((col) => {
+                      const val = row[col.key]
+                      return (
+                        <div key={col.key} className="flex items-start justify-between gap-2">
+                          <div className="text-sm font-semibold text-[#F0F2F5] leading-tight flex-1 min-w-0 truncate">
+                            {col.render ? col.render(val, row) : col.type === 'status' ? (
+                              <StatusBadge label={String(val ?? '')} />
+                            ) : (
+                              formatCellValue(val, col.type)
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                    {activeColumns.slice(1, 5).map((col) => {
+                      const val = row[col.key]
+                      if (val === null || val === undefined || val === '') return null
+                      return (
+                        <div key={col.key} className="flex items-center justify-between gap-2 text-xs">
+                          <span className="text-[#6B7280] uppercase text-[10px] tracking-wide shrink-0">
+                            {col.label}
+                          </span>
+                          <span
+                            className={cn(
+                              'text-right truncate min-w-0',
+                              (col.type === 'currency' || col.type === 'number') && 'font-mono',
+                              col.type === 'currency' ? 'text-[#FF6600] font-semibold' : 'text-[#D1D5DB]'
+                            )}
+                          >
+                            {col.render ? col.render(val, row) : col.type === 'status' ? (
+                              <StatusBadge label={String(val ?? '')} />
+                            ) : (
+                              formatCellValue(val, col.type)
+                            )}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )
+          })
+        )}
+      </div>
+
+      {/* Table (desktop) — siempre oculta en mobile, las cards de arriba la reemplazan */}
+      <div className="rounded-xl border border-[#1E2330] overflow-hidden hidden sm:block">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             {/* Header */}

@@ -1170,11 +1170,21 @@ function ClientesTab() {
   }>>({})
 
   async function toggleFavorite(clientId: string, isFavorite: boolean) {
-    const supabase = createClient()
-    await supabase.from('tt_clients').update({ is_favorite: isFavorite }).eq('id', clientId)
-    // Update local state
+    // Optimista + offline-safe: actualiza cache local, si hay red mutea Supabase,
+    // si no, encola con LWW para sincronizar al volver online.
+    const { optimisticUpdate } = await import('@/lib/offline/optimistic')
+    const result = await optimisticUpdate({
+      supabaseTable: 'tt_clients',
+      action: 'update_client',
+      data: { id: clientId, is_favorite: isFavorite },
+    })
+    // Update local state inmediatamente
     setAllClients(prev => prev.map(c => c.id === clientId ? { ...c, is_favorite: isFavorite } as Client : c))
-    addToast({ type: 'success', title: isFavorite ? '⭐ Agregado a favoritos' : 'Quitado de favoritos' })
+    addToast({
+      type: 'success',
+      title: isFavorite ? '⭐ Agregado a favoritos' : 'Quitado de favoritos',
+      message: result.queued ? 'Se sincronizará cuando vuelva la conexión' : undefined,
+    })
   }
 
   const loadClients = useCallback(async () => {

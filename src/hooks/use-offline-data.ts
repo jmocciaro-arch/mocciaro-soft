@@ -1,36 +1,23 @@
 'use client';
 
 // ============================================================================
-// TorqueTools ERP — useOfflineData Hook
-// Hook offline-first: Supabase online, IndexedDB cache offline
+// Mocciaro Soft ERP — useOfflineData Hook
+// Offline-first: cuando hay red, lee de Supabase y guarda en IndexedDB.
+// Cuando no, lee desde IndexedDB. Soporta cualquier tabla en OFFLINE_TABLES.
 // ============================================================================
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useOnlineStatus } from './use-online-status';
 import {
-  getProducts,
-  getClients,
-  getQuotes,
-  saveProducts,
-  saveClients,
-  saveQuotes,
-  type OfflineProduct,
-  type OfflineClient,
-  type OfflineQuote,
+  saveCollection,
+  getCollection,
+  OFFLINE_TABLES,
 } from '@/lib/offline-store';
 
-// Mapeo tabla → funciones de IndexedDB
-const OFFLINE_GETTERS: Record<string, () => Promise<unknown[]>> = {
-  products: getProducts,
-  clients: getClients,
-  quotes: getQuotes,
-};
-
-const OFFLINE_SAVERS: Record<string, (data: unknown[]) => Promise<void>> = {
-  products: (data) => saveProducts(data as OfflineProduct[]),
-  clients: (data) => saveClients(data as OfflineClient[]),
-  quotes: (data) => saveQuotes(data as OfflineQuote[]),
-};
+// Mapeo tabla supabase (tt_*) → store offline (sin prefijo)
+function offlineStoreName(supabaseTable: string): string {
+  return supabaseTable.startsWith('tt_') ? supabaseTable.slice(3) : supabaseTable;
+}
 
 interface OfflineDataState<T> {
   /** Los datos (de Supabase o IndexedDB) */
@@ -46,18 +33,14 @@ interface OfflineDataState<T> {
 }
 
 interface UseOfflineDataOptions {
-  /** Columnas para seleccionar (select de Supabase) */
   select?: string;
-  /** Filtros key=value para el query */
   filters?: Record<string, string>;
-  /** Ordenar por columna */
   orderBy?: string;
-  /** Dirección de orden */
   orderDirection?: 'asc' | 'desc';
-  /** Límite de resultados */
   limit?: number;
-  /** No ejecutar automáticamente */
   enabled?: boolean;
+  /** Si true, guarda en cache aunque haya filtros (default: solo cachea full table) */
+  cacheFiltered?: boolean;
 }
 
 export function useOfflineData<T = Record<string, unknown>>(
@@ -78,31 +61,57 @@ export function useOfflineData<T = Record<string, unknown>>(
     orderDirection = 'asc',
     limit,
     enabled = true,
+    cacheFiltered = false,
   } = options;
 
-  // Intentar cargar desde IndexedDB (cache offline)
+  const storeName = offlineStoreName(table);
+  const hasOfflineStore = OFFLINE_TABLES.includes(storeName);
+
   const loadFromCache = useCallback(async (): Promise<T[]> => {
-    const getter = OFFLINE_GETTERS[table];
-    if (!getter) {
-      console.warn(`[useOfflineData] No hay cache offline para tabla "${table}"`);
+    if (!hasOfflineStore) {
+      console.warn(`[useOfflineData] No hay cache offline para "${table}" (store: "${storeName}")`);
       return [];
     }
-    const cached = await getter();
-    return cached as T[];
-  }, [table]);
+    const cached = await getCollection<T>(storeName);
 
-  // Guardar en IndexedDB
+    // Aplicar filtros en memoria sobre el cache
+    let result = cached;
+    if (filters) {
+      result = result.filter((item) => {
+        return Object.entries(filters).every(([k, v]) => {
+          return String((item as Record<string, unknown>)[k] ?? '') === v;
+        });
+      });
+    }
+    if (orderBy) {
+      result = [...result].sort((a, b) => {
+        const av = (a as Record<string, unknown>)[orderBy];
+        const bv = (b as Record<string, unknown>)[orderBy];
+        if (av === bv) return 0;
+        const cmp = (av as number | string) > (bv as number | string) ? 1 : -1;
+        return orderDirection === 'asc' ? cmp : -cmp;
+      });
+    }
+    if (limit && result.length > limit) {
+      result = result.slice(0, limit);
+    }
+    return result;
+  }, [hasOfflineStore, storeName, table, filters, orderBy, orderDirection, limit]);
+
   const saveToCache = useCallback(
     async (items: T[]) => {
-      const saver = OFFLINE_SAVERS[table];
-      if (saver) {
-        await saver(items as unknown[]);
+      if (!hasOfflineStore) return;
+      // Por defecto solo cacheamos cuando no hay filtros (= full table snapshot)
+      if (filters && !cacheFiltered) return;
+      try {
+        await saveCollection(storeName, items as Array<{ id: string }>);
+      } catch (err) {
+        console.warn(`[useOfflineData] No se pudo cachear "${storeName}":`, err);
       }
     },
-    [table]
+    [hasOfflineStore, storeName, filters, cacheFiltered]
   );
 
-  // Función principal de fetch
   const fetchData = useCallback(async () => {
     if (!enabled) return;
 
@@ -111,10 +120,7 @@ export function useOfflineData<T = Record<string, unknown>>(
     setError(null);
 
     if (isOnline) {
-      // === ONLINE: Intentar desde Supabase ===
       try {
-        // Construir URL de Supabase REST
-        // El componente padre debe configurar las env vars
         const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
         const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -124,22 +130,13 @@ export function useOfflineData<T = Record<string, unknown>>(
 
         let url = `${supabaseUrl}/rest/v1/${table}?select=${encodeURIComponent(select)}`;
 
-        // Agregar filtros
         if (filters) {
           for (const [key, value] of Object.entries(filters)) {
             url += `&${key}=eq.${encodeURIComponent(value)}`;
           }
         }
-
-        // Ordenamiento
-        if (orderBy) {
-          url += `&order=${orderBy}.${orderDirection}`;
-        }
-
-        // Límite
-        if (limit) {
-          url += `&limit=${limit}`;
-        }
+        if (orderBy) url += `&order=${orderBy}.${orderDirection}`;
+        if (limit) url += `&limit=${limit}`;
 
         const response = await fetch(url, {
           headers: {
@@ -148,35 +145,28 @@ export function useOfflineData<T = Record<string, unknown>>(
           },
         });
 
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-        const result = await response.json();
+        const result = (await response.json()) as T[];
 
-        // Verificar que no es un fetch obsoleto
         if (fetchId !== fetchIdRef.current) return;
 
         setData(result);
         setIsOffline(false);
         setLoading(false);
 
-        // Guardar en cache para uso offline
+        // Guardar snapshot en cache offline
         await saveToCache(result);
       } catch (err) {
-        // Si falla la red, cargar desde cache
-        console.warn(`[useOfflineData] Error online para "${table}", usando cache:`, err);
+        console.warn(`[useOfflineData] Online falló para "${table}", usando cache:`, err);
         const cached = await loadFromCache();
         if (fetchId !== fetchIdRef.current) return;
         setData(cached);
         setIsOffline(true);
         setLoading(false);
-        if (cached.length === 0) {
-          setError('Sin datos en cache');
-        }
+        if (cached.length === 0) setError('Sin datos en cache');
       }
     } else {
-      // === OFFLINE: Cargar desde IndexedDB ===
       try {
         const cached = await loadFromCache();
         if (fetchId !== fetchIdRef.current) return;
@@ -195,14 +185,23 @@ export function useOfflineData<T = Record<string, unknown>>(
         console.error(`[useOfflineData] Error offline para "${table}":`, err);
       }
     }
-  }, [isOnline, table, select, filters, orderBy, orderDirection, limit, enabled, loadFromCache, saveToCache]);
+  }, [
+    isOnline,
+    table,
+    select,
+    filters,
+    orderBy,
+    orderDirection,
+    limit,
+    enabled,
+    loadFromCache,
+    saveToCache,
+  ]);
 
-  // Ejecutar fetch cuando cambian las dependencias
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
-  // Refetch manual
   const refetch = useCallback(() => {
     fetchData();
   }, [fetchData]);

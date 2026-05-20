@@ -8,6 +8,18 @@
 import { useEffect, useState } from 'react';
 import { WifiOff, Wifi, RefreshCw } from 'lucide-react';
 import { useOnlineStatus } from '@/hooks/use-online-status';
+import { getLastFullSync } from '@/lib/offline-store';
+
+function formatAgo(ts: number): string {
+  const diff = Date.now() - ts;
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return 'hace instantes';
+  if (min < 60) return `hace ${min} min`;
+  const hrs = Math.floor(min / 60);
+  if (hrs < 24) return `hace ${hrs} h`;
+  const days = Math.floor(hrs / 24);
+  return `hace ${days} d`;
+}
 
 export function OfflineIndicator() {
   const { isOnline: navigatorOnline, pendingCount } = useOnlineStatus();
@@ -15,6 +27,21 @@ export function OfflineIndicator() {
   const [showReconnected, setShowReconnected] = useState(false);
   const [visible, setVisible] = useState(false);
   const [wasOffline, setWasOffline] = useState(false);
+  const [lastSyncLabel, setLastSyncLabel] = useState<string | null>(null);
+
+  // Cuando entramos en offline, leer última sincronización
+  useEffect(() => {
+    if (!reallyOffline) {
+      setLastSyncLabel(null);
+      return;
+    }
+    getLastFullSync()
+      .then((ts) => {
+        if (ts) setLastSyncLabel(formatAgo(ts));
+        else setLastSyncLabel(null);
+      })
+      .catch(() => setLastSyncLabel(null));
+  }, [reallyOffline]);
 
   // Verificación real: navigator.onLine puede dar false positives con service workers.
   // Hacemos un fetch real para confirmar.
@@ -105,6 +132,9 @@ export function OfflineIndicator() {
           {isOfflineMode && (
             <>
               Sin conexión — modo offline
+              {lastSyncLabel && (
+                <span className="opacity-80 ml-1">· últ. sync {lastSyncLabel}</span>
+              )}
               {pendingCount > 0 && (
                 <span className="opacity-80 ml-1">
                   · {pendingCount} {pendingCount === 1 ? 'acción pendiente' : 'acciones pendientes'}
