@@ -262,6 +262,31 @@ html[data-theme="light"] {
   color-scheme: light;
 }
 
+/* ════════════════════════════════════════════════════════════════════
+   TEMA CUSTOM — paleta editable por el usuario (data-theme="custom").
+   Las variables CSS son seteadas por ThemeToggle en runtime.
+   ════════════════════════════════════════════════════════════════════ */
+html[data-theme="custom"] body {
+  background-color: var(--theme-bg, #0B0E13);
+  color: var(--theme-text, #F0F2F5);
+}
+html[data-theme="custom"] :not([data-theme-scope="dark"] *).bg-\[\#0B0E13\]    { background-color: var(--theme-bg, #0B0E13) !important; }
+html[data-theme="custom"] :not([data-theme-scope="dark"] *).bg-\[\#0F1218\]    { background-color: var(--theme-surface, #141820) !important; }
+html[data-theme="custom"] :not([data-theme-scope="dark"] *).bg-\[\#0A0D12\]    { background-color: var(--theme-bg, #0B0E13) !important; }
+html[data-theme="custom"] :not([data-theme-scope="dark"] *).bg-\[\#141820\]    { background-color: var(--theme-surface, #141820) !important; }
+html[data-theme="custom"] :not([data-theme-scope="dark"] *).bg-\[\#151821\]    { background-color: var(--theme-surface, #141820) !important; }
+html[data-theme="custom"] :not([data-theme-scope="dark"] *).bg-\[\#1C2230\]    { background-color: var(--theme-surface, #141820) !important; }
+html[data-theme="custom"] :not([data-theme-scope="dark"] *).bg-\[\#1E2330\]    { background-color: var(--theme-border, #2A3040) !important; }
+html[data-theme="custom"] :not([data-theme-scope="dark"] *).bg-\[\#2A3040\]    { background-color: var(--theme-border, #2A3040) !important; }
+html[data-theme="custom"] :not([data-theme-scope="dark"] *).text-\[\#F0F2F5\]  { color: var(--theme-text, #F0F2F5) !important; }
+html[data-theme="custom"] :not([data-theme-scope="dark"] *).text-\[\#D1D5DB\]  { color: var(--theme-text, #F0F2F5) !important; }
+html[data-theme="custom"] :not([data-theme-scope="dark"] *).text-\[\#9CA3AF\]  { color: var(--theme-text-secondary, #9CA3AF) !important; }
+html[data-theme="custom"] :not([data-theme-scope="dark"] *).text-\[\#6B7280\]  { color: var(--theme-text-secondary, #9CA3AF) !important; }
+html[data-theme="custom"] :not([data-theme-scope="dark"] *).text-\[\#FF6600\]  { color: var(--theme-accent, #FF6600) !important; }
+html[data-theme="custom"] :not([data-theme-scope="dark"] *).bg-\[\#FF6600\]    { background-color: var(--theme-accent, #FF6600) !important; }
+html[data-theme="custom"] :not([data-theme-scope="dark"] *).border-\[\#2A3040\]{ border-color: var(--theme-border, #2A3040) !important; }
+html[data-theme="custom"] :not([data-theme-scope="dark"] *).border-\[\#1E2330\]{ border-color: var(--theme-border, #2A3040) !important; }
+
 html[data-theme="light"] body {
   background-color: #F2F2F2;
   color: #1F2937;

@@ -63,7 +63,7 @@ export default function RootLayout({
             antes del primer paint para evitar FOUC. */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var d=document.documentElement;var t=localStorage.getItem('theme');if(['light','dark','bright','gray'].indexOf(t)<0)t='dark';d.setAttribute('data-theme',t);var s=localStorage.getItem('textSize');if(['sm','normal','lg','xl'].indexOf(s)<0)s='normal';d.setAttribute('data-text-size',s);var a=localStorage.getItem('accent');if(['orange','blue','green','purple','rose','teal'].indexOf(a)<0)a='orange';d.setAttribute('data-accent',a);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();`,
+            __html: `(function(){try{var d=document.documentElement;var t=localStorage.getItem('theme');if(['light','dark','bright','gray','custom'].indexOf(t)<0)t='dark';d.setAttribute('data-theme',t);var s=localStorage.getItem('textSize');if(['sm','normal','lg','xl'].indexOf(s)<0)s='normal';d.setAttribute('data-text-size',s);var a=localStorage.getItem('accent');if(['orange','blue','green','purple','rose','teal'].indexOf(a)<0)a='orange';d.setAttribute('data-accent',a);if(t==='custom'){try{var p=JSON.parse(localStorage.getItem('customPalette')||'null');if(p){if(p.bg)d.style.setProperty('--theme-bg',p.bg);if(p.surface)d.style.setProperty('--theme-surface',p.surface);if(p.border)d.style.setProperty('--theme-border',p.border);if(p.text)d.style.setProperty('--theme-text',p.text);if(p.textSecondary)d.style.setProperty('--theme-text-secondary',p.textSecondary);if(p.accent)d.style.setProperty('--theme-accent',p.accent);}}catch(e){}}}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();`,
           }}
         />
       </head>
