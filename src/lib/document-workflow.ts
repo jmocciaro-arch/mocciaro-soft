@@ -49,12 +49,12 @@ export async function generateDocNumber(prefix: string): Promise<string> {
   if (prefix === 'PED') {
     const { data: localSO } = await supabase
       .from('tt_sales_orders')
-      .select('doc_number')
-      .like('doc_number', pattern)
-      .order('doc_number', { ascending: false })
+      .select('number')
+      .like('number', pattern)
+      .order('number', { ascending: false })
       .limit(1)
     if (localSO?.[0]) {
-      const m = (localSO[0].doc_number as string).match(/(\d+)$/)
+      const m = (localSO[0].number as string).match(/(\d+)$/)
       if (m) maxNum = Math.max(maxNum, parseInt(m[1]))
     }
   }
@@ -63,12 +63,12 @@ export async function generateDocNumber(prefix: string): Promise<string> {
   if (prefix === 'REM') {
     const { data: localDN } = await supabase
       .from('tt_delivery_notes')
-      .select('doc_number')
-      .like('doc_number', pattern)
-      .order('doc_number', { ascending: false })
+      .select('number')
+      .like('number', pattern)
+      .order('number', { ascending: false })
       .limit(1)
     if (localDN?.[0]) {
-      const m = (localDN[0].doc_number as string).match(/(\d+)$/)
+      const m = (localDN[0].number as string).match(/(\d+)$/)
       if (m) maxNum = Math.max(maxNum, parseInt(m[1]))
     }
   }
@@ -77,12 +77,12 @@ export async function generateDocNumber(prefix: string): Promise<string> {
   if (prefix === 'FAC') {
     const { data: localInv } = await supabase
       .from('tt_invoices')
-      .select('doc_number')
-      .like('doc_number', pattern)
-      .order('doc_number', { ascending: false })
+      .select('number')
+      .like('number', pattern)
+      .order('number', { ascending: false })
       .limit(1)
     if (localInv?.[0]) {
-      const m = (localInv[0].doc_number as string).match(/(\d+)$/)
+      const m = (localInv[0].number as string).match(/(\d+)$/)
       if (m) maxNum = Math.max(maxNum, parseInt(m[1]))
     }
   }
@@ -119,9 +119,30 @@ export async function updateDocumentStatus(
 // ---------------------------------------------------------------
 export async function quoteToOrder(
   quoteId: string,
-  source: 'local' | 'tt_documents'
+  source: 'local' | 'tt_documents',
+  // Cliente Supabase opcional. Para llamadas desde API routes pasar el server client
+  // (con cookies del user) para respetar RLS. Si no se pasa, usa el client del browser.
+  supabaseClient?: ReturnType<typeof createClient>
 ): Promise<{ orderId: string; orderNumber: string }> {
-  const supabase = createClient()
+  const supabase = supabaseClient ?? createClient()
+
+  // Idempotencia: si ya existe un pedido con este quote_id, devolvemos ese
+  // en lugar de crear un duplicado. Esto previene que doble-click o
+  // re-clicks accidentales generen pedidos PED-XXX duplicados.
+  const { data: existingOrder } = await supabase
+    .from('tt_sales_orders')
+    .select('id, number')
+    .eq('quote_id', quoteId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (existingOrder?.id) {
+    return {
+      orderId: existingOrder.id as string,
+      orderNumber: (existingOrder.number as string) || '',
+    }
+  }
+
   const orderNumber = await generateDocNumber('PED')
 
   let quoteData: Row | null = null
@@ -141,12 +162,26 @@ export async function quoteToOrder(
 
   if (!quoteData) throw new Error('Cotizacion no encontrada')
 
-  // Get default company_id
-  let companyId = quoteData.company_id as string | null
+  // Validar condiciones comerciales del cliente (payment_terms_days + payment_method)
+  const clientIdForCheck = quoteData.client_id as string | null
+  if (clientIdForCheck) {
+    const { data: clientCheck } = await supabase
+      .from('tt_clients')
+      .select('payment_terms_days, payment_method, name')
+      .eq('id', clientIdForCheck)
+      .single()
+    if (!clientCheck) throw new Error('Cliente de la cotizacion no encontrado')
+    if (clientCheck.payment_terms_days == null || !clientCheck.payment_method) {
+      throw new Error(
+        `Cliente "${clientCheck.name}" sin condiciones comerciales. Cargá payment_terms_days y payment_method en /clientes antes de avanzar.`
+      )
+    }
+  }
+
+  // Get company_id estrictamente desde la cotización — NO fallback (multi-empresa).
+  const companyId = quoteData.company_id as string | null
   if (!companyId) {
-    // Fallback: get first company
-    const { data: firstCo } = await supabase.from('tt_companies').select('id').limit(1).single()
-    companyId = firstCo?.id as string || null
+    throw new Error('Cotización sin company_id. No se puede generar pedido — cargá la cotización con empresa explícita.')
   }
 
   // Crear pedido en tt_sales_orders (tabla local)
@@ -182,8 +217,70 @@ export async function quoteToOrder(
     sort_order: idx,
   }))
 
+  let insertedSoItems: Row[] = []
   if (soItems.length > 0) {
-    await supabase.from('tt_so_items').insert(soItems)
+    const { data: ins, error: insErr } = await supabase
+      .from('tt_so_items')
+      .insert(soItems)
+      .select()
+    if (insErr) throw insErr
+    insertedSoItems = ins || []
+  }
+
+  // ---------------------------------------------------------------
+  // Reserva de stock: para cada item con product_id, registrar movimiento
+  // 'reserve' y aumentar tt_stock.reserved.
+  // ---------------------------------------------------------------
+  if (insertedSoItems.length > 0 && companyId) {
+    // Buscar warehouse primario de la company (primer activo)
+    const { data: whs } = await supabase
+      .from('tt_warehouses')
+      .select('id')
+      .eq('company_id', companyId)
+      .eq('active', true)
+      .order('created_at', { ascending: true })
+      .limit(1)
+    const primaryWarehouseId = (whs?.[0]?.id as string) || null
+
+    if (primaryWarehouseId) {
+      for (const it of insertedSoItems) {
+        const productId = it.product_id as string | null
+        const qty = (it.qty_ordered as number) || 0
+        if (!productId || qty <= 0) continue
+
+        // Insertar movimiento de reserva
+        await supabase.from('tt_stock_movements').insert({
+          product_id: productId,
+          warehouse_id: primaryWarehouseId,
+          movement_type: 'reserve',
+          quantity: qty,
+          document_id: order.id as string,
+          document_item_id: it.id as string,
+          reference: `Reserva por pedido ${orderNumber}`,
+        })
+
+        // Actualizar tt_stock.reserved (crear fila si no existe)
+        const { data: stockRow } = await supabase
+          .from('tt_stock')
+          .select('id, reserved, quantity')
+          .eq('product_id', productId)
+          .eq('warehouse_id', primaryWarehouseId)
+          .maybeSingle()
+        if (stockRow) {
+          await supabase
+            .from('tt_stock')
+            .update({ reserved: ((stockRow.reserved as number) || 0) + qty })
+            .eq('id', stockRow.id as string)
+        } else {
+          await supabase.from('tt_stock').insert({
+            product_id: productId,
+            warehouse_id: primaryWarehouseId,
+            quantity: 0,
+            reserved: qty,
+          })
+        }
+      }
+    }
   }
 
   // Cerrar la cotizacion
@@ -239,6 +336,67 @@ export async function orderToDeliveryNote(
   const totalDelivered = items.reduce((sum, it) => sum + it.toDeliver, 0)
   if (totalDelivered === 0) throw new Error('Selecciona al menos un item para entregar')
 
+  // ---------------------------------------------------------------
+  // Pre-validacion de stock: para cada item con product_id, verificar
+  // que (quantity - reserved + reservado_por_este_pedido) >= toDeliver.
+  // El stock reservado por ESTE pedido cuenta como disponible para entregar.
+  // ---------------------------------------------------------------
+  const companyId = orderData.company_id as string | null
+  let primaryWarehouseId: string | null = null
+  if (companyId) {
+    const { data: whs } = await supabase
+      .from('tt_warehouses')
+      .select('id')
+      .eq('company_id', companyId)
+      .eq('active', true)
+      .order('created_at', { ascending: true })
+      .limit(1)
+    primaryWarehouseId = (whs?.[0]?.id as string) || null
+  }
+
+  // Cargar info de los so_items que se van a entregar para conocer product_id
+  const soItemIds = items.filter((it) => it.toDeliver > 0).map((it) => it.id)
+  const soItemsInfo = new Map<string, { product_id: string | null; qty_ordered: number; qty_delivered: number }>()
+  if (soItemIds.length > 0) {
+    const { data: soRows } = await supabase
+      .from('tt_so_items')
+      .select('id, product_id, qty_ordered, qty_delivered')
+      .in('id', soItemIds)
+    for (const r of (soRows || []) as Row[]) {
+      soItemsInfo.set(r.id as string, {
+        product_id: (r.product_id as string) || null,
+        qty_ordered: (r.qty_ordered as number) || 0,
+        qty_delivered: (r.qty_delivered as number) || 0,
+      })
+    }
+  }
+
+  if (primaryWarehouseId) {
+    for (const item of items) {
+      if (item.toDeliver <= 0) continue
+      const info = soItemsInfo.get(item.id)
+      const productId = info?.product_id || null
+      if (!productId) continue
+      const { data: stockRow } = await supabase
+        .from('tt_stock')
+        .select('quantity, reserved')
+        .eq('product_id', productId)
+        .eq('warehouse_id', primaryWarehouseId)
+        .maybeSingle()
+      const onHand = (stockRow?.quantity as number) || 0
+      const reserved = (stockRow?.reserved as number) || 0
+      // El stock reservado por este mismo pedido (qty_ordered - qty_delivered)
+      // ya esta contado en `reserved`. Lo agregamos como disponible para entregar.
+      const reservedByThisOrder = Math.max(0, (info?.qty_ordered || 0) - (info?.qty_delivered || 0))
+      const available = onHand - reserved + reservedByThisOrder
+      if (available < item.toDeliver) {
+        throw new Error(
+          `Stock insuficiente para entregar ${item.toDeliver} de "${item.description}". Disponible: ${available}.`
+        )
+      }
+    }
+  }
+
   // Crear remito
   const { data: dn, error } = await supabase
     .from('tt_delivery_notes')
@@ -246,7 +404,7 @@ export async function orderToDeliveryNote(
       company_id: orderData.company_id || null,
       client_id: orderData.client_id,
       sales_order_id: orderId,
-      doc_number: dnNumber,
+      number: dnNumber,
       status: 'pending',
       total: (orderData.total as number) || 0,
     })
@@ -258,17 +416,51 @@ export async function orderToDeliveryNote(
   // Crear items del remito y actualizar cantidades entregadas
   for (const item of items) {
     if (item.toDeliver > 0) {
-      await supabase.from('tt_dn_items').insert({
-        delivery_note_id: dn.id,
-        so_item_id: item.id,
-        quantity: item.toDeliver,
-        description: item.description,
-      })
+      const { data: dnItem } = await supabase
+        .from('tt_dn_items')
+        .insert({
+          delivery_note_id: dn.id,
+          so_item_id: item.id,
+          quantity: item.toDeliver,
+          description: item.description,
+        })
+        .select()
+        .single()
       // Actualizar qty_delivered en so_items
       await supabase
         .from('tt_so_items')
         .update({ qty_delivered: item.delivered + item.toDeliver })
         .eq('id', item.id)
+
+      // Movimiento de egress + descuento de stock + liberacion de reserva
+      const info = soItemsInfo.get(item.id)
+      const productId = info?.product_id || null
+      if (primaryWarehouseId && productId) {
+        await supabase.from('tt_stock_movements').insert({
+          product_id: productId,
+          warehouse_id: primaryWarehouseId,
+          movement_type: 'egress',
+          quantity: item.toDeliver,
+          document_id: dn.id as string,
+          document_item_id: (dnItem?.id as string) || null,
+          reference: `Egreso por remito ${dnNumber}`,
+        })
+
+        const { data: stockRow } = await supabase
+          .from('tt_stock')
+          .select('id, quantity, reserved')
+          .eq('product_id', productId)
+          .eq('warehouse_id', primaryWarehouseId)
+          .maybeSingle()
+        if (stockRow) {
+          const newQty = ((stockRow.quantity as number) || 0) - item.toDeliver
+          const newReserved = Math.max(0, ((stockRow.reserved as number) || 0) - item.toDeliver)
+          await supabase
+            .from('tt_stock')
+            .update({ quantity: newQty, reserved: newReserved })
+            .eq('id', stockRow.id as string)
+        }
+      }
     }
   }
 
@@ -329,6 +521,22 @@ export async function deliveryNoteToInvoice(
 
   if (!dnData) throw new Error('Albaran no encontrado')
 
+  // Validar condiciones comerciales del cliente (payment_terms_days + payment_method)
+  const clientIdForCheck = dnData.client_id as string | null
+  if (clientIdForCheck) {
+    const { data: clientCheck } = await supabase
+      .from('tt_clients')
+      .select('payment_terms_days, payment_method, name')
+      .eq('id', clientIdForCheck)
+      .single()
+    if (!clientCheck) throw new Error('Cliente del albaran no encontrado')
+    if (clientCheck.payment_terms_days == null || !clientCheck.payment_method) {
+      throw new Error(
+        `Cliente "${clientCheck.name}" sin condiciones comerciales. Cargá payment_terms_days y payment_method en /clientes antes de avanzar.`
+      )
+    }
+  }
+
   // Buscar el pedido original para obtener montos
   let orderData: Row | null = null
   const soId = dnData.sales_order_id as string | null
@@ -349,7 +557,7 @@ export async function deliveryNoteToInvoice(
       client_id: dnData.client_id,
       sales_order_id: soId,
       delivery_note_id: deliveryNoteId,
-      doc_number: invNumber,
+      number: invNumber,
       type: 'sale',
       status: 'draft',
       currency: (orderData?.currency as string) || 'EUR',
@@ -407,7 +615,7 @@ export async function orderToInvoice(
       company_id: orderData.company_id || null,
       client_id: orderData.client_id,
       sales_order_id: orderId,
-      doc_number: invNumber,
+      number: invNumber,
       type: 'sale',
       status: 'draft',
       currency: (orderData.currency as string) || 'EUR',

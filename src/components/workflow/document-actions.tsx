@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/modal'
 import { Input } from '@/components/ui/input'
@@ -89,8 +90,32 @@ export function DocumentActions({
   onAction,
 }: DocumentActionsProps) {
   const { addToast } = useToast()
+  const router = useRouter()
   const [loading, setLoading] = useState<string | null>(null)
   const [showSendModal, setShowSendModal] = useState(false)
+
+  // ─────────────────────────────────────────────────────────────────
+  // POST-ACTION NAVIGATION — mapa central de redirecciones después de
+  // cada acción del workflow. Editar acá para cambiar a dónde te lleva
+  // cada acción. Extender agregando nuevas keys (sin modificar handlers).
+  //
+  // route: ruta destino con :id placeholder
+  // tab: tab del /ventas a activar (opcional)
+  // delayMs: cuánto esperar antes de redirigir (para que el user vea el toast)
+  // ─────────────────────────────────────────────────────────────────
+  const POST_ACTION_NAV: Record<string, { route: (id: string) => string; delayMs?: number } | null> = {
+    order_created:    { route: (id) => `/ventas?tab=pedidos&highlight=${id}`,    delayMs: 800 },
+    delivery_created: { route: (id) => `/ventas?tab=albaranes&highlight=${id}`,  delayMs: 800 },
+    invoice_created:  { route: (id) => `/ventas?tab=facturas&highlight=${id}`,   delayMs: 800 },
+    payment_created:  { route: (id) => `/ventas?tab=cobros&highlight=${id}`,     delayMs: 800 },
+    // Para agregar acciones nuevas (ej. 'credit_note_created'): solo agregá una entrada aquí
+  }
+
+  function navigateAfterAction(actionKey: string, resultId?: string) {
+    const cfg = POST_ACTION_NAV[actionKey]
+    if (!cfg || !resultId) return
+    setTimeout(() => router.push(cfg.route(resultId)), cfg.delayMs ?? 0)
+  }
   const [showRejectModal, setShowRejectModal] = useState(false)
   const [showDeliveryModal, setShowDeliveryModal] = useState(false)
   const [showMultiOCDeliveryModal, setShowMultiOCDeliveryModal] = useState(false)
@@ -194,6 +219,7 @@ export function DocumentActions({
         message: result.orderNumber,
       })
       onAction('order_created', result as unknown as Row)
+      navigateAfterAction('order_created', result.orderId)
     } catch (err) {
       addToast({ type: 'error', title: 'Error generando pedido', message: (err as Error).message })
     } finally {
@@ -239,6 +265,7 @@ export function DocumentActions({
       })
       setShowDeliveryModal(false)
       onAction('delivery_note_created', result as unknown as Row)
+      navigateAfterAction('delivery_created', result.deliveryNoteId)
     } catch (err) {
       addToast({ type: 'error', title: 'Error generando remito', message: (err as Error).message })
     } finally {
@@ -256,6 +283,7 @@ export function DocumentActions({
         message: result.invoiceNumber,
       })
       onAction('invoice_created', result as unknown as Row)
+      navigateAfterAction('invoice_created', result.invoiceId)
     } catch (err) {
       addToast({ type: 'error', title: 'Error generando factura', message: (err as Error).message })
     } finally {
@@ -273,6 +301,7 @@ export function DocumentActions({
         message: result.invoiceNumber,
       })
       onAction('invoice_created', result as unknown as Row)
+      navigateAfterAction('invoice_created', result.invoiceId)
     } catch (err) {
       addToast({ type: 'error', title: 'Error generando factura', message: (err as Error).message })
     } finally {
@@ -285,7 +314,7 @@ export function DocumentActions({
     try {
       const amt = parseFloat(paymentAmount)
       if (!amt || amt <= 0) throw new Error('Ingresa un monto valido')
-      await registerPayment(docId, amt, paymentMethod, paymentRef, paymentDate)
+      const payResult = await registerPayment(docId, amt, paymentMethod, paymentRef, paymentDate)
       addToast({
         type: 'success',
         title: 'Cobro registrado',
@@ -294,7 +323,8 @@ export function DocumentActions({
       setShowPaymentModal(false)
       setPaymentAmount('')
       setPaymentRef('')
-      onAction('payment_registered')
+      onAction('payment_registered', payResult as unknown as Row)
+      navigateAfterAction('payment_created', payResult?.paymentId)
     } catch (err) {
       addToast({ type: 'error', title: 'Error registrando cobro', message: (err as Error).message })
     } finally {
@@ -527,6 +557,8 @@ export function DocumentActions({
           currentOrderSource={source}
           onCreated={(result) => {
             onAction('delivery_note_created', result as unknown as Row)
+            const r = result as unknown as { deliveryNoteId?: string }
+            if (r?.deliveryNoteId) navigateAfterAction('delivery_created', r.deliveryNoteId)
           }}
         />
       )}
