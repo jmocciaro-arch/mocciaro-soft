@@ -3,19 +3,27 @@
 // Soporte offline completo con sincronización en segundo plano
 // ============================================================================
 
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v2';
 const STATIC_CACHE = `torquetools-static-${CACHE_VERSION}`;
 const API_CACHE = `torquetools-api-${CACHE_VERSION}`;
+const PAGE_CACHE = `torquetools-pages-${CACHE_VERSION}`;
 const OFFLINE_PAGE = '/offline.html';
 
-// Assets estáticos para pre-cachear en install
+// Assets estáticos y rutas críticas para pre-cachear en install
 const PRECACHE_URLS = [
   '/',
   '/dashboard',
   '/dashboard/ejecutivo',
   '/cotizador',
+  '/clientes',
+  '/catalogo',
+  '/compras',
+  '/ventas',
+  '/stock',
   '/sat',
+  '/calendario',
   '/scanner',
+  '/admin',
   '/offline.html',
   '/manifest.json',
   '/icons/icon-192.png',
@@ -32,7 +40,15 @@ self.addEventListener('install', (event) => {
       .open(STATIC_CACHE)
       .then((cache) => {
         console.log('[SW] Pre-cacheando assets estáticos');
-        return cache.addAll(PRECACHE_URLS);
+        // addAll falla si alguna URL no responde 200 — usamos add por URL
+        // y toleramos errores individuales (ej. ruta protegida por auth).
+        return Promise.all(
+          PRECACHE_URLS.map((url) =>
+            cache.add(url).catch((err) => {
+              console.warn(`[SW] No pude precachear ${url}:`, err.message);
+            })
+          )
+        );
       })
       .then(() => self.skipWaiting())
   );
@@ -53,7 +69,8 @@ self.addEventListener('activate', (event) => {
               (name) =>
                 name.startsWith('torquetools-') &&
                 name !== STATIC_CACHE &&
-                name !== API_CACHE
+                name !== API_CACHE &&
+                name !== PAGE_CACHE
             )
             .map((name) => {
               console.log(`[SW] Eliminando cache viejo: ${name}`);
@@ -156,31 +173,49 @@ async function networkFirstStrategy(request) {
 }
 
 /**
- * Navigation Strategy — Para páginas HTML.
- * Intenta la red, si falla sirve la página offline.
+ * Navigation Strategy — Stale-While-Revalidate.
+ * Si hay versión cacheada de la página, la sirve INMEDIATAMENTE y refresca
+ * en background. Si no hay cache, intenta la red con timeout corto y cae
+ * al fallback offline si todo falla. Esto hace que la app abra al instante
+ * sin internet siempre que ya hayas visitado la ruta una vez.
  */
 async function navigationStrategy(request) {
-  try {
-    const networkResponse = await fetch(request);
-    if (networkResponse.ok) {
-      const cache = await caches.open(STATIC_CACHE);
-      cache.put(request, networkResponse.clone());
-    }
-    return networkResponse;
-  } catch {
-    // Intentar servir la página desde cache
-    const cached = await caches.match(request);
-    if (cached) return cached;
+  const cache = await caches.open(PAGE_CACHE);
+  const cached = await cache.match(request);
 
-    // Fallback a la página offline
-    const offlinePage = await caches.match(OFFLINE_PAGE);
-    if (offlinePage) return offlinePage;
+  // Refresh en background (no bloquea respuesta si hay cache)
+  const networkPromise = fetch(request)
+    .then((res) => {
+      if (res && res.ok) {
+        // Clonar antes de meter al cache
+        cache.put(request, res.clone()).catch(() => {});
+      }
+      return res;
+    })
+    .catch(() => null);
 
-    return new Response('<h1>Sin conexion</h1>', {
-      status: 503,
-      headers: { 'Content-Type': 'text/html' },
-    });
+  // 1. Si hay cache → servir YA, refresh en background
+  if (cached) {
+    // Disparamos pero no esperamos
+    networkPromise.catch(() => {});
+    return cached;
   }
+
+  // 2. Sin cache: intentar red con timeout de 4s
+  const timeoutPromise = new Promise((resolve) =>
+    setTimeout(() => resolve(null), 4000)
+  );
+  const fresh = await Promise.race([networkPromise, timeoutPromise]);
+  if (fresh && fresh.ok) return fresh;
+
+  // 3. Red falló o tardó demasiado → fallback offline
+  const offlinePage = await caches.match(OFFLINE_PAGE);
+  if (offlinePage) return offlinePage;
+
+  return new Response('<h1>Sin conexion</h1>', {
+    status: 503,
+    headers: { 'Content-Type': 'text/html' },
+  });
 }
 
 // ============================================================================

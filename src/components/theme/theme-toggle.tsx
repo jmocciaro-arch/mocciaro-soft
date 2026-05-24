@@ -1,29 +1,49 @@
 'use client'
 
 /**
- * ThemeToggle — dropdown completo de apariencia con 3 ejes:
- *   1) Tema (dark | light | bright | gray)
+ * ThemeToggle — dropdown completo de apariencia con 4 ejes:
+ *   1) Tema (dark | light | bright | gray | custom)
  *   2) Tamaño de texto (sm | normal | lg | xl)
  *   3) Color de acento (orange | blue | green | purple | rose | teal)
+ *   4) PALETA CUSTOM (cuando theme='custom'): 6 color pickers que
+ *      aplican como CSS variables (--theme-bg, --theme-surface,
+ *      --theme-border, --theme-text, --theme-text-secondary, --theme-accent).
  *
- * Persiste en localStorage (theme, textSize, accent). Aplica los 3
- * como atributos en <html> (data-theme, data-text-size, data-accent)
- * para que los overrides en globals.css trabajen sin tocar componentes.
- * El layout raíz inyecta scripts bloqueantes en <head> para evitar FOUC.
+ * Persiste en localStorage. Aplica como atributos en <html>
+ * (data-theme, data-text-size, data-accent) + CSS vars para custom.
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { Moon, Sun, Sparkles, CloudFog, Check, ChevronDown, Type } from 'lucide-react'
+import { Moon, Sun, Sparkles, CloudFog, Check, ChevronDown, Type, Palette, RotateCcw } from 'lucide-react'
 
-type Theme = 'dark' | 'light' | 'bright' | 'gray'
+type Theme = 'dark' | 'light' | 'bright' | 'gray' | 'custom'
 type TextSize = 'sm' | 'normal' | 'lg' | 'xl'
 type Accent = 'orange' | 'blue' | 'green' | 'purple' | 'rose' | 'teal'
+
+interface CustomPalette {
+  bg: string         // fondo principal
+  surface: string    // cards, paneles
+  border: string     // bordes
+  text: string       // texto principal
+  textSecondary: string  // texto gris (labels, hints)
+  accent: string     // color del acento (botones primarios, etc.)
+}
+
+const DEFAULT_CUSTOM: CustomPalette = {
+  bg: '#0B0E13',
+  surface: '#141820',
+  border: '#2A3040',
+  text: '#F0F2F5',
+  textSecondary: '#9CA3AF',
+  accent: '#FF6600',
+}
 
 const THEMES: Array<{ id: Theme; label: string; desc: string; icon: typeof Moon }> = [
   { id: 'dark',   label: 'Oscuro',    desc: 'Tema por defecto, fondo negro',     icon: Moon     },
   { id: 'light',  label: 'Claro',     desc: 'Estilo STEL Order, header negro',   icon: Sun      },
   { id: 'bright', label: 'Brillante', desc: 'Todo blanco, sin zonas oscuras',    icon: Sparkles },
   { id: 'gray',   label: 'Gris',      desc: 'Gris medio, baja fatiga visual',    icon: CloudFog },
+  { id: 'custom', label: 'Personalizada', desc: 'Elegí tus propios colores',    icon: Palette  },
 ]
 
 const SIZES: Array<{ id: TextSize; label: string }> = [
@@ -49,17 +69,51 @@ function getInitial<T extends string>(attr: string, valid: readonly T[], fallbac
   return fallback
 }
 
+function loadCustomPalette(): CustomPalette {
+  if (typeof window === 'undefined') return DEFAULT_CUSTOM
+  try {
+    const stored = localStorage.getItem('customPalette')
+    if (stored) return { ...DEFAULT_CUSTOM, ...JSON.parse(stored) }
+  } catch {}
+  return DEFAULT_CUSTOM
+}
+
+function applyCustomPalette(p: CustomPalette) {
+  const root = document.documentElement
+  root.style.setProperty('--theme-bg', p.bg)
+  root.style.setProperty('--theme-surface', p.surface)
+  root.style.setProperty('--theme-border', p.border)
+  root.style.setProperty('--theme-text', p.text)
+  root.style.setProperty('--theme-text-secondary', p.textSecondary)
+  root.style.setProperty('--theme-accent', p.accent)
+}
+
+function clearCustomPalette() {
+  const root = document.documentElement
+  root.style.removeProperty('--theme-bg')
+  root.style.removeProperty('--theme-surface')
+  root.style.removeProperty('--theme-border')
+  root.style.removeProperty('--theme-text')
+  root.style.removeProperty('--theme-text-secondary')
+  root.style.removeProperty('--theme-accent')
+}
+
 export function ThemeToggle({ compact = false }: { compact?: boolean }) {
   const [theme, setTheme] = useState<Theme>('dark')
   const [textSize, setTextSize] = useState<TextSize>('normal')
   const [accent, setAccent] = useState<Accent>('orange')
+  const [custom, setCustom] = useState<CustomPalette>(DEFAULT_CUSTOM)
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    setTheme(getInitial<Theme>('data-theme', THEMES.map(t => t.id), 'dark'))
+    const t = getInitial<Theme>('data-theme', THEMES.map(t => t.id), 'dark')
+    setTheme(t)
     setTextSize(getInitial<TextSize>('data-text-size', SIZES.map(s => s.id), 'normal'))
     setAccent(getInitial<Accent>('data-accent', ACCENTS.map(a => a.id), 'orange'))
+    const cp = loadCustomPalette()
+    setCustom(cp)
+    if (t === 'custom') applyCustomPalette(cp)
   }, [])
 
   useEffect(() => {
@@ -80,6 +134,25 @@ export function ThemeToggle({ compact = false }: { compact?: boolean }) {
     setTheme(next)
     document.documentElement.setAttribute('data-theme', next)
     try { localStorage.setItem('theme', next) } catch {}
+    if (next === 'custom') {
+      applyCustomPalette(custom)
+    } else {
+      clearCustomPalette()
+    }
+  }
+
+  const updateCustom = (key: keyof CustomPalette, value: string) => {
+    const next = { ...custom, [key]: value }
+    setCustom(next)
+    try { localStorage.setItem('customPalette', JSON.stringify(next)) } catch {}
+    // Si el tema actual es custom, aplicar al toque
+    if (theme === 'custom') applyCustomPalette(next)
+  }
+
+  const resetCustom = () => {
+    setCustom(DEFAULT_CUSTOM)
+    try { localStorage.setItem('customPalette', JSON.stringify(DEFAULT_CUSTOM)) } catch {}
+    if (theme === 'custom') applyCustomPalette(DEFAULT_CUSTOM)
   }
 
   const applySize = (next: TextSize) => {
@@ -207,6 +280,51 @@ export function ThemeToggle({ compact = false }: { compact?: boolean }) {
               )
             })}
           </div>
+
+          {/* PALETA CUSTOM — solo se muestra el editor cuando theme === 'custom' */}
+          {theme === 'custom' && (
+            <div className="border-t border-[#1E2330]">
+              <div className="px-3 pt-2 pb-1 flex items-center justify-between">
+                <span className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-[#FF6600] font-semibold">
+                  <Palette size={11} /> Paleta personalizada
+                </span>
+                <button
+                  type="button"
+                  onClick={resetCustom}
+                  className="text-[10px] text-[#6B7280] hover:text-[#FF6600] inline-flex items-center gap-1"
+                  title="Volver al default (Oscuro)"
+                >
+                  <RotateCcw size={10} /> Reset
+                </button>
+              </div>
+              <div className="px-3 pb-3 space-y-1.5">
+                {([
+                  { key: 'bg' as const,            label: 'Fondo' },
+                  { key: 'surface' as const,       label: 'Superficie (cards)' },
+                  { key: 'border' as const,        label: 'Borde' },
+                  { key: 'text' as const,          label: 'Texto' },
+                  { key: 'textSecondary' as const, label: 'Texto secundario' },
+                  { key: 'accent' as const,        label: 'Acento' },
+                ]).map(({ key, label }) => (
+                  <label key={key} className="flex items-center justify-between gap-2 text-[11px] text-[#D1D5DB]">
+                    <span className="flex-1 truncate">{label}</span>
+                    <code className="text-[10px] text-[#6B7280] font-mono">{custom[key]}</code>
+                    <input
+                      type="color"
+                      value={custom[key]}
+                      onChange={(e) => updateCustom(key, e.target.value)}
+                      className="w-7 h-7 rounded cursor-pointer border-0 bg-transparent p-0"
+                      aria-label={`Color ${label}`}
+                    />
+                  </label>
+                ))}
+              </div>
+              <div className="px-3 pb-3 text-[10px] text-[#6B7280] italic leading-tight">
+                Los cambios se aplican al instante. Se guardan en este navegador.
+                Tip: activá la paleta &quot;Personalizada&quot; arriba para verla.
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
