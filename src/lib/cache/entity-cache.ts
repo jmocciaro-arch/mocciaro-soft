@@ -8,7 +8,7 @@
 // ============================================================================
 
 const DB_NAME = 'mocciaro-cache';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const META_STORE = '_meta';
 
 export type CachedEntity =
@@ -18,7 +18,9 @@ export type CachedEntity =
   | 'warehouses'
   | 'product_categories'
   | 'companies'
-  | 'users';
+  | 'users'
+  | 'documents'
+  | 'client_contacts';
 
 const ENTITY_STORES: CachedEntity[] = [
   'clients',
@@ -28,6 +30,8 @@ const ENTITY_STORES: CachedEntity[] = [
   'product_categories',
   'companies',
   'users',
+  'documents',
+  'client_contacts',
 ];
 
 export interface CacheMeta {

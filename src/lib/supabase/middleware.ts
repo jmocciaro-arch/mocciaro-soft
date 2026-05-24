@@ -70,9 +70,25 @@ export async function updateSession(request: NextRequest) {
   let user: { id: string } | null = null
   let networkDown = false
 
+  // Timeout duro de 1500ms: si Supabase no contesta a tiempo, asumimos red
+  // caída/degradada y caemos al fallback offline. Esto evita que la app se
+  // cuelgue 30s+ esperando un timeout HTTP cuando la red existe pero no llega.
+  const AUTH_TIMEOUT_MS = 1500
+  const timeout = new Promise<{ timedOut: true }>((resolve) =>
+    setTimeout(() => resolve({ timedOut: true }), AUTH_TIMEOUT_MS)
+  )
+
   try {
-    const result = await supabase.auth.getUser()
-    user = result.data.user
+    const raced = await Promise.race([
+      supabase.auth.getUser().then((r) => ({ result: r, timedOut: false as const })),
+      timeout,
+    ])
+    if ('result' in raced) {
+      user = raced.result.data.user
+    } else {
+      networkDown = true
+      console.warn(`[middleware] Supabase auth timeout (${AUTH_TIMEOUT_MS}ms). Modo offline si hay cookie.`)
+    }
   } catch (err) {
     if (isLikelyNetworkError(err)) {
       networkDown = true

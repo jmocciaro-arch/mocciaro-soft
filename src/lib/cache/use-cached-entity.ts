@@ -22,6 +22,8 @@ import {
   refreshSuppliers,
   refreshWarehouses,
   refreshCompanies,
+  refreshDocuments,
+  refreshClientContacts,
   type FetchResult,
 } from './fetchers'
 
@@ -34,10 +36,12 @@ const REFRESHERS: Record<CachedEntity, Refresher> = {
   suppliers: (s) => refreshSuppliers(s),
   warehouses: (s) => refreshWarehouses(s),
   companies: () => refreshCompanies(),
+  documents: (s) => refreshDocuments(s),
+  client_contacts: () => refreshClientContacts(),
   users: () => Promise.reject(new Error('users refresher no implementado')),
 }
 
-const GLOBAL_ENTITIES: CachedEntity[] = ['products', 'product_categories', 'companies']
+const GLOBAL_ENTITIES: CachedEntity[] = ['products', 'product_categories', 'companies', 'client_contacts']
 
 export interface UseCachedEntityOptions {
   /** Si true, no autorefresca al montar (solo lee del cache). */
@@ -187,4 +191,12 @@ export function useCachedProductCategories<T = unknown>(opts?: UseCachedEntityOp
 
 export function useCachedCompanies<T = unknown>(opts?: UseCachedEntityOptions) {
   return useCachedEntity<T>('companies', opts)
+}
+
+export function useCachedDocuments<T = unknown>(opts?: UseCachedEntityOptions) {
+  return useCachedEntity<T>('documents', opts)
+}
+
+export function useCachedClientContacts<T = unknown>(opts?: UseCachedEntityOptions) {
+  return useCachedEntity<T>('client_contacts', opts)
 }

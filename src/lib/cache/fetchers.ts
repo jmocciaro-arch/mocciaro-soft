@@ -34,7 +34,17 @@ export function buildCompanyKey(scope: CompanyScope): string {
 
 // Tipos laxos para queries de Supabase — cada paso devuelve un builder
 // distinto y queremos un único helper genérico que sepa encadenar.
-type AnyQuery = { eq: (c: string, v: unknown) => AnyQuery; in: (c: string, v: unknown[]) => AnyQuery; order: (c: string, opt?: { ascending?: boolean }) => AnyQuery; range: (a: number, b: number) => Promise<{ data: unknown; error: unknown }> & AnyQuery }
+type AnyQuery = {
+  eq: (c: string, v: unknown) => AnyQuery;
+  neq: (c: string, v: unknown) => AnyQuery;
+  in: (c: string, v: unknown[]) => AnyQuery;
+  gte: (c: string, v: unknown) => AnyQuery;
+  lte: (c: string, v: unknown) => AnyQuery;
+  order: (c: string, opt?: { ascending?: boolean }) => AnyQuery;
+  range: (a: number, b: number) => Promise<{ data: unknown; error: unknown }> & AnyQuery;
+  or: (filter: string) => AnyQuery;
+  not: (c: string, op: string, v: unknown) => AnyQuery;
+}
 
 interface FetchOptions {
   table: string
@@ -179,6 +189,34 @@ export async function refreshWarehouses(scope: CompanyScope): Promise<FetchResul
   )
 }
 
+export async function refreshDocuments(scope: CompanyScope): Promise<FetchResult> {
+  // Solo los últimos 90 días de documentos: balance entre utilidad offline y peso.
+  const NINETY_DAYS_AGO = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString()
+  const companyKey = buildCompanyKey(scope)
+  return runAndCache('documents', companyKey, () =>
+    fetchAllPaged<{ id: string }>({
+      table: 'tt_documents',
+      // Columnas suficientes para listados, búsqueda y vista resumen
+      select: 'id, doc_type, system_code, display_ref, status, total, client_id, company_id, currency, created_at, updated_at, metadata',
+      orderBy: { column: 'created_at', ascending: false },
+      extraFilter: (q) => q.gte('created_at', NINETY_DAYS_AGO),
+      scope,
+    })
+  )
+}
+
+export async function refreshClientContacts(): Promise<FetchResult> {
+  // Contactos son globales (FK a clientes); filtran por client_id en uso
+  return runAndCache('client_contacts', 'global', () =>
+    fetchAllPaged<{ id: string }>({
+      table: 'tt_client_contacts',
+      select: 'id, client_id, name, position, email, phone, is_primary',
+      orderBy: { column: 'name', ascending: true },
+      scope: { companyIds: [], global: true },
+    })
+  )
+}
+
 export async function refreshCompanies(): Promise<FetchResult> {
   return runAndCache('companies', 'global', () =>
     fetchAllPaged<{ id: string }>({
@@ -212,6 +250,8 @@ export async function prefetchAll(opts: PrefetchOptions): Promise<void> {
     refreshClients(scope).catch(() => null),
     refreshSuppliers(scope).catch(() => null),
     refreshWarehouses(scope).catch(() => null),
+    refreshDocuments(scope).catch(() => null),
+    refreshClientContacts().catch(() => null),
   ]
   const results = await Promise.all(tasks)
   for (const r of results) if (r && opts.onEntity) opts.onEntity(r)
@@ -228,4 +268,6 @@ export const cacheInvalidate = {
   productCategories: () => invalidate('product_categories'),
   warehouses: () => invalidate('warehouses'),
   companies: () => invalidate('companies'),
+  documents: () => invalidate('documents'),
+  clientContacts: () => invalidate('client_contacts'),
 }
