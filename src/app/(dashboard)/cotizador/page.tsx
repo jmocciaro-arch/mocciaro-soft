@@ -14,6 +14,7 @@ import { useToast } from '@/components/ui/toast'
 import { createClient } from '@/lib/supabase/client'
 import { useCompanyFilter } from '@/hooks/use-company-filter'
 import { useCompanyContext } from '@/lib/company-context'
+import { useCachedClients, useCachedProducts } from '@/lib/cache/use-cached-entity'
 import { formatCurrency, INCOTERMS } from '@/lib/utils'
 import type { Company, Client } from '@/types'
 import { DocumentDetailLayout, type WorkflowStep, type Alert, type InternalNote } from '@/components/workflow/document-detail-layout'
@@ -89,8 +90,13 @@ type ViewMode = 'create' | 'list' | 'detail'
 export default function CotizadorPage() {
   const router = useRouter()
   const { addToast } = useToast()
-  const { filterByCompany, companyKey } = useCompanyFilter()
+  const { filterByCompany, companyKey, companyIds } = useCompanyFilter()
   const { visibleCompanies, activeCompanyId } = useCompanyContext()
+
+  // Cache local (IndexedDB) para búsqueda instantánea de clientes y productos
+  const cachedClients = useCachedClients<Client>()
+  type CachedProduct = { id: string; sku: string; name: string; brand?: string; category?: string; price_eur: number; cost_eur?: number; image_url?: string; product_type?: string; price_min?: number; active?: boolean }
+  const cachedProducts = useCachedProducts<CachedProduct>()
 
   // Importar OC del cliente como entrada de cotización (Sprint 1)
   const [ocParserOpen, setOcParserOpen] = useState(false)
@@ -382,13 +388,19 @@ export default function CotizadorPage() {
   }
 
   async function searchClients(query: string) {
-    const sb = createClient()
-    let q = sb.from('tt_clients').select('*')
-      .or(`name.ilike.%${query}%,legal_name.ilike.%${query}%,tax_id.ilike.%${query}%,email.ilike.%${query}%`)
-      .eq('active', true)
-    q = filterByCompany(q)
-    const { data } = await q.limit(10)
-    setClientResults((data || []) as Client[])
+    // Búsqueda local sobre cache IndexedDB — instantánea
+    const q = (query || '').trim().toLowerCase()
+    if (!q) { setClientResults([]); setShowClientDropdown(true); return }
+    const ids = companyIds
+    const matches = cachedClients.data.filter((c) => {
+      const cid = (c as unknown as { company_id?: string }).company_id
+      if (cid && ids.length > 0 && !ids.includes(cid)) return false
+      const fields = [
+        c.name, c.legal_name, c.tax_id, c.email,
+      ].filter(Boolean).map((v) => String(v).toLowerCase())
+      return fields.some((f) => f.includes(q))
+    }).slice(0, 10)
+    setClientResults(matches as Client[])
     setShowClientDropdown(true)
   }
 
@@ -460,13 +472,24 @@ export default function CotizadorPage() {
   }
 
   async function searchProducts(query: string) {
+    // Búsqueda local sobre cache IndexedDB — instantánea (sobre ~30K productos).
+    // Soporta múltiples tokens (AND lógico): "denver torque 1/2" matchea si
+    // todos los tokens aparecen en name|sku|brand.
     setSearchingProducts(true)
-    const supabase = createClient()
-    const tokens = query.trim().toLowerCase().split(/\s+/)
-    let q = supabase.from('tt_products').select('id, sku, name, brand, price_eur, cost_eur, image_url, product_type, price_min').eq('active', true).limit(20)
-    for (const token of tokens) { q = q.or(`name.ilike.%${token}%,sku.ilike.%${token}%,brand.ilike.%${token}%`) }
-    const { data } = await q
-    setProductResults((data || []) as ProductSearchResult[])
+    const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
+    if (tokens.length === 0) { setProductResults([]); setSearchingProducts(false); return }
+    const out: CachedProduct[] = []
+    for (const p of cachedProducts.data) {
+      if (p.active === false) continue
+      const hay = [p.name, p.sku, p.brand].filter(Boolean).join(' ').toLowerCase()
+      let ok = true
+      for (const t of tokens) { if (!hay.includes(t)) { ok = false; break } }
+      if (ok) {
+        out.push(p)
+        if (out.length >= 20) break
+      }
+    }
+    setProductResults(out as unknown as ProductSearchResult[])
     setSearchingProducts(false)
   }
 

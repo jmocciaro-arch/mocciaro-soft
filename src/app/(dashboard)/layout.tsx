@@ -7,6 +7,7 @@ import { AIAssistant } from '@/components/ai/ai-assistant'
 import { CommandPalette } from '@/components/command-palette'
 import { HelpAssistant } from '@/components/help/help-assistant'
 import { MultiCompanyBanner } from '@/components/ui/multi-company-banner'
+import { CachePrefetcher } from '@/lib/cache/cache-prefetcher'
 import { cn } from '@/lib/utils'
 
 function DashboardInner({ children }: { children: React.ReactNode }) {
@@ -31,6 +32,7 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
       <AIAssistant />
       <CommandPalette />
       <HelpAssistant />
+      <CachePrefetcher />
     </div>
   )
 }

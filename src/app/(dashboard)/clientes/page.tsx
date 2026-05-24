@@ -26,6 +26,8 @@ import {
 } from 'lucide-react'
 import { DocLink } from '@/components/ui/doc-link'
 import { useCompanyFilter } from '@/hooks/use-company-filter'
+import { useCachedClients } from '@/lib/cache/use-cached-entity'
+import { cacheInvalidate } from '@/lib/cache/fetchers'
 import { ClientMerge } from '@/components/clients/client-merge'
 import { RelatedCompanies } from '@/components/clients/related-companies'
 import { SyncContactsButton } from '@/components/clients/sync-contacts-button'
@@ -1147,8 +1149,8 @@ function InfoField({ label, value, mono }: { label: string; value: string | null
 function ClientesTab() {
   const { filterByCompany, companyKey } = useCompanyFilter()
   const { addToast } = useToast()
+  const cachedClients = useCachedClients<Client>()
   const [allClients, setAllClients] = useState<Client[]>([])
-  const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [filterCountry, setFilterCountry] = useState('')
   const [countries, setCountries] = useState<string[]>([])
@@ -1172,46 +1174,36 @@ function ClientesTab() {
   async function toggleFavorite(clientId: string, isFavorite: boolean) {
     const supabase = createClient()
     await supabase.from('tt_clients').update({ is_favorite: isFavorite }).eq('id', clientId)
-    // Update local state
+    // Update local state (optimista) + invalidar cache
     setAllClients(prev => prev.map(c => c.id === clientId ? { ...c, is_favorite: isFavorite } as Client : c))
+    void cacheInvalidate.clients()
     addToast({ type: 'success', title: isFavorite ? '⭐ Agregado a favoritos' : 'Quitado de favoritos' })
   }
 
+  // Cache local (IndexedDB) — instantáneo + refresh en background
+  const loading = cachedClients.loading
   const loadClients = useCallback(async () => {
-    setLoading(true)
-    const supabase = createClient()
-    try {
-      // Load all active clients (paginated in large batches)
-      let allData: Client[] = []
-      let from = 0
-      let keepGoing = true
-      while (keepGoing) {
-        let q = supabase
-          .from('tt_clients')
-          .select('*')
-          .eq('active', true)
-          .order('legal_name')
-          .range(from, from + PAGE_SIZE - 1)
-        q = filterByCompany(q)
-        const { data } = await q
-        const batch = (data || []) as Client[]
-        allData = [...allData, ...batch]
-        if (batch.length < PAGE_SIZE) keepGoing = false
-        else from += PAGE_SIZE
-      }
-      setAllClients(allData)
+    cacheInvalidate.clients()
+    await cachedClients.refresh()
+  }, [cachedClients])
 
-      // Extract unique countries
-      const unique = [...new Set(allData.map(c => c.country).filter(Boolean))]
-      unique.sort()
-      setCountries(unique)
-    } catch {
-      addToast({ type: 'error', title: 'Error al cargar clientes' })
-    }
-    setLoading(false)
-  }, [addToast, companyKey])
+  useEffect(() => {
+    // El cache trae todos los activos sin filtro de empresa porque tt_clients
+    // tiene company_id. Filtramos en memoria por la company activa.
+    const ids = companyKey === 'none' ? [] : companyKey.split(',')
+    const filtered = cachedClients.data.filter((c) => {
+      const cid = (c as unknown as { company_id?: string }).company_id
+      if (!cid) return true
+      return ids.length === 0 ? false : ids.includes(cid)
+    })
+    setAllClients(filtered)
+    const unique = [...new Set(filtered.map((c) => c.country).filter(Boolean))]
+    unique.sort()
+    setCountries(unique)
+  }, [cachedClients.data, companyKey])
 
-  useEffect(() => { loadClients() }, [loadClients])
+  // Mantiene filterByCompany usado más abajo en otras queries (métricas, etc.)
+  void filterByCompany
 
   // Load client metrics (all transactional data)
   const loadMetrics = useCallback(async () => {

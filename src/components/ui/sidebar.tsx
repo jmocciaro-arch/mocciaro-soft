@@ -19,6 +19,7 @@ import { usePermissions } from '@/hooks/use-permissions'
 import { CompanySelector } from '@/components/ui/company-selector'
 import { AlertsBell } from '@/components/alerts/alerts-bell'
 import { SyncStatus } from '@/components/pwa/sync-status'
+import { CacheStatusBadge } from '@/components/ui/cache-status-badge'
 import { ThemeToggle } from '@/components/theme/theme-toggle'
 
 interface SidebarContextType {
@@ -433,6 +434,9 @@ export function TopBar({ userName }: { userName?: string }) {
       </div>
 
       <div className="flex items-center gap-3">
+        {/* Cache status (búsquedas instantáneas) */}
+        <CacheStatusBadge />
+
         {/* Sync status (offline queue) */}
         <SyncStatus />
 
