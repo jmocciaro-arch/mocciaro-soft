@@ -15,6 +15,29 @@ export async function registerServiceWorker(): Promise<ServiceWorkerRegistration
     return null;
   }
 
+  // En desarrollo NO registramos SW (causa falsos positivos de "Sin conexión"
+  // por timeouts cortos vs compilación lenta de webpack). Además desinstalamos
+  // cualquier SW viejo y limpiamos caches obsoletas.
+  if (process.env.NODE_ENV === 'development') {
+    try {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      for (const reg of regs) {
+        await reg.unregister();
+        console.log('[PWA] SW viejo desinstalado (modo dev)');
+      }
+      if ('caches' in window) {
+        const cacheKeys = await caches.keys();
+        await Promise.all(cacheKeys.map((k) => caches.delete(k)));
+        if (cacheKeys.length > 0) {
+          console.log(`[PWA] ${cacheKeys.length} caches limpiadas (modo dev)`);
+        }
+      }
+    } catch (err) {
+      console.warn('[PWA] No se pudo limpiar SW/caches en dev:', err);
+    }
+    return null;
+  }
+
   try {
     const registration = await navigator.serviceWorker.register('/sw.js', {
       scope: '/',

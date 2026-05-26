@@ -70,10 +70,11 @@ export async function updateSession(request: NextRequest) {
   let user: { id: string } | null = null
   let networkDown = false
 
-  // Timeout duro de 1500ms: si Supabase no contesta a tiempo, asumimos red
-  // caída/degradada y caemos al fallback offline. Esto evita que la app se
-  // cuelgue 30s+ esperando un timeout HTTP cuando la red existe pero no llega.
-  const AUTH_TIMEOUT_MS = 1500
+  // Timeout duro: si Supabase no contesta a tiempo, asumimos red caída/degradada
+  // y caemos al fallback offline. Esto evita que la app se cuelgue 30s+ esperando
+  // un timeout HTTP cuando la red existe pero no llega.
+  // En local (Docker) Supabase arranca más lento que en cloud → 5s. Cloud → 1.5s.
+  const AUTH_TIMEOUT_MS = process.env.NEXT_PUBLIC_SUPABASE_URL?.includes('127.0.0.1') ? 5000 : 1500
   const timeout = new Promise<{ timedOut: true }>((resolve) =>
     setTimeout(() => resolve({ timedOut: true }), AUTH_TIMEOUT_MS)
   )

@@ -97,9 +97,9 @@ ${manual}
   // Como callClaude solo acepta un único userContent, hacemos llamada directa
   // a Anthropic Messages API en este caso para soportar history.
 
-  const apiKey = process.env.ANTHROPIC_API_KEY
+  const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_KEY
   if (!apiKey) {
-    return NextResponse.json({ error: 'ANTHROPIC_API_KEY no configurada' }, { status: 500 })
+    return NextResponse.json({ error: 'ANTHROPIC_API_KEY (ni CLAUDE_KEY) configurada' }, { status: 500 })
   }
 
   // Si NO hay history, usamos callClaude (con cache + tracking)

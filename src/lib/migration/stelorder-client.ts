@@ -52,36 +52,17 @@ export class StelOrderClient {
   }
 
   /**
-   * Paginación por rango de fechas. StelOrder no soporta limit/offset,
-   * pero sí filtros por fecha. Iteramos año por año (o mes si hay mucho volumen).
+   * 2026-05-25: StelOrder devolvió 400 en TODOS los filtros de fecha
+   * (date-from, utc-creation-date-from, etc). Probablemente quitaron esos
+   * parámetros. Ahora delegamos a paginateById (offset con start=).
+   * Los argumentos quedan por compat pero se ignoran.
    */
   async getAllByDateRange<T = any>(
     path: string,
-    options: { from?: Date; to?: Date; dateField?: string; monthChunks?: boolean } = {}
+    _options: { from?: Date; to?: Date; dateField?: string; monthChunks?: boolean } = {}
   ): Promise<T[]> {
-    const all: T[] = []
-    const dateField = options.dateField || 'date'
-    const from = options.from || new Date('2015-01-01')
-    const to = options.to || new Date()
-
-    const chunks = options.monthChunks
-      ? this.monthRanges(from, to)
-      : this.yearRanges(from, to)
-
-    for (const [start, end] of chunks) {
-      const params: Record<string, string> = {
-        [`${dateField}-from`]: start.toISOString(),
-        [`${dateField}-to`]: end.toISOString(),
-      }
-      try {
-        const data = await this.get<T[]>(path, params)
-        if (Array.isArray(data)) all.push(...data)
-      } catch (e) {
-        // Si falla una fecha, continuamos con la siguiente
-        console.warn(`StelOrder chunk failed ${path} ${start.toISOString()} → ${end.toISOString()}:`, e)
-      }
-    }
-    return this.dedupById(all)
+    void _options
+    return this.paginateById<T>(path)
   }
 
   /**
@@ -97,27 +78,25 @@ export class StelOrderClient {
   }
 
   /**
-   * Paginación por ID ascendente para entidades que no soportan filtros de fecha.
+   * Paginación por OFFSET ascendente — StelOrder usa `start=` (no `id-from=`).
+   * Comprobado contra app.stelorder.com 2026-05-25.
    */
   private async paginateById<T = any>(path: string): Promise<T[]> {
     const all: T[] = []
-    let lastId: number | undefined
+    let start = 0
     let tries = 0
-    const maxTries = 200 // safety (20k items máximo)
+    const maxTries = 500 // safety (50k items máximo)
+    const PAGE_SIZE = 100
 
     while (tries < maxTries) {
       const params: Record<string, string | number> = {}
-      if (lastId) params['id-from'] = lastId + 1
+      if (start > 0) params['start'] = start
       const data = await this.get<T[]>(path, params)
       if (!Array.isArray(data) || data.length === 0) break
       all.push(...data)
-      const ids = data.map((x: any) => x.id).filter((x) => typeof x === 'number')
-      if (!ids.length) break
-      const newLast = Math.max(...ids)
-      if (newLast === lastId) break
-      lastId = newLast
+      start += data.length
       tries++
-      if (data.length < 100) break
+      if (data.length < PAGE_SIZE) break
     }
 
     return this.dedupById(all)

@@ -60,7 +60,7 @@ Respondé SOLO con JSON válido, sin markdown.`
 
   // Fallback Claude
   try {
-    const claudeKey = process.env.ANTHROPIC_API_KEY
+    const claudeKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_KEY
     if (claudeKey) {
       const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',

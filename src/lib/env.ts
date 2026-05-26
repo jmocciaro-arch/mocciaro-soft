@@ -32,8 +32,15 @@ function loadEnvFile(): Record<string, string> {
 export function getEnv(key: string): string | undefined {
   // Try process.env first (works in Vercel production)
   const fromProcess = process.env[key]
-  if (fromProcess) return fromProcess
-  // Fallback: read .env.local directly (workaround for local dev)
+  if (fromProcess && fromProcess.trim().length > 0) return fromProcess
+  // Fallback: read .env.local directly (workaround for local dev — Claude Code
+  // como agent runner sobrescribe ANTHROPIC_API_KEY con string vacío).
   const fromFile = loadEnvFile()[key]
-  return fromFile || undefined
+  if (fromFile && fromFile.trim().length > 0) return fromFile
+  // Último fallback: alias específicos (CLAUDE_KEY ↔ ANTHROPIC_API_KEY)
+  if (key === 'ANTHROPIC_API_KEY') {
+    const claudeKey = process.env.CLAUDE_KEY || loadEnvFile()['CLAUDE_KEY']
+    if (claudeKey && claudeKey.trim().length > 0) return claudeKey
+  }
+  return undefined
 }

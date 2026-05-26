@@ -10,6 +10,7 @@
 
 import crypto from 'crypto'
 import { createClient as createServiceClient } from '@supabase/supabase-js'
+import { getEnv } from '@/lib/env'
 
 // ================================================================
 // PRECIOS por millón de tokens (actualizar si cambian)
@@ -215,10 +216,13 @@ export interface ClaudeCallResult<T = string> {
 }
 
 export async function callClaude(params: ClaudeCallParams): Promise<ClaudeCallResult<string>> {
-  const apiKey = process.env.ANTHROPIC_API_KEY
+  // Usamos getEnv() porque Claude Code (el agent runner) sobrescribe
+  // ANTHROPIC_API_KEY con string vacío al arrancar `npm run dev` desde dentro
+  // de la sesión. getEnv() lee el .env.local directo y tiene fallback a CLAUDE_KEY.
+  const apiKey = getEnv('ANTHROPIC_API_KEY')
   if (!apiKey) {
     return {
-      data: null, error: 'ANTHROPIC_API_KEY no configurada',
+      data: null, error: 'ANTHROPIC_API_KEY no configurada (ni CLAUDE_KEY)',
       cacheHit: false, costUsd: 0, model: params.model || DEFAULT_MODEL,
       inputTokens: 0, outputTokens: 0, cacheReadTokens: 0,
     }

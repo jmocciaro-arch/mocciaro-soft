@@ -201,9 +201,10 @@ async function navigationStrategy(request) {
     return cached;
   }
 
-  // 2. Sin cache: intentar red con timeout de 4s
+  // 2. Sin cache: intentar red con timeout de 15s (subido de 4s para evitar
+  // falsos positivos de offline en compilaciones lentas / redes degradadas).
   const timeoutPromise = new Promise((resolve) =>
-    setTimeout(() => resolve(null), 4000)
+    setTimeout(() => resolve(null), 15000)
   );
   const fresh = await Promise.race([networkPromise, timeoutPromise]);
   if (fresh && fresh.ok) return fresh;

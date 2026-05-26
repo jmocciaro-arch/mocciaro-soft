@@ -43,10 +43,13 @@ async function upsert(
   // Upsert en batches de 100 para no saturar
   for (let i = 0; i < rows.length; i += 100) {
     const batch = rows.slice(i, i + 100)
+    // tt_documents no tiene columna stelorder_id (va en metadata).
+    // Para esa tabla seleccionamos solo `id`.
+    const selectCols = table === 'tt_documents' ? 'id' : 'id, stelorder_id'
     const { data, error } = await supabase
       .from(table)
       .upsert(batch, { onConflict, ignoreDuplicates: false })
-      .select('id, stelorder_id')
+      .select(selectCols)
 
     if (error) {
       errors += batch.length
@@ -113,9 +116,8 @@ export async function phase2_clients(ctx: PhaseContext): Promise<PhaseResult> {
     email: c.email,
     phone: c.phone,
     address: c['main-address'],
-    reference: c.reference,
     currency: c['currency-code'] || 'EUR',
-    discount_pct: c['discount-percentage'] || 0,
+    default_discount_pct: c['discount-percentage'] || 0,
     company_id: ctx.companyId,
     active: c.deleted !== true,
     source: 'stelorder',
@@ -152,16 +154,16 @@ export async function phase2_contacts(ctx: PhaseContext): Promise<PhaseResult> {
     .from('tt_clients')
     .select('id, stelorder_id')
     .not('stelorder_id', 'is', null)
-  const map = new Map<number, string>((clientMap || []).map((c: any) => [c.stelorder_id, c.id]))
+  // stelorder_id puede venir como text o number; normalizamos a string para el match
+  const map = new Map<string, string>((clientMap || []).map((c: any) => [String(c.stelorder_id), c.id]))
 
   const rows = data.map((c: any) => ({
     stelorder_id: c.id,
-    client_id: map.get(c['account-id']) || null,
+    client_id: map.get(String(c['account-id'])) || null,
     name: [c['first-name'], c['last-name']].filter(Boolean).join(' ') || c.name,
     email: c.email,
     phone: c.phone,
     position: c.position || c['job-title'],
-    company_id: ctx.companyId,
   })).filter((r: any) => r.client_id)  // Solo contactos vinculados a clientes migrados
   const r = await upsert(ctx.supabase, 'tt_client_contacts', rows)
   ctx.onProgress?.(data.length, data.length)
@@ -185,7 +187,9 @@ export async function phase3_products(ctx: PhaseContext): Promise<PhaseResult> {
     barcode: p.barcode,
     category: 'Importado StelOrder',
     active: p.deleted !== true,
-    company_id: ctx.companyId,
+    product_type: 'product',
+    gallery_urls: [],
+    company_source: ctx.companyId,
     specs: {
       tax_pct: p['primary-tax-percentage'],
       stock_real: p['real-stock'],
@@ -210,7 +214,9 @@ export async function phase3_services(ctx: PhaseContext): Promise<PhaseResult> {
     cost_eur: p['purchase-price'] || 0,
     category: 'Servicios (StelOrder)',
     active: p.deleted !== true,
-    company_id: ctx.companyId,
+    product_type: 'service',
+    gallery_urls: [],
+    company_source: ctx.companyId,
     specs: { type: 'service', tax_pct: p['primary-tax-percentage'] },
   }))
   const r = await upsert(ctx.supabase, 'tt_products', rows)
@@ -222,8 +228,35 @@ export async function phase3_services(ctx: PhaseContext): Promise<PhaseResult> {
 // FASE 4 — Documentos de venta
 // ═══════════════════════════════════════════════════════════════════
 
+// Columnas reales de tt_documents. Otras se relegan a metadata.
+const TT_DOCUMENTS_COLUMNS = new Set([
+  'id', 'doc_type', 'subtype', 'flow_role', 'localized_label', 'system_code',
+  'display_ref', 'legal_number', 'company_id', 'client_id', 'user_id', 'assigned_to',
+  'status', 'billing_mode', 'currency', 'exchange_rate', 'subtotal', 'tax_rate',
+  'tax_amount', 'total', 'incoterm', 'payment_terms', 'delivery_address',
+  'delivery_date', 'valid_until', 'notes', 'internal_notes', 'metadata',
+  'created_at', 'updated_at',
+])
+
 async function upsertDocument(ctx: PhaseContext, rows: any[]): Promise<PhaseResult> {
-  const r = await upsert(ctx.supabase, 'tt_documents', rows)
+  // Sanitizar: cualquier columna que no exista en tt_documents la mete en metadata
+  const cleaned = rows.map((row) => {
+    const out: Record<string, unknown> = {}
+    const extra: Record<string, unknown> = (row.metadata as Record<string, unknown>) || {}
+    for (const [k, v] of Object.entries(row)) {
+      if (TT_DOCUMENTS_COLUMNS.has(k)) out[k] = v
+      else if (k !== 'metadata') extra[k] = v
+    }
+    out.metadata = extra
+    // system_code es NOT NULL — derivamos uno si falta
+    if (!out.system_code) {
+      out.system_code = `STEL-${extra.stelorder_id || row.stelorder_id || Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    }
+    return out
+  })
+
+  // Usamos onConflict en system_code (UNIQUE) ya que stelorder_id está en metadata
+  const r = await upsert(ctx.supabase, 'tt_documents', cleaned, 'system_code')
   ctx.onProgress?.(rows.length, rows.length)
   return { processed: rows.length, inserted: r.inserted, updated: r.updated, skipped: 0, errors: r.errors, errorLog: r.errorLog }
 }

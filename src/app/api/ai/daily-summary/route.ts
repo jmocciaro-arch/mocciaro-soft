@@ -168,7 +168,7 @@ async function generateSummary(
 
   // Build AI prompt
   const geminiApiKey = process.env.GEMINI_API_KEY
-  const claudeApiKey = process.env.ANTHROPIC_API_KEY
+  const claudeApiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_KEY
 
   const promptData = JSON.stringify(data, null, 2)
   const systemPrompt = `Sos el director financiero de ${companyName}. Analizá estos datos del negocio y generá un resumen ejecutivo en español rioplatense.`

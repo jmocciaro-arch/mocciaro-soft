@@ -169,7 +169,7 @@ export async function refreshProducts(): Promise<FetchResult> {
 export async function refreshProductCategories(): Promise<FetchResult> {
   return runAndCache('product_categories', 'global', () =>
     fetchAllPaged<{ id: string }>({
-      table: 'tt_product_categories',
+      table: 'tt_catalog_categories',
       select: '*',
       orderBy: { column: 'name', ascending: true },
       scope: { companyIds: [], global: true },
