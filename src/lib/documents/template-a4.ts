@@ -8,6 +8,7 @@
 
 import type { DocType } from '@/lib/schemas/documents'
 import { DOC_TYPE_SHORT } from '@/lib/schemas/documents'
+import { ROLE_LABEL } from '@/lib/document-contacts'
 
 // -----------------------------------------------------------------------------
 // Tipos de contexto — estructura mínima que la plantilla necesita.
@@ -23,6 +24,15 @@ export interface RenderContext {
     renderedAt: Date
     locale: string                  // 'es-AR' | 'es-ES' | 'en-US' ...
   }
+  // Contactos del cliente involucrados en este documento (Compras, Logística,
+  // Finanzas, etc.). Persistido en tt_documents.metadata.participating_contacts.
+  // Cuando hay al menos uno, el template renderea una sección "Atención" debajo
+  // del cliente para que el receptor del PDF sepa a quién va dirigido.
+  participating_contacts?: Array<{
+    role: string
+    name_snapshot: string
+    email_snapshot?: string | null
+  }>
 }
 
 export interface RenderDocument {
@@ -382,7 +392,7 @@ export function renderHeader(ctx: RenderContext): string {
 }
 
 export function renderParties(ctx: RenderContext): string {
-  const { counterparty } = ctx
+  const { counterparty, participating_contacts } = ctx
   const cpLabel =
     counterparty.type === 'customer' ? 'Cliente' :
     counterparty.type === 'supplier' ? 'Proveedor' :
@@ -393,12 +403,28 @@ export function renderParties(ctx: RenderContext): string {
   if (counterparty.address) lines.push(escapeHtml(counterparty.address))
   if (counterparty.email) lines.push(escapeHtml(counterparty.email))
 
+  // Sección "Atención" — solo aparece si hay al menos un contacto vinculado.
+  // Le indica al receptor del PDF a qué personas del cliente va dirigido
+  // (Compras, Logística, Finanzas, etc.).
+  const contactsBlock = (participating_contacts && participating_contacts.length > 0)
+    ? `
+    <div class="party-attn" style="margin-top:6px;padding-top:6px;border-top:1px dashed #ddd">
+      <div class="party-label" style="font-size:0.7rem;color:#888;margin-bottom:3px">Atención</div>
+      ${participating_contacts.map((c) => {
+        const roleInfo = ROLE_LABEL[c.role as keyof typeof ROLE_LABEL] || { label: c.role, emoji: '·' }
+        const email = c.email_snapshot ? ` <span style="color:#999">&lt;${escapeHtml(c.email_snapshot)}&gt;</span>` : ''
+        return `<div class="party-line" style="font-size:0.78rem">${escapeHtml(roleInfo.emoji)} <strong>${escapeHtml(roleInfo.label)}:</strong> ${escapeHtml(c.name_snapshot)}${email}</div>`
+      }).join('')}
+    </div>`
+    : ''
+
   return `
 <section class="parties">
   <div class="party">
     <div class="party-label">${escapeHtml(cpLabel)}</div>
     <div class="party-name">${escapeHtml(counterparty.name || '—')}</div>
     ${lines.map((l) => `<div class="party-line">${l}</div>`).join('')}
+    ${contactsBlock}
   </div>
   <div class="party">
     <div class="party-label">Datos del documento</div>
