@@ -1151,38 +1151,70 @@ export default function CotizadorPage() {
           {/* ══════════════════════════════════════════════════════════════
               REGLA FUNDAMENTAL: Barra sticky con código + stepper + alertas
               ══════════════════════════════════════════════════════════════ */}
-          <DocumentProcessBar
-            code={quoteNumber || 'COT-pendiente'}
-            badge={{
-              label: selectedClient && items.length > 0 ? 'Listo para guardar' : 'Borrador',
-              variant: selectedClient && items.length > 0 ? 'success' : 'warning',
-            }}
-            entity={
-              <span>
-                {(() => {
-                  const c = companies.find((c) => c.id === selectedCompanyId)
-                  return c ? <><strong>{(c as any).trade_name || c.name}</strong>{c.country ? ` (${c.country})` : ''} · Moneda {currency}</> : 'Seleccioná empresa emisora'
-                })()}
-                {selectedClient && <> · Cliente: <strong>{selectedClient.name}</strong></>}
-              </span>
-            }
-            alerts={[
-              ...(!selectedCompanyId ? [{ type: 'warning' as const, message: 'Seleccioná la empresa emisora' }] : []),
-              ...(!selectedClient ? [{ type: 'warning' as const, message: 'Buscá y seleccioná el cliente' }] : []),
-              ...(items.length === 0 ? [{ type: 'info' as const, message: 'Agregá al menos un item a la cotización' }] : []),
-              ...(!paymentTerms ? [{ type: 'info' as const, message: 'Condición de pago sin definir' }] : []),
-              ...(!incoterm ? [{ type: 'info' as const, message: 'Incoterm sin definir (EXW/FOB/CIF/etc)' }] : []),
-            ]}
-            steps={buildSteps('quote',
+          {(() => {
+            // ── Cálculo del step 'match' del workflow ─────────────────────────
+            // Solo cuenta como "matching pendiente" cuando hay items que vinieron
+            // de una OC del cliente (client_sku presente) y aún no fueron vinculados
+            // a un producto del catálogo (product_id null).
+            const itemsFromOC = items.filter((i) => i.client_sku)
+            const unmatchedFromOC = itemsFromOC.filter((i) => !i.product_id)
+            const needsMatching = unmatchedFromOC.length > 0
+            const matchOverride =
+              itemsFromOC.length === 0
+                ? {
+                    // Cotización manual sin OC: el step se muestra gris y no
+                    // bloquea el avance. Hint explicativo.
+                    status: 'pending' as const,
+                    hint: 'No aplica (no se importó OC del cliente)',
+                  }
+                : needsMatching
+                  ? {
+                      status: 'current' as const,
+                      hint: `${unmatchedFromOC.length} item(s) sin vincular con catálogo`,
+                    }
+                  : {
+                      status: 'completed' as const,
+                      hint: `${itemsFromOC.length}/${itemsFromOC.length} items vinculados`,
+                    }
+            // currentStepId: si hay match pendiente, queda parado en 'match'.
+            const currentStepId =
               !selectedCompanyId || !selectedClient ? 'draft'
               : items.length === 0 ? 'draft'
+              : needsMatching ? 'match'
               : !paymentTerms || !incoterm ? 'conditions'
               : 'approval'
-            )}
-            actions={[
-              { label: 'Guardar', onClick: saveQuote, icon: 'save', variant: 'primary', disabled: saving || !selectedClient || items.length === 0 },
-            ]}
-          />
+            return (
+              <DocumentProcessBar
+                code={quoteNumber || 'COT-pendiente'}
+                badge={{
+                  label: selectedClient && items.length > 0 && !needsMatching ? 'Listo para guardar' : 'Borrador',
+                  variant: selectedClient && items.length > 0 && !needsMatching ? 'success' : 'warning',
+                }}
+                entity={
+                  <span>
+                    {(() => {
+                      const c = companies.find((c) => c.id === selectedCompanyId)
+                      return c ? <><strong>{(c as any).trade_name || c.name}</strong>{c.country ? ` (${c.country})` : ''} · Moneda {currency}</> : 'Seleccioná empresa emisora'
+                    })()}
+                    {selectedClient && <> · Cliente: <strong>{selectedClient.name}</strong></>}
+                  </span>
+                }
+                alerts={[
+                  ...(!selectedCompanyId ? [{ type: 'warning' as const, message: 'Seleccioná la empresa emisora' }] : []),
+                  ...(!selectedClient ? [{ type: 'warning' as const, message: 'Buscá y seleccioná el cliente' }] : []),
+                  ...(items.length === 0 ? [{ type: 'info' as const, message: 'Agregá al menos un item a la cotización' }] : []),
+                  // Alerta de matching: solo cuando hay OC importada con items sin vincular.
+                  ...(needsMatching ? [{ type: 'warning' as const, message: `${unmatchedFromOC.length} item(s) del cliente sin vincular con catálogo — tocá 🔗 en cada fila` }] : []),
+                  ...(!paymentTerms ? [{ type: 'info' as const, message: 'Condición de pago sin definir' }] : []),
+                  ...(!incoterm ? [{ type: 'info' as const, message: 'Incoterm sin definir (EXW/FOB/CIF/etc)' }] : []),
+                ]}
+                steps={buildSteps('quote', currentStepId, { match: matchOverride })}
+                actions={[
+                  { label: 'Guardar', onClick: saveQuote, icon: 'save', variant: 'primary', disabled: saving || !selectedClient || items.length === 0 },
+                ]}
+              />
+            )
+          })()}
 
           {/* Empresa & Cliente */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
