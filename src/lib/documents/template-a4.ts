@@ -58,6 +58,11 @@ export interface RenderLine {
   attributes: Record<string, unknown>
   image_url: string | null
   notes: string | null
+  // Referencias originales del cliente (de la OC importada). Si vienen,
+  // se renderean como subfila gris bajo el SKU/desc del catálogo en el PDF.
+  // Persistidas en tt_document_lines.metadata.{client_sku, client_description}.
+  client_sku?: string | null
+  client_description?: string | null
 }
 
 export interface RenderCompany {
@@ -453,6 +458,15 @@ export function renderLines(ctx: RenderContext): string {
     let item = `<div class="line-name">${escapeHtml(l.product_name)}</div>`
     if (l.product_sku) item += `<div class="line-sku">SKU: ${escapeHtml(l.product_sku)}</div>`
     if (l.description) item += `<div class="line-desc">${escapeHtml(l.description)}</div>`
+    // Render dual: ref cliente en gris pequeño bajo el SKU/desc del catálogo.
+    // Solo se muestra cuando la ref difiere de lo principal (evita duplicados
+    // visuales en líneas creadas manualmente o cuando no hay match).
+    if ((l.client_sku && l.client_sku !== l.product_sku) || (l.client_description && l.client_description !== l.description && l.client_description !== l.product_name)) {
+      const parts: string[] = []
+      if (l.client_sku && l.client_sku !== l.product_sku) parts.push(`<span style="font-family:monospace">${escapeHtml(l.client_sku)}</span>`)
+      if (l.client_description && l.client_description !== l.description && l.client_description !== l.product_name) parts.push(escapeHtml(l.client_description))
+      item += `<div class="line-client-ref" style="font-size:0.85em;color:#888;margin-top:2px">↳ Ref. cliente: ${parts.join(' · ')}</div>`
+    }
 
     if (config.show_attributes && l.attributes && Object.keys(l.attributes).length > 0) {
       const attrs = Object.entries(l.attributes)

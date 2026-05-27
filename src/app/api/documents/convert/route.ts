@@ -164,6 +164,10 @@ export async function POST(req: NextRequest) {
         product_id: item.product_id,
         is_section: item.is_section,
         section_label: item.section_label,
+        // Propagar metadata del item origen — incluye client_sku/client_description
+        // de líneas que vinieron de una OC del cliente (PR #51). Sin esto, la ref
+        // cliente se perdería al convertir cotización → pedido → albarán → factura.
+        metadata: item.metadata ?? null,
       }))
 
       const { error: itemInsertErr } = await supabase
