@@ -28,9 +28,11 @@ import { DataTable, type DataTableColumn } from '@/components/ui/data-table'
 import { mapStatus } from '@/lib/document-helpers'
 import {
   Plus, Minus, Trash2, Save, FileText, Paperclip,
-  MessageSquare, Building2, User, Search, X, Loader2, Printer, List, PlusCircle, Upload, Sparkles
+  MessageSquare, Building2, User, Search, X, Loader2, Printer, List, PlusCircle, Upload, Sparkles,
+  Link2, Eye, EyeOff
 } from 'lucide-react'
 import { DocumentAttachments } from '@/components/documents/document-attachments'
+import { ProductMatchModal, type CatalogProduct } from '@/components/cotizador/product-match-modal'
 
 interface QuoteLineItem {
   id: string
@@ -41,6 +43,11 @@ interface QuoteLineItem {
   unitPrice: number
   discount: number
   notes: string
+  // Referencias originales del cliente cuando esta línea vino de una OC importada.
+  // Se mantienen separadas del SKU/description (que apuntan al catálogo cuando hay match)
+  // para poder mostrar ambos en la fila y persistir el alias sin parsear strings.
+  client_sku?: string
+  client_description?: string
 }
 
 interface ProductSearchResult {
@@ -103,6 +110,14 @@ export default function CotizadorPage() {
   const [convertingOc, setConvertingOc] = useState(false)
   // Marca que la cotización actual fue precargada desde una OC (para mostrar banner guía)
   const [ocImportSource, setOcImportSource] = useState<{ ocNumber: string | null; ocParsedId: string | null } | null>(null)
+
+  // Match manual SKU cliente → catálogo: id de la línea cuya vinculación está abierta
+  // en el ProductMatchModal. null = modal cerrado.
+  const [productMatchOpenForItemId, setProductMatchOpenForItemId] = useState<string | null>(null)
+  // Toggle: mostrar/ocultar la referencia original del cliente (SKU+desc) debajo
+  // del producto del catálogo en cada fila. Default visible — el usuario lo
+  // apaga si quiere imprimir un PDF "limpio".
+  const [showClientRefs, setShowClientRefs] = useState(true)
 
   // Pre-carga desde URL params (viene del Lead o de otra pantalla)
   const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
@@ -176,6 +191,12 @@ export default function CotizadorPage() {
   const handleOCParsed = useCallback(async (result: {
     ocParsedId?: string
     discrepancies?: unknown[]
+    matches?: Array<{
+      externalSKU: string
+      product: { id: string; sku: string; name: string; brand: string | null; price_eur: number | null } | null
+      confidence: number
+      source: string
+    }>
     data?: {
       numero_oc?: string
       fecha?: string
@@ -204,18 +225,64 @@ export default function CotizadorPage() {
 
     setConvertingOc(true)
     try {
-      // 1. Cargar items en el cotizador
-      const newItems: QuoteLineItem[] = data.items.map((it) => ({
-        id: Math.random().toString(36).slice(2),
-        product_id: null,
-        sku: it.codigo || '',
-        description: it.descripcion || '',
-        quantity: it.cantidad || 1,
-        unitPrice: it.precio_unitario || 0,
-        discount: 0,
-        notes: it.observaciones || '',
-      }))
+      // 1. Cargar items en el cotizador APLICANDO el match cliente↔catálogo.
+      //    Si hay match → usamos el SKU/product_id del catálogo y guardamos el
+      //    código del cliente en notes para trazabilidad ("OC: ATR-001").
+      //    Si no hay match → dejamos el código del cliente como SKU y marcamos
+      //    en notes que requiere vinculación manual.
+      const matches = result.matches || []
+      let matchedCount = 0
+      let unmatchedCount = 0
+      const newItems: QuoteLineItem[] = data.items.map((it, idx) => {
+        const m = matches[idx]
+        const externalSKU = it.codigo || ''
+        const externalDesc = it.descripcion || ''
+        if (m?.product) {
+          matchedCount++
+          return {
+            id: Math.random().toString(36).slice(2),
+            product_id: m.product.id,
+            sku: m.product.sku,
+            description: m.product.name,
+            quantity: it.cantidad || 1,
+            unitPrice: it.precio_unitario || m.product.price_eur || 0,
+            discount: 0,
+            notes: it.observaciones || '',
+            // Guardamos la referencia original del cliente como dato estructurado
+            // para mostrarla debajo del producto del catálogo y poder persistir el alias.
+            client_sku: externalSKU || undefined,
+            client_description: externalDesc || undefined,
+          }
+        }
+        unmatchedCount++
+        return {
+          id: Math.random().toString(36).slice(2),
+          product_id: null,
+          sku: externalSKU,
+          description: externalDesc,
+          quantity: it.cantidad || 1,
+          unitPrice: it.precio_unitario || 0,
+          discount: 0,
+          notes: it.observaciones || '',
+          // Aún sin match: el SKU/desc principales son los del cliente; igual los
+          // guardamos en los campos client_* para que cuando el usuario haga match
+          // manual desde el modal, sigamos teniendo el código original para el alias.
+          client_sku: externalSKU || undefined,
+          client_description: externalDesc || undefined,
+        }
+      })
       setItems(newItems)
+
+      // Toast informativo del matching
+      if (matchedCount > 0 || unmatchedCount > 0) {
+        addToast({
+          type: matchedCount > 0 ? 'success' : 'warning',
+          title: `Match SKU: ${matchedCount} ✓ / ${unmatchedCount} sin vincular`,
+          message: unmatchedCount > 0
+            ? `${unmatchedCount} ítem(s) sin match. Tocá el ícono 🔗 en cada fila para vincular con tu catálogo.`
+            : 'Todos los códigos del cliente fueron matcheados con tu catálogo.',
+        })
+      }
 
       // 2. Pre-cargar moneda
       if (data.moneda) {
@@ -530,15 +597,89 @@ export default function CotizadorPage() {
     setSaving(true)
     const supabase = createClient()
     try {
+      // Migrado a tt_documents (Fase 2) — antes escribía a tt_quotes + tt_quote_items.
+      const userIdResult = (await supabase.from('tt_users').select('id').eq('role', 'admin').limit(1).single()).data?.id || null
       const { data: quoteData, error: quoteError } = await supabase
-        .from('tt_quotes')
-        .insert({ number: quoteNumber, company_id: selectedCompanyId, client_id: selectedClient?.id || null, user_id: (await supabase.from('tt_users').select('id').eq('role', 'admin').limit(1).single()).data?.id || null, status: 'borrador', doc_subtype: docSubtype, notes, internal_notes: internalNotes, incoterm: incoterm || null, payment_terms: paymentTerms || null, payment_days: paymentDays || null, payment_terms_type: paymentTermsType || null, currency, subtotal, subject_iva: ivaEnabled, tax_rate: ivaEnabled ? taxRate : 0, tax_amount: taxAmount, irpf_rate: irpfEnabled ? irpfRate : 0, irpf_amount: irpfAmount, re_rate: reEnabled ? reRate : 0, re_amount: reAmount, total, valid_until: validUntil ? new Date(validUntil).toISOString() : null })
+        .from('tt_documents')
+        .insert({
+          doc_type: 'presupuesto',
+          subtype: docSubtype || 'standard',
+          system_code: quoteNumber,
+          display_ref: quoteNumber,
+          company_id: selectedCompanyId,
+          client_id: selectedClient?.id || null,
+          user_id: userIdResult,
+          status: 'draft',
+          notes,
+          internal_notes: internalNotes,
+          incoterm: incoterm || null,
+          payment_terms: paymentTerms || null,
+          currency,
+          subtotal,
+          tax_rate: ivaEnabled ? taxRate : 0,
+          tax_amount: taxAmount,
+          total,
+          valid_until: validUntil ? new Date(validUntil).toISOString() : null,
+          metadata: {
+            subject_iva: ivaEnabled,
+            irpf_enabled: irpfEnabled,
+            irpf_rate: irpfEnabled ? irpfRate : 0,
+            irpf_amount: irpfAmount,
+            re_enabled: reEnabled,
+            re_rate: reEnabled ? reRate : 0,
+            re_amount: reAmount,
+            payment_days: paymentDays || null,
+            payment_terms_type: paymentTermsType || null,
+          },
+        })
         .select('id').single()
       if (quoteError) throw quoteError
-      const quoteItems = items.map((item, idx) => ({ quote_id: quoteData.id, product_id: item.product_id, sort_order: idx + 1, sku: item.sku, description: item.description, quantity: item.quantity, unit_price: item.unitPrice, discount_pct: item.discount, subtotal: item.quantity * item.unitPrice * (1 - item.discount / 100), notes: item.notes || null }))
-      const { error: itemsError } = await supabase.from('tt_quote_items').insert(quoteItems)
+      const docLines = items.map((item, idx) => ({
+        document_id: quoteData.id,
+        product_id: item.product_id,
+        sort_order: idx + 1,
+        sku: item.sku,
+        description: item.description,
+        quantity: item.quantity,
+        unit_price: item.unitPrice,
+        discount_pct: item.discount,
+        subtotal: item.quantity * item.unitPrice * (1 - item.discount / 100),
+        notes: item.notes || null,
+      }))
+      const { error: itemsError } = await supabase.from('tt_document_lines').insert(docLines)
       if (itemsError) throw itemsError
-      await supabase.from('tt_activity_log').insert({ entity_type: 'quote', entity_id: quoteData.id, action: 'Cotizacion creada', detail: `${quoteNumber} - ${selectedClient?.name || 'Sin cliente'} - ${formatCurrency(total, currency)}` })
+
+      // ─── Auto-aprender aliases SKU desde la OC importada ───
+      // Si la cotización viene de una OC y tiene cliente seleccionado, guardamos
+      // los pares (SKU cliente → product_id) en tt_sku_aliases para que la
+      // próxima OC del mismo cliente se matchee automáticamente.
+      if (selectedClient?.id) {
+        // El alias se aprende cuando: (1) la línea tiene un producto del catálogo
+        // vinculado (product_id no null) y (2) tenemos guardado el código original
+        // que usó el cliente (client_sku). Antes leíamos esto via regex sobre notes;
+        // ahora viene como campo estructurado desde el import OC o el modal manual.
+        const aliasesToLearn = items
+          .filter((it) => it.product_id && it.client_sku)
+          .map((it) => ({ externalSKU: it.client_sku!, productId: it.product_id! }))
+
+        for (const alias of aliasesToLearn) {
+          try {
+            await fetch('/api/sku-aliases', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                company_id: selectedCompanyId,
+                client_id: selectedClient.id,
+                external_sku: alias.externalSKU,
+                product_id: alias.productId,
+                source: 'oc_import',
+              }),
+            })
+          } catch { /* swallow — el upsert puede fallar por dup y es OK */ }
+        }
+      }
+
+      await supabase.from('tt_activity_log').insert({ entity_type: 'document', entity_id: quoteData.id, action: 'Cotizacion creada', detail: `${quoteNumber} - ${selectedClient?.name || 'Sin cliente'} - ${formatCurrency(total, currency)}` })
       addToast({ type: 'success', title: 'Cotizacion guardada', message: 'Ahora podés adjuntar la OC, pliegos, etc.' })
       // No reseteamos los datos — dejamos al usuario sobre la cotización recién creada
       // para que pueda adjuntar archivos. setCurrentQuoteId expone el ID al panel de adjuntos.
@@ -1062,7 +1203,18 @@ export default function CotizadorPage() {
           <Card>
             <CardHeader>
               <CardTitle className="text-sm">Items de la cotizacion</CardTitle>
-              <div className="flex gap-2 print:hidden">
+              <div className="flex gap-2 print:hidden items-center">
+                {/* Toggle visibilidad de la ref del cliente — solo aparece si hay al menos una línea con client_sku */}
+                {items.some((it) => it.client_sku) && (
+                  <button
+                    onClick={() => setShowClientRefs((v) => !v)}
+                    title={showClientRefs ? 'Ocultar ref. cliente en cada línea' : 'Mostrar ref. cliente en cada línea'}
+                    className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-[#9CA3AF] hover:bg-[#1E2330] transition-colors"
+                  >
+                    {showClientRefs ? <Eye size={12} /> : <EyeOff size={12} />}
+                    Ref. cliente
+                  </button>
+                )}
                 <Button variant="secondary" size="sm" onClick={() => setShowProductSearch(true)}><Search size={14} /> Buscar producto</Button>
                 <Button variant="primary" size="sm" onClick={addEmptyItem}><Plus size={14} /> Linea manual</Button>
               </div>
@@ -1091,6 +1243,7 @@ export default function CotizadorPage() {
                         <th className="text-center py-2 px-2 text-xs text-[#6B7280] font-medium w-20">Dto %</th>
                         <th className="text-right py-2 px-2 text-xs text-[#6B7280] font-medium w-28">Subtotal</th>
                         <th className="text-left py-2 px-2 text-xs text-[#6B7280] font-medium w-32">Notas</th>
+                        <th className="w-8 print:hidden" title="Vincular con catálogo"></th>
                         <th className="w-10 print:hidden"></th>
                       </tr>
                     </thead>
@@ -1103,14 +1256,40 @@ export default function CotizadorPage() {
                         const effectiveUnitPrice = item.unitPrice * (1 - item.discount / 100)
                         const isBelowMin = minPrice > 0 && effectiveUnitPrice < minPrice
                         const isService = prod?.product_type === 'service'
+                        // Estado del matching: si product_id es null pero hay client_sku, la línea vino
+                        // de una OC del cliente y necesita match manual. Si product_id existe, está OK.
+                        const hasMatch = Boolean(item.product_id)
+                        const isFromClientOC = Boolean(item.client_sku || item.client_description)
+                        const needsMatch = !hasMatch && isFromClientOC
                         return (
-                          <tr key={item.id} className={`border-b border-[#1E2330]/50 ${isBelowMin ? 'bg-red-500/5' : ''}`}>
-                            <td className="py-2 px-2 text-xs text-[#4B5563]">
+                          <tr key={item.id} className={`border-b border-[#1E2330]/50 ${isBelowMin ? 'bg-red-500/5' : needsMatch ? 'bg-amber-500/5' : ''}`}>
+                            <td className="py-2 px-2 text-xs text-[#4B5563] align-top">
                               {idx + 1}
                               {isService && <span className="ml-1 text-[8px] text-blue-400" title="Servicio">S</span>}
                             </td>
-                            <td className="py-2 px-2"><input value={item.sku} onChange={(e) => updateItem(item.id, 'sku', e.target.value)} className="w-full bg-transparent text-xs font-mono text-[#9CA3AF] outline-none" placeholder="SKU" /></td>
-                            <td className="py-2 px-2"><input value={item.description} onChange={(e) => updateItem(item.id, 'description', e.target.value)} className="w-full bg-transparent text-sm text-[#F0F2F5] outline-none" placeholder="Descripcion del producto" /></td>
+                            <td className="py-2 px-2 align-top">
+                              <input value={item.sku} onChange={(e) => updateItem(item.id, 'sku', e.target.value)} className={`w-full bg-transparent text-xs font-mono outline-none ${hasMatch ? 'text-[#9CA3AF]' : 'text-amber-400'}`} placeholder="SKU" />
+                              {/* Ref. cliente debajo en gris cuando hay match (SKU principal = catálogo) */}
+                              {hasMatch && showClientRefs && item.client_sku && (
+                                <div className="text-[10px] font-mono text-[#4B5563] mt-0.5 truncate" title={`Ref. cliente: ${item.client_sku}`}>
+                                  ↳ {item.client_sku}
+                                </div>
+                              )}
+                            </td>
+                            <td className="py-2 px-2 align-top">
+                              <input value={item.description} onChange={(e) => updateItem(item.id, 'description', e.target.value)} className="w-full bg-transparent text-sm text-[#F0F2F5] outline-none" placeholder="Descripcion del producto" />
+                              {hasMatch && showClientRefs && item.client_description && item.client_description !== item.description && (
+                                <div className="text-[10px] text-[#4B5563] mt-0.5 truncate" title={`Ref. cliente: ${item.client_description}`}>
+                                  ↳ {item.client_description}
+                                </div>
+                              )}
+                              {needsMatch && (
+                                <div className="text-[10px] text-amber-400 mt-0.5 flex items-center gap-1">
+                                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400" />
+                                  Sin vincular con catálogo
+                                </div>
+                              )}
+                            </td>
                             <td className="py-2 px-2">
                               <div className="flex items-center justify-center gap-1">
                                 <button onClick={() => updateQuantity(item.id, -1)} className="p-0.5 rounded hover:bg-[#1E2330] text-[#6B7280] print:hidden"><Minus size={12} /></button>
@@ -1125,6 +1304,17 @@ export default function CotizadorPage() {
                             <td className="py-2 px-2"><input type="number" min="0" max="100" value={item.discount} onChange={(e) => updateItem(item.id, 'discount', Number(e.target.value))} className="w-full bg-[#0F1218] border border-[#1E2330] rounded px-2 py-1 text-center text-sm text-[#F0F2F5] outline-none focus:border-[#FF6600]" /></td>
                             <td className={`py-2 px-2 text-right text-sm font-medium ${isBelowMin ? 'text-red-400' : 'text-[#F0F2F5]'}`}>{formatCurrency(lineTotal, currency)}</td>
                             <td className="py-2 px-2"><input value={item.notes} onChange={(e) => updateItem(item.id, 'notes', e.target.value)} className="w-full bg-transparent text-xs text-[#6B7280] outline-none" placeholder="Notas" /></td>
+                            <td className="py-2 px-1 print:hidden">
+                              {/* Botón vincular: abre el ProductMatchModal preseteado con el item.
+                                  Color depende del estado: ámbar si necesita match, gris si ya tiene. */}
+                              <button
+                                onClick={() => setProductMatchOpenForItemId(item.id)}
+                                title={needsMatch ? 'Vincular con producto del catálogo' : 'Cambiar producto vinculado'}
+                                className={`p-1 rounded transition-colors ${needsMatch ? 'text-amber-400 hover:bg-amber-500/10' : 'text-[#4B5563] hover:bg-[#1E2330] hover:text-[#9CA3AF]'}`}
+                              >
+                                <Link2 size={14} />
+                              </button>
+                            </td>
                             <td className="py-2 px-1 print:hidden"><button onClick={() => removeItem(item.id)} className="p-1 rounded hover:bg-red-500/10 text-[#4B5563] hover:text-red-400 transition-colors"><Trash2 size={14} /></button></td>
                           </tr>
                         )
@@ -1368,6 +1558,43 @@ export default function CotizadorPage() {
           onParsed={(result) => { void handleOCParsed(result) }}
         />
       )}
+
+      {/* ══════════════════════════════════════════════════════════════
+          Match manual SKU cliente → catálogo (PR #51)
+          Se abre cuando el usuario toca el ícono 🔗 en una fila.
+          Al confirmar, actualiza la línea con el producto elegido y opcionalmente
+          guarda el alias para que la próxima OC del cliente lo matchee solo.
+          ══════════════════════════════════════════════════════════════ */}
+      {productMatchOpenForItemId && activeCompanyId && (() => {
+        const item = items.find((i) => i.id === productMatchOpenForItemId)
+        if (!item) return null
+        return (
+          <ProductMatchModal
+            open={true}
+            onClose={() => setProductMatchOpenForItemId(null)}
+            clientSKU={item.client_sku || item.sku || undefined}
+            clientDescription={item.client_description || item.description || undefined}
+            clientId={selectedClient?.id || null}
+            clientName={selectedClient?.name || null}
+            companyId={activeCompanyId}
+            onSelect={(product: CatalogProduct) => {
+              // Aplica el producto del catálogo a la línea preservando la ref cliente
+              // (que ya estaba en client_sku/client_description, o que viene del SKU
+              // actual si la línea fue manual).
+              setItems((prev) => prev.map((it) => it.id !== item.id ? it : {
+                ...it,
+                product_id: product.id,
+                sku: product.sku,
+                description: product.name,
+                unitPrice: it.unitPrice && it.unitPrice > 0 ? it.unitPrice : (product.price_eur || 0),
+                client_sku: it.client_sku || (it.product_id ? undefined : it.sku),
+                client_description: it.client_description || (it.product_id ? undefined : it.description),
+              }))
+              addToast({ type: 'success', title: 'Producto vinculado', message: product.sku })
+            }}
+          />
+        )
+      })()}
     </div>
   )
 }
