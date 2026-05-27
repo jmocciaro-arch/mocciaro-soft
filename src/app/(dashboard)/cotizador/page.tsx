@@ -89,6 +89,11 @@ interface SavedQuote {
     subtotal: number
     notes?: string
     product_id?: string
+    // Referencias del cliente persistidas en tt_document_lines.metadata.
+    // Permiten mostrar el render dual al reabrir la cotización y propagar
+    // a pedido/albarán/factura.
+    client_sku?: string
+    client_description?: string
   }>
 }
 
@@ -645,6 +650,14 @@ export default function CotizadorPage() {
         discount_pct: item.discount,
         subtotal: item.quantity * item.unitPrice * (1 - item.discount / 100),
         notes: item.notes || null,
+        // Persistimos las referencias originales del cliente (de la OC) en metadata
+        // JSONB para que sobrevivan al ciclo guardar → reabrir → editar y para que
+        // se propaguen al pedido/albarán/factura cuando se convierta el documento.
+        // null cuando no hay refs (línea manual sin OC).
+        metadata: (item.client_sku || item.client_description) ? {
+          client_sku: item.client_sku || null,
+          client_description: item.client_description || null,
+        } : null,
       }))
       const { error: itemsError } = await supabase.from('tt_document_lines').insert(docLines)
       if (itemsError) throw itemsError
@@ -755,15 +768,23 @@ export default function CotizadorPage() {
         .select('*')
         .eq('document_id', quote.id)
         .order('sort_order')
-      const mappedItems = (docItems || []).map((it: Record<string, unknown>) => ({
-        id: (it.id as string) || '',
-        sku: (it.sku as string) || '',
-        description: (it.description as string) || '',
-        quantity: (it.quantity as number) || 0,
-        unit_price: (it.unit_price as number) || 0,
-        discount_pct: (it.discount_pct as number) || 0,
-        subtotal: (it.subtotal as number) || 0,
-      }))
+      const mappedItems = (docItems || []).map((it: Record<string, unknown>) => {
+        const meta = (it.metadata as Record<string, unknown> | null) || null
+        return {
+          id: (it.id as string) || '',
+          sku: (it.sku as string) || '',
+          description: (it.description as string) || '',
+          quantity: (it.quantity as number) || 0,
+          unit_price: (it.unit_price as number) || 0,
+          discount_pct: (it.discount_pct as number) || 0,
+          subtotal: (it.subtotal as number) || 0,
+          notes: (it.notes as string | undefined) ?? undefined,
+          product_id: (it.product_id as string | undefined) ?? undefined,
+          // Refs cliente recuperadas del metadata persistido al guardar
+          client_sku: meta && typeof meta.client_sku === 'string' ? meta.client_sku : undefined,
+          client_description: meta && typeof meta.client_description === 'string' ? meta.client_description : undefined,
+        }
+      })
       setSelectedQuote({ ...quote, items: mappedItems })
     } else {
       const { data: quoteItems } = await supabase
