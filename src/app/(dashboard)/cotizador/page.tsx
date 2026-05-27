@@ -35,6 +35,7 @@ import { DocumentAttachments } from '@/components/documents/document-attachments
 import { ProductMatchModal, type CatalogProduct } from '@/components/cotizador/product-match-modal'
 import { DocumentContactsPanel } from '@/components/cotizador/document-contacts-panel'
 import type { ParticipantContact } from '@/lib/document-contacts'
+import { NextStepPanel } from '@/components/next-step/NextStepPanel'
 
 interface QuoteLineItem {
   id: string
@@ -1224,6 +1225,23 @@ export default function CotizadorPage() {
               />
             )
           })()}
+
+          {/* ══════════════════════════════════════════════════════════════
+              Next-Step Suggester — solo cuando la cotización ya fue guardada.
+              Muestra acciones contextuales: PDF, enviar email/WhatsApp,
+              convertir a pedido, programar recordatorio, etc. El catálogo de
+              acciones se filtra por el rol del user vía fn_can_execute_action.
+              ══════════════════════════════════════════════════════════════ */}
+          {currentQuoteId && (
+            <div className="rounded-xl border border-[#2A3040] bg-gradient-to-r from-[#0F1218] to-[#1A1F2A] p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Sparkles size={14} className="text-[#FF6600]" />
+                <h3 className="text-xs font-semibold text-[#F0F2F5] uppercase tracking-wide">¿Qué seguís?</h3>
+                <span className="text-[10px] text-[#6B7280]">Acciones recomendadas para esta cotización</span>
+              </div>
+              <NextStepPanel docType="quotation" docId={currentQuoteId} docStatus="borrador" />
+            </div>
+          )}
 
           {/* Empresa & Cliente */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
