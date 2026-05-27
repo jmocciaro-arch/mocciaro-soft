@@ -115,6 +115,9 @@ export default function CotizadorPage() {
   const [convertingOc, setConvertingOc] = useState(false)
   // Marca que la cotización actual fue precargada desde una OC (para mostrar banner guía)
   const [ocImportSource, setOcImportSource] = useState<{ ocNumber: string | null; ocParsedId: string | null } | null>(null)
+  // Info del PDF subido por /api/oc/parse (bucket 'client-pos'). Se vincula
+  // como attachment 'oc_cliente' al guardar la cotización, vía /api/oc/attach-to-quote.
+  const [pendingOcPdf, setPendingOcPdf] = useState<{ storage_path: string; file_name: string } | null>(null)
 
   // Match manual SKU cliente → catálogo: id de la línea cuya vinculación está abierta
   // en el ProductMatchModal. null = modal cerrado.
@@ -202,6 +205,11 @@ export default function CotizadorPage() {
       confidence: number
       source: string
     }>
+    // PDF subido a bucket 'client-pos' por /api/oc/parse. Lo guardamos en estado
+    // para que al guardar la cotización llamemos a /api/oc/attach-to-quote y
+    // dejemos el archivo como attachment 'oc_cliente' del documento.
+    pdf_storage_path?: string | null
+    pdf_file_name?: string | null
     data?: {
       numero_oc?: string
       fecha?: string
@@ -356,6 +364,13 @@ export default function CotizadorPage() {
 
       // Marcar que esta cotización vino de una OC (para mostrar banner guía)
       setOcImportSource({ ocNumber: data.numero_oc || null, ocParsedId: result.ocParsedId || null })
+
+      // Guardar info del PDF para vincularlo como attachment al guardar.
+      // Si el parse no subió el PDF (companyId vacío o error de upload), simplemente
+      // no auto-vinculamos; el usuario igual puede subirlo manualmente luego.
+      if (result.pdf_storage_path && result.pdf_file_name) {
+        setPendingOcPdf({ storage_path: result.pdf_storage_path, file_name: result.pdf_file_name })
+      }
 
       // 9. Scroll al inicio del cotizador para que vea los items
       window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -693,7 +708,38 @@ export default function CotizadorPage() {
       }
 
       await supabase.from('tt_activity_log').insert({ entity_type: 'document', entity_id: quoteData.id, action: 'Cotizacion creada', detail: `${quoteNumber} - ${selectedClient?.name || 'Sin cliente'} - ${formatCurrency(total, currency)}` })
-      addToast({ type: 'success', title: 'Cotizacion guardada', message: 'Ahora podés adjuntar la OC, pliegos, etc.' })
+
+      // Si la cotización vino de una OC importada, vincular el PDF como attachment
+      // 'oc_cliente'. El endpoint mueve el archivo del bucket 'client-pos' al
+      // bucket 'document-attachments' con el path canónico y crea la fila.
+      // Es best-effort: si falla, la cotización igual queda guardada y el usuario
+      // puede adjuntar el PDF a mano.
+      let ocAttachedOk = false
+      if (pendingOcPdf) {
+        try {
+          const r = await fetch('/api/oc/attach-to-quote', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              quote_id: quoteData.id,
+              source_path: pendingOcPdf.storage_path,
+              file_name: pendingOcPdf.file_name,
+            }),
+          })
+          ocAttachedOk = r.ok
+          if (r.ok) setPendingOcPdf(null)
+        } catch {
+          // swallow — no bloquea el save
+        }
+      }
+
+      addToast({
+        type: 'success',
+        title: 'Cotizacion guardada',
+        message: ocAttachedOk
+          ? '📋 OC del cliente adjuntada automáticamente'
+          : 'Ahora podés adjuntar la OC, pliegos, etc.',
+      })
       // No reseteamos los datos — dejamos al usuario sobre la cotización recién creada
       // para que pueda adjuntar archivos. setCurrentQuoteId expone el ID al panel de adjuntos.
       setCurrentQuoteId(quoteData.id as string)
@@ -971,6 +1017,7 @@ export default function CotizadorPage() {
                   setItems([]); setNotes(''); setInternalNotes(''); setSelectedClient(null)
                   setIvaEnabled(true); setTaxRate(21); setIrpfEnabled(false); setIrpfRate(0)
                   setReEnabled(false); setReRate(0); setOcImportSource(null)
+                  setPendingOcPdf(null)
                   setCurrentQuoteId(null); generateQuoteNumber()
                 }
                 setViewMode('create')

@@ -5,13 +5,35 @@ import { Modal } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import type { ParsedOC, OCDiscrepancy } from '@/lib/ai/parse-oc-pdf'
 
+// Match SKU cliente ↔ catálogo devuelto por el endpoint para cada item.
+// El cotizador lo usa para precargar product_id cuando hay alias o SKU exacto.
+interface SKUMatch {
+  externalSKU: string
+  product: { id: string; sku: string; name: string; brand: string | null; price_eur: number | null } | null
+  confidence: number
+  source: string
+}
+
+interface OnParsedPayload {
+  data: ParsedOC
+  discrepancies: OCDiscrepancy[]
+  ocParsedId?: string
+  // matches[i] corresponde a data.items[i] (mismo orden).
+  matches?: SKUMatch[]
+  // Path del PDF en bucket 'client-pos' + nombre original — el cotizador
+  // los usa al guardar para llamar a /api/oc/attach-to-quote y dejar el
+  // PDF como attachment 'oc_cliente' de la cotización.
+  pdf_storage_path?: string | null
+  pdf_file_name?: string | null
+}
+
 interface Props {
   open: boolean
   onClose: () => void
   companyId: string
   clientId?: string
   quoteDocumentId?: string
-  onParsed?: (result: { data: ParsedOC; discrepancies: OCDiscrepancy[]; ocParsedId?: string }) => void
+  onParsed?: (result: OnParsedPayload) => void
 }
 
 export function OCParserModal({ open, onClose, companyId, clientId, quoteDocumentId, onParsed }: Props) {
@@ -40,7 +62,14 @@ export function OCParserModal({ open, onClose, companyId, clientId, quoteDocumen
       if (!res.ok) throw new Error(j.error || 'Error parseando')
       setResult({ data: j.data, discrepancies: j.discrepancies || [], ocParsedId: j.ocParsedId })
       setMsg(`✓ Parseado con ${j.data.provider_used}`)
-      onParsed?.({ data: j.data, discrepancies: j.discrepancies, ocParsedId: j.ocParsedId })
+      onParsed?.({
+        data: j.data,
+        discrepancies: j.discrepancies,
+        ocParsedId: j.ocParsedId,
+        matches: j.matches,
+        pdf_storage_path: j.pdf_storage_path,
+        pdf_file_name: j.pdf_file_name,
+      })
     } catch (err) {
       setMsg('✗ ' + (err as Error).message)
     } finally {

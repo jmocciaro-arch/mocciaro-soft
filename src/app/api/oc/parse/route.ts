@@ -36,15 +36,22 @@ export async function POST(req: NextRequest) {
       { auth: { persistSession: false } }
     )
 
-    // Opcional: subir el PDF a Storage
+    // Subir el PDF a Storage (bucket privado 'client-pos').
+    // pdf_storage_path se devuelve al frontend para que después de guardar la
+    // cotización el endpoint /api/oc/attach-to-quote lo mueva al bucket
+    // 'document-attachments' y lo registre como attachment con category='oc_cliente'.
     let pdfUrl: string | null = null
+    let pdfStoragePath: string | null = null
     if (companyId) {
       const path = `${companyId}/${Date.now()}_${file.name.replace(/[^\w.-]/g, '_')}`
       const { error: upErr } = await supabase.storage
         .from('client-pos')
         .upload(path, buf, { contentType: 'application/pdf' })
       if (!upErr) {
+        pdfStoragePath = path
         const { data: pub } = supabase.storage.from('client-pos').getPublicUrl(path)
+        // publicUrl es solo de referencia (el bucket es privado, el download
+        // real necesita signed URL o usa el endpoint de attachments).
         pdfUrl = pub.publicUrl
       }
     }
@@ -146,6 +153,11 @@ export async function POST(req: NextRequest) {
       data: result.data,
       discrepancies,
       pdfUrl,
+      // pdf_storage_path + pdf_file_name: para que el cotizador llame a
+      // /api/oc/attach-to-quote después de guardar la cotización y persistir
+      // el PDF como attachment con category='oc_cliente'.
+      pdf_storage_path: pdfStoragePath,
+      pdf_file_name: pdfStoragePath ? file.name : null,
       ocParsedId,
       documentCreated: createDocument,
     })
