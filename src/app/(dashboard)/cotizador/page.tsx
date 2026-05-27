@@ -33,6 +33,8 @@ import {
 } from 'lucide-react'
 import { DocumentAttachments } from '@/components/documents/document-attachments'
 import { ProductMatchModal, type CatalogProduct } from '@/components/cotizador/product-match-modal'
+import { DocumentContactsPanel } from '@/components/cotizador/document-contacts-panel'
+import type { ParticipantContact } from '@/lib/document-contacts'
 
 interface QuoteLineItem {
   id: string
@@ -148,6 +150,9 @@ export default function CotizadorPage() {
   const [selectedClient, setSelectedClient] = useState<Client | null>(null)
   const [showClientDropdown, setShowClientDropdown] = useState(false)
   const clientDebounceRef = useRef<NodeJS.Timeout | null>(null)
+  // Contactos vinculados al documento con su rol (Compras, Logística, Finanzas...).
+  // Persistido en tt_documents.metadata.participating_contacts al guardar.
+  const [participatingContacts, setParticipatingContacts] = useState<ParticipantContact[]>([])
 
   // Quote
   const [currentQuoteId, setCurrentQuoteId] = useState<string | null>(null)
@@ -650,6 +655,9 @@ export default function CotizadorPage() {
             re_amount: reAmount,
             payment_days: paymentDays || null,
             payment_terms_type: paymentTermsType || null,
+            // Contactos del cliente involucrados en este documento, con su rol.
+            // null en vez de [] para distinguir "no se cargaron" de "se borraron todos".
+            participating_contacts: participatingContacts.length > 0 ? participatingContacts : null,
           },
         })
         .select('id').single()
@@ -1018,6 +1026,7 @@ export default function CotizadorPage() {
                   setIvaEnabled(true); setTaxRate(21); setIrpfEnabled(false); setIrpfRate(0)
                   setReEnabled(false); setReRate(0); setOcImportSource(null)
                   setPendingOcPdf(null)
+                  setParticipatingContacts([])
                   setCurrentQuoteId(null); generateQuoteNumber()
                 }
                 setViewMode('create')
@@ -1260,43 +1269,40 @@ export default function CotizadorPage() {
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm flex items-center gap-2">
-                  <User size={16} className="text-[#FF6600]" /> Cliente
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {selectedClient ? (
-                  <div className="flex items-center justify-between p-3 rounded-lg bg-[#0F1218] border border-[#1E2330]">
-                    <div>
-                      <p className="text-sm font-medium text-[#F0F2F5]">{selectedClient.name}</p>
-                      <p className="text-xs text-[#6B7280]">{selectedClient.tax_id} - {selectedClient.email}</p>
+            {/* Cliente (empresa) + contactos involucrados con rol.
+                El buscador con dropdown lo pasamos como slot para mantener el cache
+                local de clientes y la lógica de debounce que ya existe en este page. */}
+            <DocumentContactsPanel
+              selectedClient={selectedClient}
+              onClearClient={() => {
+                setSelectedClient(null)
+                setParticipatingContacts([])
+              }}
+              clientSearch={clientSearch}
+              onClientSearchChange={setClientSearch}
+              participants={participatingContacts}
+              onParticipantsChange={setParticipatingContacts}
+              clientSearchSlot={
+                <div className="relative">
+                  <SearchBar placeholder="Buscar cliente por nombre, CUIT, email..." value={clientSearch} onChange={setClientSearch} />
+                  {showClientDropdown && clientResults.length > 0 && (
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-[#141820] border border-[#1E2330] rounded-lg shadow-xl z-10 max-h-48 overflow-y-auto">
+                      {clientResults.map((client) => (
+                        <button key={client.id} onClick={() => { setSelectedClient(client); setParticipatingContacts([]); setClientSearch(''); setShowClientDropdown(false) }} className="w-full text-left px-4 py-2.5 hover:bg-[#1E2330] transition-colors">
+                          <p className="text-sm text-[#F0F2F5]">{client.name}</p>
+                          <p className="text-xs text-[#6B7280]">{client.tax_id} - {client.email}</p>
+                        </button>
+                      ))}
                     </div>
-                    <button onClick={() => setSelectedClient(null)} className="text-[#6B7280] hover:text-red-400"><X size={16} /></button>
-                  </div>
-                ) : (
-                  <div className="relative">
-                    <SearchBar placeholder="Buscar cliente por nombre, CUIT, email..." value={clientSearch} onChange={setClientSearch} />
-                    {showClientDropdown && clientResults.length > 0 && (
-                      <div className="absolute top-full left-0 right-0 mt-1 bg-[#141820] border border-[#1E2330] rounded-lg shadow-xl z-10 max-h-48 overflow-y-auto">
-                        {clientResults.map((client) => (
-                          <button key={client.id} onClick={() => { setSelectedClient(client); setClientSearch(''); setShowClientDropdown(false) }} className="w-full text-left px-4 py-2.5 hover:bg-[#1E2330] transition-colors">
-                            <p className="text-sm text-[#F0F2F5]">{client.name}</p>
-                            <p className="text-xs text-[#6B7280]">{client.tax_id} - {client.email}</p>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    {showClientDropdown && clientSearch && clientResults.length === 0 && (
-                      <div className="absolute top-full left-0 right-0 mt-1 bg-[#141820] border border-[#1E2330] rounded-lg shadow-xl z-10">
-                        <p className="px-4 py-3 text-sm text-[#4B5563]">No se encontraron clientes</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+                  )}
+                  {showClientDropdown && clientSearch && clientResults.length === 0 && (
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-[#141820] border border-[#1E2330] rounded-lg shadow-xl z-10">
+                      <p className="px-4 py-3 text-sm text-[#4B5563]">No se encontraron clientes</p>
+                    </div>
+                  )}
+                </div>
+              }
+            />
           </div>
 
           {/* Items table */}
