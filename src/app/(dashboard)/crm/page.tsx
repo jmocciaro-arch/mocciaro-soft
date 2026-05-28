@@ -479,9 +479,21 @@ function PipelineTab() {
               <Button
                 variant="secondary"
                 onClick={() => {
-                  const clientId = selectedOpp?.client_id || ''
+                  // Fix 7 — pasar todo el contexto al cotizador (mismo formato que leads)
+                  const opp = selectedOpp!
+                  const oppRaw = opp as unknown as Row
+                  const clientObj = (opp.client as unknown as { name?: string; legal_name?: string; email?: string }) || {}
+                  const clientName = clientObj.legal_name || clientObj.name || (oppRaw.client_name as string) || ''
+                  const clientEmail = clientObj.email || ''
+                  const productInterest = (oppRaw.product_interest as string) || ''
+                  const estimatedValue = ((oppRaw.value as number) || (oppRaw.expected_value as number) || 0).toString()
                   const params = new URLSearchParams()
-                  if (clientId) params.set('clientId', clientId)
+                  if (opp.client_id) params.set('clientId', opp.client_id)
+                  if (clientName) params.set('clientName', clientName)
+                  if (clientEmail) params.set('clientEmail', clientEmail)
+                  if (productInterest) params.set('products', productInterest)
+                  if (Number(estimatedValue) > 0) params.set('estimatedValue', estimatedValue)
+                  params.set('source', `opportunity-${opp.id}`)
                   window.location.href = `/cotizador?${params.toString()}`
                 }}
               >

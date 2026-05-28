@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient as createServiceClient } from '@supabase/supabase-js'
 import { callClaude } from '@/lib/ai/ai-helper'
+import { requireAdmin } from '@/lib/auth/require-admin'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -17,8 +18,12 @@ export const maxDuration = 120
  */
 export async function POST(req: NextRequest) {
   try {
+    const guard = await requireAdmin()
+    if (!guard.ok) return guard.response
+
     const body = await req.json().catch(() => ({}))
-    const { companyId, dryRun = false } = body
+    // dryRun default true: cambio destructivo masivo, exigir opt-in explícito
+    const { companyId, dryRun = true } = body
 
     const supabase = createServiceClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,

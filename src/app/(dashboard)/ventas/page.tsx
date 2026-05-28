@@ -16,8 +16,7 @@ import { DocumentItemsTree, type DocumentItem } from '@/components/workflow/docu
 import { DocumentActions } from '@/components/workflow/document-actions'
 import { DocumentForm } from '@/components/workflow/document-form'
 import {
-  documentToTableRow, localQuoteToRow, localSOToRow, localDNToRow,
-  localInvoiceToRow, paymentToRow, mapStatus
+  documentToTableRow, paymentToRow, mapStatus
 } from '@/lib/document-helpers'
 import { KPICard } from '@/components/ui/kpi-card'
 import { Badge } from '@/components/ui/badge'
@@ -28,6 +27,11 @@ import {
   ClipboardList, FileCheck, CheckSquare, Square, AlertTriangle,
   GitMerge, RotateCcw, ArrowLeft, Eye,
 } from 'lucide-react'
+import { generateDocNumber } from '@/lib/doc-numbering'
+import { PresupuestosTab } from './_tabs/PresupuestosTab'
+import { CobrosTab } from './_tabs/CobrosTab'
+import { FacturasTab } from './_tabs/FacturasTab'
+import { NotasCreditoTab } from './_tabs/NotasCreditoTab'
 
 type Row = Record<string, unknown>
 
@@ -73,15 +77,6 @@ function buildSOWorkflow(so: Row): WorkflowStep[] {
 // ===============================================================
 // COLUMN DEFINITIONS
 // ===============================================================
-const PRESUPUESTO_COLS: DataTableColumn[] = [
-  { key: 'referencia', label: 'Referencia', sortable: true, searchable: true, width: '140px' },
-  { key: 'cliente', label: 'Cliente', sortable: true, searchable: true },
-  { key: 'titulo', label: 'Titulo / Descripcion', searchable: true },
-  { key: 'estado', label: 'Estado', sortable: true, type: 'status', width: '120px' },
-  { key: 'fecha', label: 'Fecha', sortable: true, type: 'date', width: '110px' },
-  { key: 'importe', label: 'Importe', sortable: true, type: 'currency', width: '120px' },
-]
-
 const PEDIDO_COLS: DataTableColumn[] = [
   { key: 'referencia', label: 'Referencia', sortable: true, searchable: true, width: '140px' },
   { key: 'cliente', label: 'Cliente', sortable: true, searchable: true },
@@ -101,103 +96,6 @@ const ALBARAN_COLS: DataTableColumn[] = [
   { key: 'fecha', label: 'Fecha', sortable: true, type: 'date', width: '110px' },
   { key: 'importe', label: 'Importe', sortable: true, type: 'currency', width: '120px' },
 ]
-
-const FACTURA_COLS: DataTableColumn[] = [
-  { key: 'referencia', label: 'Referencia', sortable: true, searchable: true, width: '140px' },
-  { key: 'cliente', label: 'Cliente', sortable: true, searchable: true },
-  { key: 'titulo', label: 'Titulo', searchable: true },
-  { key: 'estado', label: 'Estado', sortable: true, type: 'status', width: '120px' },
-  { key: 'fecha', label: 'Fecha', sortable: true, type: 'date', width: '110px' },
-  { key: 'importe', label: 'Importe', sortable: true, type: 'currency', width: '120px' },
-]
-
-const COBRO_COLS: DataTableColumn[] = [
-  { key: 'referencia', label: 'Referencia', sortable: true, searchable: true, width: '140px' },
-  { key: 'cliente', label: 'Cliente', searchable: true },
-  { key: 'concepto', label: 'Concepto / Forma pago', searchable: true },
-  { key: 'estado', label: 'Estado', sortable: true, type: 'status', width: '120px' },
-  { key: 'fecha', label: 'Fecha', sortable: true, type: 'date', width: '110px' },
-  { key: 'importe', label: 'Importe', sortable: true, type: 'currency', width: '120px' },
-]
-
-const NOTA_CREDITO_COLS: DataTableColumn[] = [
-  { key: 'referencia', label: 'Numero', sortable: true, searchable: true, width: '140px' },
-  { key: 'cliente', label: 'Cliente', sortable: true, searchable: true },
-  { key: 'factura_original', label: 'Factura original', searchable: true, width: '140px' },
-  { key: 'motivo', label: 'Motivo', searchable: true, width: '160px' },
-  { key: 'estado', label: 'Estado', sortable: true, type: 'status', width: '120px' },
-  { key: 'fecha', label: 'Fecha', sortable: true, type: 'date', width: '110px' },
-  { key: 'importe', label: 'Total', sortable: true, type: 'currency', width: '120px' },
-]
-
-const CREDIT_NOTE_REASON_LABELS: Record<string, string> = {
-  devolucion: 'Devolucion',
-  error_facturacion: 'Error de facturacion',
-  descuento_posterior: 'Descuento posterior',
-  anulacion: 'Anulacion',
-  otro: 'Otro',
-}
-
-// ===============================================================
-// PRESUPUESTOS TAB
-// ===============================================================
-function PresupuestosTab() {
-  const { filterByCompany, companyKey } = useCompanyFilter()
-  const supabase = createClient()
-  const [rows, setRows] = useState<Record<string, unknown>[]>([])
-  const [loading, setLoading] = useState(true)
-  const [selectedDoc, setSelectedDoc] = useState<{ id: string; source: 'local' | 'tt_documents' } | null>(null)
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    const sb = createClient()
-    let q = sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').in('doc_type', ['coti', 'presupuesto', 'quote'])
-    q = filterByCompany(q)
-    const [{ data: docData }, { data: localData }] = await Promise.all([
-      q.order('created_at', { ascending: false }).range(0, 499),
-      sb.from('tt_quotes').select('*, tt_clients(name, tax_id, country)').order('created_at', { ascending: false }),
-    ])
-    const localRows = (localData || []).map(localQuoteToRow)
-    const docRows = (docData || []).map(documentToTableRow)
-    setRows([...localRows, ...docRows])
-    setLoading(false)
-  }, [companyKey])
-
-  useEffect(() => { load() }, [load])
-
-  const openDetail = (row: Record<string, unknown>) => {
-    const doc = row._raw as Row
-    const src = row._source as string
-    setSelectedDoc({ id: doc.id as string, source: src === 'local' ? 'local' : 'tt_documents' })
-  }
-
-  if (selectedDoc) {
-    const allIds = rows.map(r => (r._raw as Row).id as string)
-    return (
-      <DocumentForm
-        documentId={selectedDoc.id}
-        documentType="coti"
-        source={selectedDoc.source}
-        onBack={() => { setSelectedDoc(null); load() }}
-        onUpdate={load}
-        siblingIds={allIds}
-      />
-    )
-  }
-
-  return (
-    <DataTable
-      data={rows}
-      columns={PRESUPUESTO_COLS}
-      loading={loading}
-      totalLabel="presupuestos"
-      showTotals
-      onRowClick={openDetail}
-      exportFilename="presupuestos_torquetools"
-      pageSize={25}
-    />
-  )
-}
 
 // ===============================================================
 // PEDIDOS TAB
@@ -226,41 +124,83 @@ function PedidosTab() {
   const load = useCallback(async () => {
     setLoading(true)
     const sb = createClient()
+    // Solo tt_documents — tt_sales_orders legacy queda vacía y se elimina en Fase 2.
     let q = sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').in('doc_type', ['pedido', 'order', 'so'])
     q = filterByCompany(q)
-    const [{ data: docData }, { data: localData }] = await Promise.all([
-      q.order('created_at', { ascending: false }).range(0, 499),
-      sb.from('tt_sales_orders').select('*, tt_clients(name, tax_id, country)').order('created_at', { ascending: false }),
-    ])
-    const localRows = (localData || []).map(localSOToRow)
-    const docRows = (docData || []).map(documentToTableRow)
-    setRows([...localRows, ...docRows])
+    const { data: docData } = await q.order('created_at', { ascending: false }).range(0, 499)
+    setRows((docData || []).map(documentToTableRow))
     setLoading(false)
   }, [companyKey])
 
   useEffect(() => { load() }, [load])
 
   const loadCreateData = async () => {
+    // Cotizaciones leen de tt_documents (doc_type='presupuesto').
+    // 'doc_number' → 'display_ref' para mantener compat de UI.
     const [{ data: cl }, { data: qt }, { data: pr }] = await Promise.all([
       supabase.from('tt_clients').select('id, name').order('name').limit(500),
-      supabase.from('tt_quotes').select('id, doc_number, client_id, total').eq('status', 'draft').order('created_at', { ascending: false }),
+      supabase.from('tt_documents')
+        .select('id, display_ref, system_code, client_id, total')
+        .eq('doc_type', 'presupuesto')
+        .in('status', ['draft', 'borrador', 'open'])
+        .order('created_at', { ascending: false }),
       supabase.from('tt_products').select('id, sku, name, price_eur').order('name').limit(500),
     ])
-    setClients(cl || []); setQuotesData(qt || []); setProducts(pr || [])
+    // Normalizamos a doc_number para que el dropdown UI no cambie.
+    setClients(cl || [])
+    setQuotesData((qt || []).map((row) => ({ ...row, doc_number: row.display_ref || row.system_code })))
+    setProducts(pr || [])
   }
 
   const handleCreateFromQuote = async () => {
     if (!selectedQuote) return
     setSaving(true)
-    const { data: quote } = await supabase.from('tt_quotes').select('*, tt_quote_items(*)').eq('id', selectedQuote).single()
+    // Lee la cotización del modelo unificado (tt_documents/tt_document_lines).
+    // Antes leía tt_quotes/tt_quote_items (Fase 2 — migración).
+    const { data: quote } = await supabase
+      .from('tt_documents')
+      .select('*, tt_document_lines(*)')
+      .eq('id', selectedQuote)
+      .eq('doc_type', 'presupuesto')
+      .single()
     if (!quote) { addToast({ type: 'error', title: 'Error', message: 'Cotizacion no encontrada' }); setSaving(false); return }
-    const yr = new Date().getFullYear().toString().slice(-2); const mo = (new Date().getMonth() + 1).toString().padStart(2, '0'); const seq = Math.floor(Math.random() * 9999).toString().padStart(4, '0')
-    const docNum = `PED-${yr}${mo}-${seq}`
-    const { data: so, error } = await supabase.from('tt_sales_orders').insert({ company_id: quote.company_id, client_id: quote.client_id, quote_id: selectedQuote, doc_number: docNum, currency: quote.currency || 'EUR', status: 'open', subtotal: quote.subtotal || 0, tax_amount: quote.tax_amount || 0, total: quote.total || 0, notes: quote.notes || '' }).select().single()
+    const docNum = await generateDocNumber('PED', quote.company_id as string | null)
+    const { data: so, error } = await supabase
+      .from('tt_documents')
+      .insert({
+        doc_type: 'pedido',
+        system_code: docNum,
+        display_ref: docNum,
+        company_id: quote.company_id,
+        client_id: quote.client_id,
+        currency: quote.currency || 'EUR',
+        status: 'open',
+        subtotal: quote.subtotal || 0,
+        tax_amount: quote.tax_amount || 0,
+        total: quote.total || 0,
+        notes: quote.notes || '',
+        metadata: { quote_id: selectedQuote },
+      })
+      .select()
+      .single()
     if (error || !so) { addToast({ type: 'error', title: 'Error', message: error?.message }); setSaving(false); return }
-    const items = (quote.tt_quote_items || []).map((it: Row, i: number) => ({ sales_order_id: so.id, product_id: it.product_id, description: it.description, quantity: it.quantity, unit_price: it.unit_price, discount_pct: it.discount_pct || 0, line_total: it.line_total, qty_ordered: it.quantity, qty_reserved: 0, qty_delivered: 0, qty_invoiced: 0, sort_order: i }))
-    await supabase.from('tt_so_items').insert(items)
-    await supabase.from('tt_quotes').update({ status: 'accepted' }).eq('id', selectedQuote)
+    const items = ((quote.tt_document_lines || []) as Row[]).map((it: Row, i: number) => ({
+      document_id: so.id,
+      product_id: it.product_id,
+      sku: it.sku,
+      description: it.description,
+      quantity: it.quantity,
+      unit_price: it.unit_price,
+      discount_pct: it.discount_pct || 0,
+      subtotal: it.subtotal,
+      qty_reserved: 0,
+      qty_delivered: 0,
+      qty_invoiced: 0,
+      sort_order: i,
+    }))
+    await supabase.from('tt_document_lines').insert(items)
+    await supabase.from('tt_document_relations').insert({ parent_id: selectedQuote, child_id: so.id, relation_type: 'quote_to_order' })
+    await supabase.from('tt_documents').update({ status: 'accepted' }).eq('id', selectedQuote)
     addToast({ type: 'success', title: 'Pedido creado', message: docNum })
     setShowCreate(false); setSelectedQuoteForm(''); load(); setSaving(false)
   }
@@ -269,12 +209,36 @@ function PedidosTab() {
     if (!selectedClient || newLines.length === 0) { addToast({ type: 'warning', title: 'Completa los datos' }); return }
     setSaving(true)
     const total = newLines.reduce((s, l) => s + l.qty * l.price, 0)
-    const yr = new Date().getFullYear().toString().slice(-2); const mo = (new Date().getMonth() + 1).toString().padStart(2, '0'); const seq = Math.floor(Math.random() * 9999).toString().padStart(4, '0')
-    const docNum = `PED-${yr}${mo}-${seq}`
-    const { data: so, error } = await supabase.from('tt_sales_orders').insert({ client_id: selectedClient, doc_number: docNum, currency: 'EUR', status: 'open', subtotal: total, tax_amount: 0, total }).select().single()
+    const docNum = await generateDocNumber('PED', null)
+    const { data: so, error } = await supabase
+      .from('tt_documents')
+      .insert({
+        doc_type: 'pedido',
+        system_code: docNum,
+        display_ref: docNum,
+        client_id: selectedClient,
+        currency: 'EUR',
+        status: 'open',
+        subtotal: total,
+        tax_amount: 0,
+        total,
+      })
+      .select()
+      .single()
     if (error || !so) { addToast({ type: 'error', title: 'Error', message: error?.message }); setSaving(false); return }
-    const items = newLines.map((l, i) => ({ sales_order_id: so.id, product_id: l.product_id || null, description: l.name, quantity: l.qty, unit_price: l.price, line_total: l.qty * l.price, qty_ordered: l.qty, qty_reserved: 0, qty_delivered: 0, qty_invoiced: 0, sort_order: i }))
-    await supabase.from('tt_so_items').insert(items)
+    const items = newLines.map((l, i) => ({
+      document_id: so.id,
+      product_id: l.product_id || null,
+      description: l.name,
+      quantity: l.qty,
+      unit_price: l.price,
+      subtotal: l.qty * l.price,
+      qty_reserved: 0,
+      qty_delivered: 0,
+      qty_invoiced: 0,
+      sort_order: i,
+    }))
+    await supabase.from('tt_document_lines').insert(items)
     addToast({ type: 'success', title: 'Pedido creado', message: docNum })
     setShowCreate(false); setSelectedClient(''); setNewLines([]); load(); setSaving(false)
   }
@@ -288,33 +252,72 @@ function PedidosTab() {
   const openDelivery = async (so: Row) => {
     const rawSO = so as Row
     setSelectedSO(rawSO)
-    const { data } = await supabase.from('tt_so_items').select('*').eq('sales_order_id', rawSO.id).order('sort_order')
-    setDeliveryLines((data || []).map((it: Row) => ({ id: it.id as string, desc: (it.description || '') as string, ordered: (it.qty_ordered || it.quantity || 0) as number, delivered: (it.qty_delivered || 0) as number, toDeliver: 0 })))
+    // Lee las líneas del pedido del modelo unificado.
+    const { data } = await supabase
+      .from('tt_document_lines')
+      .select('*')
+      .eq('document_id', rawSO.id)
+      .order('sort_order')
+    setDeliveryLines((data || []).map((it: Row) => ({
+      id: it.id as string,
+      desc: (it.description || '') as string,
+      ordered: ((it.quantity as number) || 0),
+      delivered: ((it.qty_delivered as number) || 0),
+      toDeliver: 0,
+    })))
     setShowDelivery(true)
   }
 
   const handleDelivery = async () => {
     if (!selectedSO) return
-    const yr = new Date().getFullYear().toString().slice(-2); const mo = (new Date().getMonth() + 1).toString().padStart(2, '0'); const seq = Math.floor(Math.random() * 9999).toString().padStart(4, '0')
-    const docNum = `REM-${yr}${mo}-${seq}`
-    const { data: dn, error } = await supabase.from('tt_delivery_notes').insert({ company_id: selectedSO.company_id || null, client_id: selectedSO.client_id, sales_order_id: selectedSO.id, doc_number: docNum, status: 'pending' }).select().single()
+    const docNum = await generateDocNumber('REM', (selectedSO.company_id as string | null) ?? null)
+    // Crear el albarán en tt_documents.
+    const { data: dn, error } = await supabase
+      .from('tt_documents')
+      .insert({
+        doc_type: 'albaran',
+        system_code: docNum,
+        display_ref: docNum,
+        company_id: selectedSO.company_id || null,
+        client_id: selectedSO.client_id,
+        status: 'pending',
+        metadata: { sales_order_id: selectedSO.id },
+      })
+      .select()
+      .single()
     if (error || !dn) { addToast({ type: 'error', title: 'Error', message: error?.message }); return }
-    for (const l of deliveryLines) { if (l.toDeliver > 0) { await supabase.from('tt_dn_items').insert({ delivery_note_id: dn.id, so_item_id: l.id, quantity: l.toDeliver }); await supabase.from('tt_so_items').update({ qty_delivered: l.delivered + l.toDeliver }).eq('id', l.id) } }
-    const { data: items } = await supabase.from('tt_so_items').select('qty_ordered, quantity, qty_delivered').eq('sales_order_id', selectedSO.id)
-    const allDelivered = (items || []).every((it: Row) => ((it.qty_delivered as number) || 0) >= ((it.qty_ordered as number) || (it.quantity as number) || 0))
-    await supabase.from('tt_sales_orders').update({ status: allDelivered ? 'fully_delivered' : 'partially_delivered' }).eq('id', selectedSO.id)
+    // Actualizar qty_delivered en las líneas del pedido + crear líneas del albarán.
+    for (const l of deliveryLines) {
+      if (l.toDeliver > 0) {
+        await supabase.from('tt_document_lines').insert({
+          document_id: dn.id,
+          description: l.desc,
+          quantity: l.toDeliver,
+          qty_delivered: l.toDeliver,
+          metadata: { source_line_id: l.id },
+        })
+        await supabase
+          .from('tt_document_lines')
+          .update({ qty_delivered: l.delivered + l.toDeliver })
+          .eq('id', l.id)
+      }
+    }
+    // Vincular albarán ↔ pedido.
+    await supabase.from('tt_document_relations').insert({
+      parent_id: selectedSO.id, child_id: dn.id, relation_type: 'order_to_delivery',
+    })
+    // Estado del pedido según lo entregado total.
+    const { data: items } = await supabase
+      .from('tt_document_lines')
+      .select('quantity, qty_delivered')
+      .eq('document_id', selectedSO.id)
+    const allDelivered = (items || []).every((it: Row) => ((it.qty_delivered as number) || 0) >= ((it.quantity as number) || 0))
+    await supabase
+      .from('tt_documents')
+      .update({ status: allDelivered ? 'fully_delivered' : 'partially_delivered' })
+      .eq('id', selectedSO.id)
     addToast({ type: 'success', title: 'Remito generado', message: docNum })
     setShowDelivery(false); setSelectedSO(null); load()
-  }
-
-  const handleInvoice = async (so: Row) => {
-    const yr = new Date().getFullYear().toString().slice(-2); const mo = (new Date().getMonth() + 1).toString().padStart(2, '0'); const seq = Math.floor(Math.random() * 9999).toString().padStart(4, '0')
-    const docNum = `FAC-${yr}${mo}-${seq}`
-    const { error } = await supabase.from('tt_invoices').insert({ company_id: so.company_id || null, client_id: so.client_id, sales_order_id: so.id, doc_number: docNum, type: 'sale', status: 'draft', currency: so.currency || 'EUR', subtotal: so.subtotal || 0, tax_amount: so.tax_amount || 0, total: so.total || 0 }).select().single()
-    if (error) { addToast({ type: 'error', title: 'Error', message: error.message }); return }
-    await supabase.from('tt_sales_orders').update({ status: 'fully_invoiced' }).eq('id', so.id)
-    addToast({ type: 'success', title: 'Factura generada', message: docNum })
-    setSelectedSO(null); load()
   }
 
   // Detail view via DocumentForm
@@ -425,13 +428,8 @@ function AlbaranesTab() {
     const sb = createClient()
     let q = sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').in('doc_type', ['delivery_note', 'albaran', 'remito'])
     q = filterByCompany(q)
-    const [{ data: docData }, { data: localData }] = await Promise.all([
-      q.order('created_at', { ascending: false }).range(0, 499),
-      sb.from('tt_delivery_notes').select('*, tt_clients(name), tt_sales_orders(doc_number)').order('created_at', { ascending: false }),
-    ])
-    const localRows = (localData || []).map(localDNToRow)
-    const docRows = (docData || []).map(documentToTableRow)
-    setRows([...localRows, ...docRows])
+    const { data: docData } = await q.order('created_at', { ascending: false }).range(0, 499)
+    setRows((docData || []).map(documentToTableRow))
     setLoading(false)
   }, [companyKey])
 
@@ -509,10 +507,7 @@ function AlbaranesTab() {
     setConsolidating(true)
     try {
       const sb = createClient()
-      const yr = new Date().getFullYear().toString().slice(-2)
-      const mo = (new Date().getMonth() + 1).toString().padStart(2, '0')
-      const seq = Math.floor(Math.random() * 9999).toString().padStart(4, '0')
-      const invoiceRef = `FAC-${yr}${mo}-${seq}`
+      const invoiceRef = await generateDocNumber('FAC', null)
       const subtotal = consolidatePreview.totalAmount
       const taxRate = 21
       const taxAmount = subtotal * (taxRate / 100)
@@ -723,728 +718,10 @@ function AlbaranesTab() {
   )
 }
 
-// ===============================================================
-// FACTURAS TAB
-// ===============================================================
-function FacturasTab() {
-  const { filterByCompany, companyKey } = useCompanyFilter()
-  const supabase = createClient()
-  const [rows, setRows] = useState<Record<string, unknown>[]>([])
-  const [loading, setLoading] = useState(true)
-  const [selectedDoc, setSelectedDoc] = useState<{ id: string; source: 'local' | 'tt_documents' } | null>(null)
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    const sb = createClient()
-    let q = sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name, tax_id)').in('doc_type', ['factura', 'factura_abono'])
-    q = filterByCompany(q)
-    const [{ data: docData }, { data: localData }] = await Promise.all([
-      q.order('created_at', { ascending: false }).range(0, 499),
-      sb.from('tt_invoices').select('*, tt_clients(name)').eq('type', 'sale').order('created_at', { ascending: false }),
-    ])
-    const localRows = (localData || []).map(localInvoiceToRow)
-    const docRows = (docData || []).map(documentToTableRow)
-    setRows([...localRows, ...docRows])
-    setLoading(false)
-  }, [companyKey])
-
-  useEffect(() => { load() }, [load])
-
-  const openDetail = (row: Record<string, unknown>) => {
-    const doc = row._raw as Row
-    const src = row._source as string
-    setSelectedDoc({ id: doc.id as string, source: src === 'local' ? 'local' : 'tt_documents' })
-  }
-
-  if (selectedDoc) {
-    const allIds = rows.map(r => (r._raw as Row).id as string)
-    return (
-      <DocumentForm
-        documentId={selectedDoc.id}
-        documentType="factura"
-        source={selectedDoc.source}
-        onBack={() => { setSelectedDoc(null); load() }}
-        onUpdate={load}
-        siblingIds={allIds}
-      />
-    )
-  }
-
-  return (
-    <DataTable
-      data={rows}
-      columns={FACTURA_COLS}
-      loading={loading}
-      totalLabel="facturas"
-      showTotals
-      onRowClick={openDetail}
-      exportFilename="facturas_venta_torquetools"
-      pageSize={25}
-    />
-  )
-}
-
-// ===============================================================
-// COBROS TAB
-// ===============================================================
-function CobrosTab() {
-  const { filterByCompany, companyKey } = useCompanyFilter()
-  const supabase = createClient()
-  const { addToast } = useToast()
-  const [rows, setRows] = useState<Record<string, unknown>[]>([])
-  const [loading, setLoading] = useState(true)
-  const [showRegister, setShowRegister] = useState(false)
-  const [invoices, setInvoices] = useState<Record<string, unknown>[]>([])
-  const [newPayment, setNewPayment] = useState({ invoice_id: '', amount: 0, payment_method: 'transferencia', bank_reference: '', payment_date: new Date().toISOString().split('T')[0] })
-  const [saving, setSaving] = useState(false)
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    const sb = createClient()
-    const { data } = await sb.from('tt_payments').select('*, tt_invoices(doc_number)').order('created_at', { ascending: false })
-    setRows((data || []).map(paymentToRow))
-    setLoading(false)
-  }, [])
-
-  useEffect(() => { load() }, [load])
-
-  const loadInvoices = async () => {
-    let q = supabase.from('tt_documents')
-      .select('id, display_ref, system_code, total, status, client:tt_clients(name, legal_name)')
-      .in('doc_type', ['factura', 'factura_abono'])
-      .in('status', ['pending', 'partial', 'open', 'sent', 'draft'])
-    q = filterByCompany(q)
-    const { data } = await q
-      .order('created_at', { ascending: false })
-      .limit(50)
-    setInvoices(data || [])
-  }
-
-  const handleRegisterPayment = async () => {
-    if (!newPayment.amount || newPayment.amount <= 0) { addToast({ type: 'warning', title: 'El importe debe ser mayor a 0' }); return }
-    setSaving(true)
-    const { error } = await supabase.from('tt_payments').insert({
-      invoice_id: newPayment.invoice_id || null,
-      amount: newPayment.amount,
-      payment_method: newPayment.payment_method,
-      bank_reference: newPayment.bank_reference || null,
-      payment_date: newPayment.payment_date,
-    })
-    if (!error) {
-      addToast({ type: 'success', title: 'Cobro registrado' })
-      setShowRegister(false)
-      setNewPayment({ invoice_id: '', amount: 0, payment_method: 'transferencia', bank_reference: '', payment_date: new Date().toISOString().split('T')[0] })
-      load()
-    } else {
-      addToast({ type: 'error', title: 'Error', message: error.message })
-    }
-    setSaving(false)
-  }
-
-  const totalCobrado = rows.reduce((s, r) => s + ((r.importe as number) || 0), 0)
-
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-        <KPICard label="Total cobrado" value={formatCurrency(totalCobrado)} icon={<CreditCard size={22} />} color="#10B981" />
-        <KPICard label="Cobros registrados" value={rows.length} icon={<Receipt size={22} />} />
-        <div className="flex items-end justify-end">
-          <Button variant="primary" onClick={() => { setShowRegister(true); loadInvoices() }}>
-            <Plus size={16} /> Registrar Cobro
-          </Button>
-        </div>
-      </div>
-      <DataTable
-        data={rows}
-        columns={COBRO_COLS}
-        loading={loading}
-        totalLabel="cobros"
-        showTotals
-        exportFilename="cobros_torquetools"
-        pageSize={25}
-      />
-      <Modal isOpen={showRegister} onClose={() => setShowRegister(false)} title="Registrar Cobro" size="md">
-        <div className="space-y-4">
-          <Select label="Factura relacionada" value={newPayment.invoice_id} onChange={e => setNewPayment({ ...newPayment, invoice_id: e.target.value })}
-            options={invoices.map(inv => ({ value: inv.id as string, label: `${(inv.display_ref as string) || (inv.system_code as string) || 'S/N'} — ${formatCurrency((inv.total as number) || 0)} — ${((inv.client as Record<string, unknown>)?.legal_name as string) || 'Sin cliente'}` }))}
-            placeholder="Sin factura vinculada" />
-          <div className="grid grid-cols-2 gap-4">
-            <Input label="Importe *" type="number" min={0} step={0.01} value={newPayment.amount || ''} onChange={e => setNewPayment({ ...newPayment, amount: Number(e.target.value) })} />
-            <Input label="Fecha" type="date" value={newPayment.payment_date} onChange={e => setNewPayment({ ...newPayment, payment_date: e.target.value })} />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <Select label="Metodo de pago" value={newPayment.payment_method} onChange={e => setNewPayment({ ...newPayment, payment_method: e.target.value })}
-              options={[{ value: 'transferencia', label: 'Transferencia bancaria' }, { value: 'cheque', label: 'Cheque' }, { value: 'efectivo', label: 'Efectivo' }, { value: 'tarjeta', label: 'Tarjeta' }, { value: 'paypal', label: 'PayPal' }, { value: 'otro', label: 'Otro' }]} />
-            <Input label="Referencia bancaria" value={newPayment.bank_reference} onChange={e => setNewPayment({ ...newPayment, bank_reference: e.target.value })} placeholder="Nro transferencia, cheque..." />
-          </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="secondary" onClick={() => setShowRegister(false)}>Cancelar</Button>
-            <Button variant="primary" onClick={handleRegisterPayment} loading={saving}><Save size={14} /> Registrar</Button>
-          </div>
-        </div>
-      </Modal>
-    </div>
-  )
-}
 
 // ===============================================================
 // NOTAS DE CREDITO TAB
-// ===============================================================
-function NotasCreditoTab() {
-  const { filterByCompany, companyKey, defaultCompanyId } = useCompanyFilter()
-  const { addToast } = useToast()
-
-  const [rows, setRows] = useState<Record<string, unknown>[]>([])
-  const [loading, setLoading] = useState(true)
-  const [showCreate, setShowCreate] = useState(false)
-  const [saving, setSaving] = useState(false)
-
-  // Create form state
-  const [invoiceSearch, setInvoiceSearch] = useState('')
-  const [invoiceResults, setInvoiceResults] = useState<Row[]>([])
-  const [invoicesLoading, setInvoicesLoading] = useState(false)
-  const [selectedInvoice, setSelectedInvoice] = useState<Row | null>(null)
-  const [selectedInvoiceItems, setSelectedInvoiceItems] = useState<Array<{
-    id: string; description: string; quantity: number; unit_price: number;
-    discount_pct: number; max_qty: number; include: boolean
-  }>>([])
-  const [creditReason, setCreditReason] = useState('')
-  const [creditReasonCustom, setCreditReasonCustom] = useState('')
-
-  // Detail navigation
-  const [selectedDoc, setSelectedDoc] = useState<{ id: string; source: 'local' | 'tt_documents' } | null>(null)
-
-  // Load credit notes
-  const load = useCallback(async () => {
-    setLoading(true)
-    const sb = createClient()
-    let q = sb
-      .from('tt_documents')
-      .select('*, client:tt_clients(id, name, legal_name, tax_id)')
-      .eq('is_credit_note', true)
-    q = filterByCompany(q)
-    const { data, error } = await q.order('created_at', { ascending: false }).range(0, 499)
-
-    if (error) {
-      addToast({ type: 'error', title: 'Error al cargar notas de credito', message: error.message })
-    }
-
-    const mapped = (data || []).map((doc: Row) => {
-      const client = doc.client as Record<string, unknown> | undefined
-      const clientName = (client?.legal_name as string) || (client?.name as string) || 'Sin cliente'
-      const ref = (doc.display_ref as string) || (doc.system_code as string) || 'S/N'
-      const reason = (doc.credit_note_reason as string) || ''
-      return {
-        id: doc.id,
-        referencia: ref,
-        cliente: clientName,
-        factura_original: (doc.original_invoice_ref as string) || '-',
-        motivo: CREDIT_NOTE_REASON_LABELS[reason] || reason || '-',
-        estado: mapStatus(doc.status as string),
-        fecha: doc.created_at ? formatDate(doc.created_at as string) : '',
-        importe: -Math.abs((doc.total as number) || 0),
-        _raw: doc,
-        _source: 'tt_documents',
-      }
-    })
-    setRows(mapped)
-    setLoading(false)
-  }, [companyKey])
-
-  useEffect(() => { load() }, [load])
-
-  // Search invoices for credit note creation
-  const searchInvoices = useCallback(async (term: string) => {
-    setInvoiceSearch(term)
-    if (term.length < 2) { setInvoiceResults([]); return }
-    setInvoicesLoading(true)
-    const sb = createClient()
-    let q = sb
-      .from('tt_documents')
-      .select('*, client:tt_clients(id, name, legal_name, tax_id)')
-      .in('doc_type', ['factura', 'factura_abono'])
-      .or(`display_ref.ilike.%${term}%,system_code.ilike.%${term}%`)
-      .eq('is_credit_note', false)
-    q = filterByCompany(q)
-    const { data } = await q.order('created_at', { ascending: false }).limit(20)
-    setInvoiceResults(data || [])
-    setInvoicesLoading(false)
-  }, [companyKey])
-
-  // Select an invoice and load its items
-  const selectOriginalInvoice = useCallback(async (invoice: Row) => {
-    setSelectedInvoice(invoice)
-    const ref = (invoice.display_ref as string) || (invoice.system_code as string) || ''
-    setInvoiceSearch(ref)
-    setInvoiceResults([])
-
-    // Load invoice items
-    const sb = createClient()
-    const { data: items } = await sb
-      .from('tt_document_lines')
-      .select('*')
-      .eq('document_id', invoice.id)
-      .order('sort_order')
-
-    setSelectedInvoiceItems((items || []).map((item: Row) => ({
-      id: item.id as string,
-      description: (item.description as string) || '',
-      quantity: (item.quantity as number) || 0,
-      unit_price: (item.unit_price as number) || 0,
-      discount_pct: (item.discount_pct as number) || 0,
-      max_qty: (item.quantity as number) || 0,
-      include: true,
-    })))
-  }, [])
-
-  const resetCreateForm = () => {
-    setSelectedInvoice(null)
-    setSelectedInvoiceItems([])
-    setInvoiceSearch('')
-    setInvoiceResults([])
-    setCreditReason('')
-    setCreditReasonCustom('')
-  }
-
-  // Create credit note
-  const handleCreateCreditNote = useCallback(async () => {
-    if (!selectedInvoice) {
-      addToast({ type: 'warning', title: 'Selecciona una factura original' })
-      return
-    }
-    if (!creditReason) {
-      addToast({ type: 'warning', title: 'Selecciona un motivo' })
-      return
-    }
-    const includedItems = selectedInvoiceItems.filter(it => it.include && it.quantity > 0)
-    if (includedItems.length === 0) {
-      addToast({ type: 'warning', title: 'Incluye al menos un item' })
-      return
-    }
-
-    setSaving(true)
-    const sb = createClient()
-
-    // Calculate totals (negative)
-    const subtotal = includedItems.reduce((s, it) => {
-      return s + (it.quantity * it.unit_price * (1 - (it.discount_pct || 0) / 100))
-    }, 0)
-    const taxPct = (selectedInvoice.tax_pct as number) || 21
-    const taxAmount = subtotal * (taxPct / 100)
-    const total = subtotal + taxAmount
-
-    // Generate doc number
-    const yr = new Date().getFullYear().toString().slice(-2)
-    const mo = (new Date().getMonth() + 1).toString().padStart(2, '0')
-    const seq = Math.floor(Math.random() * 9999).toString().padStart(4, '0')
-    const docNum = `NC-${yr}${mo}-${seq}`
-    const originalRef = (selectedInvoice.display_ref as string) || (selectedInvoice.system_code as string) || ''
-
-    // Create the credit note document
-    const { data: doc, error } = await sb
-      .from('tt_documents')
-      .insert({
-        company_id: (selectedInvoice.company_id as string) || defaultCompanyId,
-        client_id: (selectedInvoice.client_id as string) || null,
-        doc_type: 'factura',
-        display_ref: docNum,
-        system_code: docNum,
-        status: 'draft',
-        currency: (selectedInvoice.currency as string) || 'EUR',
-        subtotal: -Math.abs(subtotal),
-        tax_pct: taxPct,
-        tax_amount: -Math.abs(taxAmount),
-        total: -Math.abs(total),
-        is_credit_note: true,
-        credit_note_reason: creditReason === 'otro' ? creditReasonCustom || 'otro' : creditReason,
-        original_invoice_id: selectedInvoice.id as string,
-        original_invoice_ref: originalRef,
-        notes: `Nota de credito sobre factura ${originalRef}`,
-        internal_notes: creditReason === 'otro' ? creditReasonCustom : CREDIT_NOTE_REASON_LABELS[creditReason] || creditReason,
-        payment_terms: (selectedInvoice.payment_terms as string) || null,
-        incoterm: (selectedInvoice.incoterm as string) || null,
-      })
-      .select()
-      .single()
-
-    if (error || !doc) {
-      addToast({ type: 'error', title: 'Error al crear nota de credito', message: error?.message })
-      setSaving(false)
-      return
-    }
-
-    // Insert items (negative quantities)
-    const itemPayloads = includedItems.map((item, i) => ({
-      document_id: doc.id,
-      description: item.description,
-      quantity: -Math.abs(item.quantity),
-      unit_price: item.unit_price,
-      discount_pct: item.discount_pct || 0,
-      line_total: -(item.quantity * item.unit_price * (1 - (item.discount_pct || 0) / 100)),
-      sort_order: i,
-    }))
-    const { error: itemsError } = await sb.from('tt_document_lines').insert(itemPayloads)
-    if (itemsError) {
-      addToast({ type: 'error', title: 'Error al crear items', message: itemsError.message })
-    }
-
-    addToast({ type: 'success', title: 'Nota de credito creada', message: docNum })
-    setSaving(false)
-    setShowCreate(false)
-    resetCreateForm()
-    load()
-  }, [selectedInvoice, creditReason, creditReasonCustom, selectedInvoiceItems, defaultCompanyId])
-
-  // Navigate to original invoice
-  const openOriginalInvoice = (row: Record<string, unknown>) => {
-    const raw = row._raw as Row
-    if (raw.original_invoice_id) {
-      setSelectedDoc({ id: raw.original_invoice_id as string, source: 'tt_documents' })
-    }
-  }
-
-  // Detail view
-  if (selectedDoc) {
-    return (
-      <DocumentForm
-        documentId={selectedDoc.id}
-        documentType="factura"
-        source={selectedDoc.source}
-        onBack={() => { setSelectedDoc(null); load() }}
-        onUpdate={load}
-        siblingIds={[]}
-      />
-    )
-  }
-
-  // KPIs
-  const totalNCs = rows.length
-  const totalAmount = rows.reduce((s, r) => s + Math.abs((r.importe as number) || 0), 0)
-
-  return (
-    <div className="space-y-4">
-      {/* KPIs */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-        <KPICard
-          label="Notas de credito"
-          value={totalNCs}
-          icon={<RotateCcw size={22} />}
-          color="#EF4444"
-        />
-        <KPICard
-          label="Total acreditado"
-          value={formatCurrency(totalAmount)}
-          icon={<DollarSign size={22} />}
-          color="#F59E0B"
-        />
-        <div className="flex items-end justify-end">
-          <Button variant="primary" onClick={() => { setShowCreate(true); resetCreateForm() }}>
-            <Plus size={16} /> Nueva nota de credito
-          </Button>
-        </div>
-      </div>
-
-      {/* Table with custom render for negative amounts and factura original link */}
-      <DataTable
-        data={rows}
-        columns={NOTA_CREDITO_COLS.map(col => {
-          if (col.key === 'importe') {
-            return {
-              ...col,
-              render: (value: unknown) => (
-                <span className="text-red-400 font-medium">
-                  {formatCurrency(Math.abs(value as number))}
-                </span>
-              ),
-            }
-          }
-          if (col.key === 'factura_original') {
-            return {
-              ...col,
-              render: (value: unknown, row: Record<string, unknown>) => {
-                const raw = row._raw as Row
-                if (!raw.original_invoice_id) return <span className="text-[#4B5563]">-</span>
-                return (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); openOriginalInvoice(row) }}
-                    className="text-[#FF6600] hover:underline text-sm"
-                  >
-                    {value as string}
-                  </button>
-                )
-              },
-            }
-          }
-          return col
-        })}
-        loading={loading}
-        totalLabel="notas de credito"
-        showTotals
-        exportFilename="notas_credito_torquetools"
-        pageSize={25}
-      />
-
-      {/* CREATE CREDIT NOTE MODAL */}
-      <Modal
-        isOpen={showCreate}
-        onClose={() => { setShowCreate(false); resetCreateForm() }}
-        title="Nueva nota de credito"
-        size="xl"
-      >
-        <div className="space-y-6">
-          {/* Step 1: Select original invoice */}
-          <div>
-            <label className="block text-sm font-semibold text-[#F0F2F5] mb-2">
-              1. Selecciona la factura original
-            </label>
-            <div className="relative">
-              <SearchBar
-                placeholder="Buscar factura por numero..."
-                value={invoiceSearch}
-                onChange={(v) => {
-                  searchInvoices(v)
-                  if (!v) setSelectedInvoice(null)
-                }}
-              />
-              {invoicesLoading && (
-                <Loader2 size={14} className="animate-spin absolute right-3 top-3 text-[#6B7280]" />
-              )}
-              {invoiceResults.length > 0 && invoiceSearch.length >= 2 && !selectedInvoice && (
-                <div className="absolute z-20 w-full mt-1 bg-[#141820] border border-[#1E2330] rounded-lg shadow-xl max-h-60 overflow-y-auto">
-                  {invoiceResults.map(inv => {
-                    const client = inv.client as Record<string, unknown> | undefined
-                    const clientName = (client?.legal_name as string) || (client?.name as string) || 'Sin cliente'
-                    return (
-                      <button
-                        key={inv.id as string}
-                        onClick={() => selectOriginalInvoice(inv)}
-                        className="w-full text-left px-4 py-3 hover:bg-[#1E2330] transition-colors border-b border-[#1E2330]/30 last:border-0"
-                      >
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-sm font-medium text-[#F0F2F5]">
-                              {(inv.display_ref as string) || (inv.system_code as string) || 'S/N'}
-                            </p>
-                            <p className="text-xs text-[#6B7280]">{clientName}</p>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-sm font-medium text-[#F0F2F5]">
-                              {formatCurrency((inv.total as number) || 0)}
-                            </p>
-                            <p className="text-xs text-[#6B7280]">
-                              {inv.created_at ? formatDate(inv.created_at as string) : ''}
-                            </p>
-                          </div>
-                        </div>
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-            {selectedInvoice && (
-              <div className="mt-3 p-3 rounded-lg bg-[#0F1218] border border-[#1E2330] flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-[#F0F2F5]">
-                    Factura: {(selectedInvoice.display_ref as string) || (selectedInvoice.system_code as string)}
-                  </p>
-                  <p className="text-xs text-[#6B7280]">
-                    {((selectedInvoice.client as Record<string, unknown>)?.legal_name as string) ||
-                     ((selectedInvoice.client as Record<string, unknown>)?.name as string) || 'Sin cliente'}
-                    {' - '}Total: {formatCurrency((selectedInvoice.total as number) || 0)}
-                  </p>
-                </div>
-                <button
-                  onClick={() => { setSelectedInvoice(null); setSelectedInvoiceItems([]); setInvoiceSearch('') }}
-                  className="p-1 text-[#6B7280] hover:text-red-400"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Step 2: Reason */}
-          <div>
-            <label className="block text-sm font-semibold text-[#F0F2F5] mb-2">
-              2. Motivo de la nota de credito *
-            </label>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {[
-                { value: 'devolucion', label: 'Devolucion' },
-                { value: 'error_facturacion', label: 'Error de facturacion' },
-                { value: 'descuento_posterior', label: 'Descuento posterior' },
-                { value: 'anulacion', label: 'Anulacion total' },
-                { value: 'otro', label: 'Otro' },
-              ].map(opt => (
-                <button
-                  key={opt.value}
-                  onClick={() => setCreditReason(opt.value)}
-                  className={`px-3 py-2.5 rounded-lg border text-sm text-left transition-all ${
-                    creditReason === opt.value
-                      ? 'border-[#FF6600] bg-[#FF6600]/10 text-[#FF6600]'
-                      : 'border-[#1E2330] bg-[#0F1218] text-[#9CA3AF] hover:border-[#2A3040]'
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-            {creditReason === 'otro' && (
-              <Input
-                label="Especifica el motivo"
-                value={creditReasonCustom}
-                onChange={e => setCreditReasonCustom(e.target.value)}
-                placeholder="Describe el motivo..."
-                className="mt-3"
-              />
-            )}
-          </div>
-
-          {/* Step 3: Items (editable quantities for partial credit) */}
-          {selectedInvoice && selectedInvoiceItems.length > 0 && (
-            <div>
-              <label className="block text-sm font-semibold text-[#F0F2F5] mb-2">
-                3. Items a acreditar (ajusta cantidades para credito parcial)
-              </label>
-              <div className="rounded-lg border border-[#1E2330] overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-[#0F1218] text-[#6B7280] text-xs">
-                      <th className="text-center px-3 py-2 font-medium w-[50px]">Incluir</th>
-                      <th className="text-left px-3 py-2 font-medium">Descripcion</th>
-                      <th className="text-right px-3 py-2 font-medium w-[80px]">Cant. orig.</th>
-                      <th className="text-right px-3 py-2 font-medium w-[90px]">Cant. NC</th>
-                      <th className="text-right px-3 py-2 font-medium w-[100px]">Precio</th>
-                      <th className="text-right px-3 py-2 font-medium w-[60px]">Dto%</th>
-                      <th className="text-right px-3 py-2 font-medium w-[110px]">Subtotal NC</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedInvoiceItems.map((item, i) => (
-                      <tr key={item.id} className="border-t border-[#1E2330]/50">
-                        <td className="px-3 py-2 text-center">
-                          <button
-                            onClick={() => {
-                              const updated = [...selectedInvoiceItems]
-                              updated[i] = { ...updated[i], include: !updated[i].include }
-                              setSelectedInvoiceItems(updated)
-                            }}
-                            className="text-[#6B7280] hover:text-[#FF6600] transition-colors"
-                          >
-                            {item.include ? <CheckSquare size={18} className="text-[#FF6600]" /> : <Square size={18} />}
-                          </button>
-                        </td>
-                        <td className="px-3 py-2 text-[#F0F2F5] text-xs">{item.description}</td>
-                        <td className="px-3 py-2 text-right text-[#6B7280] text-xs">{item.max_qty}</td>
-                        <td className="px-2 py-1.5">
-                          <input
-                            type="number"
-                            min={0}
-                            max={item.max_qty}
-                            className="w-full h-7 rounded bg-[#1E2330] border border-[#2A3040] px-2 text-xs text-[#F0F2F5] text-right disabled:opacity-40"
-                            value={item.quantity}
-                            disabled={!item.include}
-                            onChange={e => {
-                              const updated = [...selectedInvoiceItems]
-                              updated[i] = { ...updated[i], quantity: Math.min(Number(e.target.value), item.max_qty) }
-                              setSelectedInvoiceItems(updated)
-                            }}
-                          />
-                        </td>
-                        <td className="px-3 py-2 text-right text-[#F0F2F5] text-xs">{formatCurrency(item.unit_price)}</td>
-                        <td className="px-3 py-2 text-right text-[#6B7280] text-xs">{item.discount_pct}%</td>
-                        <td className="px-3 py-2 text-right font-medium text-xs">
-                          {item.include ? (
-                            <span className="text-red-400">
-                              -{formatCurrency(item.quantity * item.unit_price * (1 - (item.discount_pct || 0) / 100))}
-                            </span>
-                          ) : (
-                            <span className="text-[#4B5563]">-</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-
-                {/* Totals row */}
-                <div className="px-4 py-3 border-t border-[#1E2330] bg-[#0F1218] flex justify-end">
-                  <div className="w-64 space-y-1 text-sm">
-                    <div className="flex justify-between text-[#9CA3AF]">
-                      <span>Subtotal NC:</span>
-                      <span className="text-red-400 font-medium">
-                        -{formatCurrency(
-                          selectedInvoiceItems
-                            .filter(it => it.include)
-                            .reduce((s, it) => s + it.quantity * it.unit_price * (1 - (it.discount_pct || 0) / 100), 0)
-                        )}
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-[#9CA3AF]">
-                      <span>IVA {(selectedInvoice.tax_pct as number) || 21}%:</span>
-                      <span className="text-red-400">
-                        -{formatCurrency(
-                          selectedInvoiceItems
-                            .filter(it => it.include)
-                            .reduce((s, it) => s + it.quantity * it.unit_price * (1 - (it.discount_pct || 0) / 100), 0) *
-                          (((selectedInvoice.tax_pct as number) || 21) / 100)
-                        )}
-                      </span>
-                    </div>
-                    <div className="flex justify-between border-t border-[#1E2330] pt-2">
-                      <span className="font-semibold text-[#F0F2F5]">Total NC:</span>
-                      <span className="font-bold text-red-400 text-lg">
-                        -{formatCurrency(
-                          (() => {
-                            const sub = selectedInvoiceItems
-                              .filter(it => it.include)
-                              .reduce((s, it) => s + it.quantity * it.unit_price * (1 - (it.discount_pct || 0) / 100), 0)
-                            return sub + sub * (((selectedInvoice.tax_pct as number) || 21) / 100)
-                          })()
-                        )}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* No items message */}
-          {selectedInvoice && selectedInvoiceItems.length === 0 && (
-            <div className="p-4 rounded-lg bg-[#0F1218] border border-[#1E2330] text-center">
-              <AlertTriangle size={20} className="mx-auto text-amber-400 mb-2" />
-              <p className="text-sm text-[#6B7280]">
-                La factura seleccionada no tiene items en tt_document_lines.
-                Se creara la nota de credito por el total de la factura.
-              </p>
-            </div>
-          )}
-
-          {/* Actions */}
-          <div className="flex justify-end gap-3 pt-4 border-t border-[#1E2330]">
-            <Button variant="secondary" onClick={() => { setShowCreate(false); resetCreateForm() }}>
-              Cancelar
-            </Button>
-            <Button
-              variant="primary"
-              onClick={handleCreateCreditNote}
-              loading={saving}
-              disabled={!selectedInvoice || !creditReason}
-            >
-              <Save size={14} /> Crear nota de credito
-            </Button>
-          </div>
-        </div>
-      </Modal>
-    </div>
-  )
-}
-
-// ===============================================================
-// MAIN PAGE
-// ===============================================================
+// NotasCreditoTab → ./_tabs/NotasCreditoTab
 export default function VentasPage() {
   return (
     <div className="space-y-6 animate-fade-in">

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient as createServiceClient } from '@supabase/supabase-js'
 import type { ParsedOCItem } from '@/lib/ai/parse-oc-pdf'
+import { withCompanyFilter } from '@/lib/auth/with-company-filter'
 
 export const runtime = 'nodejs'
 
@@ -14,6 +15,9 @@ export const runtime = 'nodejs'
  */
 export async function POST(req: NextRequest) {
   try {
+    const guard = await withCompanyFilter()
+    if (!guard.ok) return guard.response
+
     const { ocId } = await req.json()
     if (!ocId) return NextResponse.json({ error: 'ocId requerido' }, { status: 400 })
 
@@ -36,6 +40,12 @@ export async function POST(req: NextRequest) {
       .single()
     if (ocErr || !oc) return NextResponse.json({ error: 'OC no encontrada' }, { status: 404 })
     if (!oc.document) return NextResponse.json({ error: 'OC sin documento asociado' }, { status: 400 })
+
+    // Validar acceso a la company del documento
+    const docCompanyId = (oc.document as unknown as { company_id?: string }).company_id
+    if (!guard.assertAccess(docCompanyId)) {
+      return NextResponse.json({ error: 'Sin acceso a esta empresa' }, { status: 403 })
+    }
 
     if (oc.matched_quote_id) {
       return NextResponse.json({

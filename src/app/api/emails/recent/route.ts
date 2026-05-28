@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { google } from 'googleapis'
 import { getGmailTokens, setGmailTokens } from '@/lib/gmail-tokens'
+import { requireAdmin } from '@/lib/auth/require-admin'
 
 export const runtime = 'nodejs'
 
@@ -58,6 +59,9 @@ function parseFromHeader(header: string): { name: string; email: string } {
 
 export async function GET() {
   try {
+    const guard = await requireAdmin()
+    if (!guard.ok) return guard.response
+
     if (!(await isGmailConnected())) {
       return NextResponse.json({
         connected: false,
@@ -136,14 +140,15 @@ export async function GET() {
       emails,
       unreadCount,
     })
-  } catch (error: any) {
-    console.error('[emails/recent] Error:', error.message)
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error)
+    console.error('[emails/recent] Error:', msg)
 
     // If token expired or invalid, indicate disconnected
     if (
-      error.message?.includes('invalid_grant') ||
-      error.message?.includes('Token has been expired') ||
-      error.message?.includes('Gmail not connected')
+      msg.includes('invalid_grant') ||
+      msg.includes('Token has been expired') ||
+      msg.includes('Gmail not connected')
     ) {
       return NextResponse.json({
         connected: false,
@@ -153,16 +158,19 @@ export async function GET() {
     }
 
     return NextResponse.json(
-      { error: 'Error al obtener emails', details: error.message },
+      { error: 'Error al obtener emails', details: msg },
       { status: 500 }
     )
   }
 }
 
-function checkHasAttachments(payload: any): boolean {
+type GmailPart = { filename?: string | null; parts?: GmailPart[] | null }
+
+function checkHasAttachments(payload: GmailPart | null | undefined): boolean {
   if (!payload) return false
-  if (payload.parts) {
-    for (const part of payload.parts) {
+  const parts = payload.parts
+  if (parts) {
+    for (const part of parts) {
       if (part.filename && part.filename.length > 0) return true
       if (part.parts && checkHasAttachments(part)) return true
     }

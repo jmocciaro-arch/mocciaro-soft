@@ -35,6 +35,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient as createServiceClient } from '@supabase/supabase-js'
+import { withCompanyFilter } from '@/lib/auth/with-company-filter'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -74,6 +75,9 @@ interface RowResult {
 }
 
 export async function POST(req: NextRequest) {
+  const guard = await withCompanyFilter()
+  if (!guard.ok) return guard.response
+
   let body: ApplyBody
   try {
     body = (await req.json()) as ApplyBody
@@ -83,6 +87,10 @@ export async function POST(req: NextRequest) {
 
   if (!body || !Array.isArray(body.rows) || body.rows.length === 0) {
     return NextResponse.json({ error: 'rows es requerido y no puede estar vacío' }, { status: 400 })
+  }
+
+  if (body.company_id && !guard.assertAccess(body.company_id)) {
+    return NextResponse.json({ error: 'Sin acceso a esta empresa' }, { status: 403 })
   }
 
   const supabase = createServiceClient(

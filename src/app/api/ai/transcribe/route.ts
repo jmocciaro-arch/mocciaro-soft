@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getEnv } from '@/lib/env'
+import { requireAuth } from '@/lib/auth/require-admin'
 
 // POST /api/ai/transcribe
 // FormData: file (audio/webm | audio/mp4), context? (string)
 export async function POST(request: NextRequest) {
   try {
+    const auth = await requireAuth()
+    if (!auth.ok) return auth.response
+
     const formData = await request.formData()
     const file = formData.get('file') as File | null
     const context = (formData.get('context') as string | null) || 'SAT maintenance form'

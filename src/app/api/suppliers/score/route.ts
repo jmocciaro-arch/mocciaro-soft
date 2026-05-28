@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { scoreSupplier, type SupplierScoreInput } from '@/lib/ai/score-supplier'
+import { requireAuth } from '@/lib/auth/require-admin'
+import { withCompanyFilter } from '@/lib/auth/with-company-filter'
 
 export const runtime = 'nodejs'
 
@@ -19,6 +21,9 @@ const supabaseAdmin = createClient(
  */
 export async function POST(req: NextRequest) {
   try {
+    const auth = await requireAuth()
+    if (!auth.ok) return auth.response
+
     const body = await req.json()
     const { supplierId, persist = true } = body as { supplierId: string; persist?: boolean }
 
@@ -29,12 +34,19 @@ export async function POST(req: NextRequest) {
     // 1) Obtener datos del proveedor
     const { data: supplier, error: supplierError } = await supabaseAdmin
       .from('tt_suppliers')
-      .select('id, name, category, country, notes')
+      .select('id, name, category, country, notes, company_id')
       .eq('id', supplierId)
       .single()
 
     if (supplierError || !supplier) {
       return NextResponse.json({ error: 'Proveedor no encontrado' }, { status: 404 })
+    }
+
+    // Validar acceso a la company del supplier
+    const guard = await withCompanyFilter()
+    if (!guard.ok) return guard.response
+    if (!guard.assertAccess(supplier.company_id as string | undefined)) {
+      return NextResponse.json({ error: 'Sin acceso a este proveedor' }, { status: 403 })
     }
 
     // 2) Obtener OCs del proveedor

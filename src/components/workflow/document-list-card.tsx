@@ -6,6 +6,7 @@ import {
   ShoppingCart, Target, AlertCircle
 } from 'lucide-react'
 
+// TODO sesión 12 — opcional: migrar typeConfig/statusColors a @/lib/doc-types (TYPE_ICONS/STATUS_COLORS)
 const typeConfig: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
   lead: { icon: <Target size={16} />, color: '#6B7280', label: 'Lead' },
   coti: { icon: <FileText size={16} />, color: '#3B82F6', label: 'Cotizacion' },

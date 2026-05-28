@@ -19,11 +19,14 @@ export async function login(page: Page, email: string, password: string) {
   const passInput = page.locator('input[type="password"], input[name="password"]').first()
   await passInput.fill(password)
 
-  // Click en cualquier botón de submit del form de login
-  await page
-    .locator('button[type="submit"], button:has-text(/entrar|login|iniciar/i)')
-    .first()
-    .click()
+  // Click en cualquier botón de submit del form de login.
+  // Playwright `:has-text()` solo acepta strings literales; para regex usamos getByRole.
+  const submitBtn = page.locator('button[type="submit"]').first()
+  if (await submitBtn.isVisible().catch(() => false)) {
+    await submitBtn.click()
+  } else {
+    await page.getByRole('button', { name: /entrar|login|iniciar|ingresar/i }).first().click()
+  }
 
   // El layout dashboard redirige a /dashboard, /cotizador o /inicio según rol
   await page.waitForURL(/\/(dashboard|cotizador|inicio|admin)/, { timeout: 20000 })

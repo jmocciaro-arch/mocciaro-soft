@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { requireAdmin } from '@/lib/auth/require-admin'
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -22,6 +23,9 @@ function generatePassword(length = 16): string {
 // POST: Create auth user + tt_users record
 export async function POST(req: NextRequest) {
   try {
+    const guard = await requireAdmin()
+    if (!guard.ok) return guard.response
+
     const body = await req.json()
     const { username, full_name, email, role, gmail, whatsapp, phone, company_id, active, permissions } = body
 
@@ -83,6 +87,9 @@ export async function POST(req: NextRequest) {
 // PUT: Update tt_users record
 export async function PUT(req: NextRequest) {
   try {
+    const guard = await requireAdmin()
+    if (!guard.ok) return guard.response
+
     const body = await req.json()
     const { id, ...updates } = body
 
@@ -154,6 +161,9 @@ export async function PUT(req: NextRequest) {
 // DELETE: Deactivate user (set active=false)
 export async function DELETE(req: NextRequest) {
   try {
+    const guard = await requireAdmin()
+    if (!guard.ok) return guard.response
+
     const { searchParams } = new URL(req.url)
     const id = searchParams.get('id')
 

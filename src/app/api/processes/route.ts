@@ -4,10 +4,14 @@ import {
   listProcesses,
 } from '@/lib/process-engine'
 import type { CreateProcessInput, ProcessType, ProcessStatus } from '@/types/process'
+import { withCompanyFilter } from '@/lib/auth/with-company-filter'
 
 // GET /api/processes — list processes with optional filters
 export async function GET(request: Request) {
   try {
+    const guard = await withCompanyFilter()
+    if (!guard.ok) return guard.response
+
     const { searchParams } = new URL(request.url)
     const filters: {
       process_type?: ProcessType
@@ -23,6 +27,11 @@ export async function GET(request: Request) {
     if (searchParams.get('status')) filters.current_status = searchParams.get('status') as ProcessStatus
     if (searchParams.get('limit')) filters.limit = parseInt(searchParams.get('limit')!)
 
+    // Si pidieron una company puntual, validarla
+    if (filters.company_id && !guard.assertAccess(filters.company_id)) {
+      return NextResponse.json({ error: 'Sin acceso a esta empresa' }, { status: 403 })
+    }
+
     const processes = await listProcesses(filters)
     return NextResponse.json(processes)
   } catch (err) {
@@ -33,9 +42,16 @@ export async function GET(request: Request) {
 // POST /api/processes — create a new process instance
 export async function POST(request: Request) {
   try {
+    const guard = await withCompanyFilter()
+    if (!guard.ok) return guard.response
+
     const body = await request.json() as CreateProcessInput
     if (!body.process_type || !body.name) {
       return NextResponse.json({ error: 'process_type and name are required' }, { status: 400 })
+    }
+    const companyId = (body as unknown as { company_id?: string }).company_id
+    if (companyId && !guard.assertAccess(companyId)) {
+      return NextResponse.json({ error: 'Sin acceso a esta empresa' }, { status: 403 })
     }
     const process = await createProcessInstance(body)
     return NextResponse.json(process, { status: 201 })
