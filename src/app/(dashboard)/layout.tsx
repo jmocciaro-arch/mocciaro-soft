@@ -3,7 +3,6 @@
 import { SidebarProvider, Sidebar, TopBar, MobileNav, useSidebar } from '@/components/ui/sidebar'
 import { ToastProvider } from '@/components/ui/toast'
 import { CompanyProvider } from '@/lib/company-context'
-import { AIAssistant } from '@/components/ai/ai-assistant'
 import { CommandPalette } from '@/components/command-palette'
 import { HelpAssistant } from '@/components/help/help-assistant'
 import { MultiCompanyBanner } from '@/components/ui/multi-company-banner'
@@ -28,7 +27,7 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
         </main>
       </div>
       <MobileNav />
-      <AIAssistant />
+      {/* <AIAssistant /> — botón flotante oculto temporalmente, no cumple función real todavía */}
       <CommandPalette />
       <HelpAssistant />
     </div>

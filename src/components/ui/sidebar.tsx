@@ -9,9 +9,9 @@ import {
   ChevronLeft, ChevronRight, Menu, X, LogOut, ClipboardList,
   Truck, CreditCard, Building2, BarChart3,
   Cpu, Box, Layers, BookOpen, Pause, History,
-  Banknote, Sparkles, TrendingUp, GitBranch, FormInput, Bot,
+  Banknote, TrendingUp, GitBranch, FormInput, Bot,
   RefreshCw, Zap, Globe, MessageCircle, ArrowLeft, HelpCircle,
-  Inbox, Workflow,
+  Inbox,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
@@ -51,8 +51,9 @@ const navItems: NavItem[] = [
   { label: 'Inicio', href: '/inicio', icon: Inbox },
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { label: 'Dashboard ejecutivo', href: '/dashboard/ejecutivo', icon: BarChart3 },
-  { label: 'Workflows', href: '/workflows', icon: Workflow },
-  { label: 'Hub IA', href: '/ai-hub', icon: Sparkles },
+  // Ocultos temporalmente — Workflows y Hub IA todavía no cumplen función real.
+  // { label: 'Workflows', href: '/workflows', icon: Workflow },
+  // { label: 'Hub IA', href: '/ai-hub', icon: Sparkles },
   // ── CRM (un solo bloque con tabs: Leads IA | Pipeline | Actividades | Informes) ──
   { label: 'CRM', href: '/crm', icon: Target, requiredPermissions: ['view_crm'] },
   // ── Ventas (flujo de venta) ──
