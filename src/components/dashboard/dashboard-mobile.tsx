@@ -8,6 +8,7 @@ import {
   FileText, Truck, CreditCard, AlertTriangle, ArrowRight,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
+import { useStockAlerts } from '@/hooks/use-stock-alerts'
 
 interface Stats {
   products: number
@@ -36,6 +37,7 @@ export function DashboardMobile() {
   })
   const [quotes, setQuotes] = useState<RecentQuote[]>([])
   const [loading, setLoading] = useState(true)
+  const { count: stockAlertsCount } = useStockAlerts()
 
   useEffect(() => {
     async function load() {
@@ -57,14 +59,14 @@ export function DashboardMobile() {
         const pendingCollection = (collRes.data || []).reduce((sum, d: { total: number | null; paid_amount: number | null }) =>
           sum + ((d.total || 0) - (d.paid_amount || 0)), 0)
 
-        setStats({
+        setStats(prev => ({
+          ...prev,
           products: pRes.count ?? 0,
           clients: cRes.count ?? 0,
           quotesMonth: (qRes.count ?? 0) + (qDocRes.count ?? 0),
           pendingDeliveries: ordersRes.count ?? 0,
           pendingCollection,
-          stockAlerts: 0,
-        })
+        }))
 
         setQuotes((recentQ.data || []).map((q: {
           id: string; number: string | null; total: number; currency: string;
@@ -86,6 +88,11 @@ export function DashboardMobile() {
     }
     load()
   }, [])
+
+  // Sincronizar stock alerts del hook al state cuando cambie
+  useEffect(() => {
+    setStats(prev => ({ ...prev, stockAlerts: stockAlertsCount }))
+  }, [stockAlertsCount])
 
   const now = new Date()
   const hour = now.getHours()

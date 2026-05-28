@@ -38,6 +38,9 @@ import { ProductDetailModal } from '@/components/catalogo/product-detail-modal'
 import { BulkImportClientsModal } from '@/components/clientes/bulk-import-modal'
 import { BulkActionsBar, BulkCheckbox, COMMON_BULK_ACTIONS } from '@/components/ui/bulk-actions-bar'
 import { SavedViews } from '@/components/ui/saved-views'
+import { SkeletonCardGrid } from '@/components/ui/skeleton'
+import { EmptyState } from '@/components/ui/empty-state'
+import { SkuGlossary } from '@/components/clientes/sku-glossary'
 
 // ═══════════════════════════════════════════════════════
 // CONSTANTS
@@ -467,6 +470,7 @@ function CompanyDetail({ company, onClose, onUpdate }: {
     { id: 'contactos', label: `Contactos (${allContacts.length})` },
     { id: 'relacionadas', label: 'Relacionadas' },
     { id: 'oc_glosario', label: `OC Recibidas (${clientOCs.length})` },
+    { id: 'glosario_sku', label: 'Glosario SKU' },
     { id: 'productos', label: 'Productos' },
     { id: 'historial', label: 'Historial' },
     { id: 'documentos', label: `Documentos (${documents.length})` },
@@ -981,6 +985,15 @@ function CompanyDetail({ company, onClose, onUpdate }: {
                 </div>
               )}
             </div>
+          )}
+
+          {/* TAB: Glosario SKU — match cliente código → catálogo */}
+          {activeDetailTab === 'glosario_sku' && (
+            allClientIds[0] ? (
+              <SkuGlossary clientId={allClientIds[0]} companyId={company.id} />
+            ) : (
+              <Card><p className="text-center text-[#6B7280] py-6">Esta empresa no tiene client_id asociado.</p></Card>
+            )
           )}
 
           {/* TAB: Productos (Sprint 2B — trazabilidad cliente <-> producto) */}
@@ -1559,21 +1572,23 @@ function ClientesTab() {
 
       {/* Company List */}
       {loading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="rounded-xl bg-[#141820] border border-[#1E2330] p-5 animate-pulse">
-              <div className="h-5 bg-[#1E2330] rounded w-40 mb-3" />
-              <div className="h-3 bg-[#1E2330] rounded w-full mb-2" />
-              <div className="h-3 bg-[#1E2330] rounded w-2/3" />
-            </div>
-          ))}
-        </div>
+        <SkeletonCardGrid cards={6} />
       ) : companies.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-[#4B5563]">
-          <Building2 size={48} className="mb-4" />
-          <p className="text-lg font-medium">No se encontraron empresas</p>
-          <p className="text-sm mt-1">Proba con otros filtros o terminos de busqueda</p>
-        </div>
+        <EmptyState
+          icon={<Building2 size={48} />}
+          title="No tenés clientes todavía"
+          description="Creá tu primer cliente para empezar a cotizar y facturar. Podés importar desde Excel/CSV o agregarlos a mano."
+          action={
+            <div className="flex gap-2">
+              <Button onClick={() => setShowNew(true)}>
+                <Plus size={14} /> Crear primer cliente
+              </Button>
+              <Button variant="secondary" onClick={() => setShowBulkImport(true)}>
+                Importar desde Excel
+              </Button>
+            </div>
+          }
+        />
       ) : viewMode === 'table' ? (
         <DataTable
           data={tableRows}

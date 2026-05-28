@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { Badge } from '@/components/ui/badge'
 import { DocLink } from '@/components/ui/doc-link'
 import { ChevronDown, ChevronUp, GitMerge, Loader2 } from 'lucide-react'
+import { TYPE_LABELS } from '@/lib/doc-types'
 
 // ===============================================================
 // TYPES
@@ -28,17 +29,7 @@ interface DocumentChainProps {
 
 // ── Config por tipo ────────────────────────────────────────────
 
-const TYPE_LABELS: Record<string, string> = {
-  coti: 'Cotización',
-  pedido: 'Pedido',
-  delivery_note: 'Albarán',
-  factura: 'Factura',
-  pap: 'Ped. Proveedor',
-  recepcion: 'Recepción',
-  factura_compra: 'Fact. Compra',
-  orden_compra: 'OC Cliente',
-  oc_cliente: 'OC Cliente',
-}
+// TYPE_LABELS importado de @/lib/doc-types
 
 const STATUS_BADGE: Record<string, { variant: 'success' | 'warning' | 'danger' | 'default' | 'info' | 'orange'; label: string }> = {
   // Cotización

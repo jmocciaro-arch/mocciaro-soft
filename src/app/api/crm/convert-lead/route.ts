@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { requireAuth } from '@/lib/auth/require-admin'
+import { withCompanyFilter } from '@/lib/auth/with-company-filter'
 
 export const runtime = 'nodejs'
 
@@ -22,6 +24,9 @@ export const runtime = 'nodejs'
  */
 export async function POST(req: NextRequest) {
   try {
+    const auth = await requireAuth()
+    if (!auth.ok) return auth.response
+
     const {
       leadId,
       clientId: providedClientId,
@@ -45,6 +50,13 @@ export async function POST(req: NextRequest) {
       .eq('id', leadId)
       .single()
     if (leadErr || !lead) return NextResponse.json({ error: 'Lead no encontrado' }, { status: 404 })
+
+    // Validar acceso a la company del lead
+    const guard = await withCompanyFilter()
+    if (!guard.ok) return guard.response
+    if (!guard.assertAccess(lead.company_id as string | undefined)) {
+      return NextResponse.json({ error: 'Sin acceso a este lead' }, { status: 403 })
+    }
 
     if (lead.converted_opportunity_id) {
       return NextResponse.json({ error: 'El lead ya fue convertido', opportunityId: lead.converted_opportunity_id }, { status: 400 })

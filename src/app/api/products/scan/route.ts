@@ -6,8 +6,12 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { requireAuth } from '@/lib/auth/require-admin';
 
 export async function GET(request: NextRequest) {
+  const guard = await requireAuth();
+  if (!guard.ok) return guard.response;
+
   const { searchParams } = new URL(request.url);
   const barcode = searchParams.get('barcode')?.trim();
   const companyId = searchParams.get('companyId')?.trim();

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAdminClient } from '@/lib/supabase/admin'
 import { wrapCronHandler } from '@/lib/observability/with-cron-logging'
+import { logger } from '@/lib/observability/logger'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -24,7 +25,13 @@ const handler = async (_req: NextRequest): Promise<NextResponse> => {
   const today = new Date().toISOString().slice(0, 10)
   const results = []
 
-  for (const s of (settings || []) as any[]) {
+  type SettingRow = {
+    company_id: string
+    user_id: string
+    email_to: string | null
+    company?: { name?: string; currency?: string } | null
+  }
+  for (const s of ((settings || []) as SettingRow[])) {
     try {
       // No duplicar digest mismo día
       const { data: existing } = await supabase
@@ -37,7 +44,7 @@ const handler = async (_req: NextRequest): Promise<NextResponse> => {
       if (existing) { results.push({ company: s.company?.name, skipped: true }); continue }
 
       const stats = await buildStats(supabase, s.company_id)
-      const html = buildEmailHTML(s.company?.name || 'Mocciaro Soft', stats, s.company?.currency || 'EUR')
+      const html = buildEmailHTML(s.company?.name || 'Mocciaro Soft', stats as unknown as DigestStats, s.company?.currency || 'EUR')
 
       // Enviar via Gmail (si está configurado) o guardar como "pending"
       const sent = await sendEmail(s.email_to, `📊 Resumen diario — ${s.company?.name}`, html)
@@ -63,7 +70,9 @@ const handler = async (_req: NextRequest): Promise<NextResponse> => {
 export const POST = wrapCronHandler('daily-digest', handler)
 export const GET = wrapCronHandler('daily-digest', handler)
 
-async function buildStats(supabase: any, companyId: string) {
+type SupabaseClient = ReturnType<typeof getAdminClient>
+
+async function buildStats(supabase: SupabaseClient, companyId: string) {
   const now = new Date()
   const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
   const yesterday = new Date(Date.now() - 86400000).toISOString()
@@ -83,7 +92,8 @@ async function buildStats(supabase: any, companyId: string) {
     supabase.from('tt_quotes').select('quote_number, total, currency, client:tt_clients(name)').eq('company_id', companyId).in('status', ['draft','sent']).gte('valid_until', today0).lte('valid_until', new Date(Date.now() + 86400000*3).toISOString()),
   ])
 
-  const sum = (rows: any[]) => (rows || []).reduce((s: number, r: any) => s + Number(r.total || 0), 0)
+  const sum = (rows: Array<{ total?: number | null }> | null | undefined) =>
+    (rows || []).reduce((acc: number, r) => acc + Number(r.total || 0), 0)
 
   return {
     date: today0.slice(0, 10),
@@ -98,9 +108,37 @@ async function buildStats(supabase: any, companyId: string) {
   }
 }
 
-function buildEmailHTML(companyName: string, s: any, currency: string): string {
+// Tipo "open" para los items embebidos en el digest — vienen como rows libres
+// de Supabase, y los renderers los acceden por property libremente.
+type DigestRow = {
+  legal_number?: string
+  client?: { name?: string } | null
+  total?: number | null
+  name?: string
+  company_name?: string | null
+  ai_score?: number
+  title?: string
+  stage?: string
+  value?: number | null
+  quote_number?: string
+  [key: string]: unknown
+}
+
+type DigestStats = {
+  date: string
+  leadsHot: DigestRow[]
+  oppsOpen: DigestRow[]
+  invoicesDueSoon: DigestRow[]
+  invoicesOverdue: DigestRow[]
+  collectedToday: number
+  collectedMonth: number
+  newLeadsYesterday: number
+  quotesExpiring: DigestRow[]
+}
+
+function buildEmailHTML(companyName: string, s: DigestStats, currency: string): string {
   const cur = currency === 'EUR' ? '€' : '$'
-  const row = (title: string, items: any[], render: (i: any) => string) => items.length === 0
+  const row = (title: string, items: DigestRow[], render: (i: DigestRow) => string) => items.length === 0
     ? `<p style="opacity:.6;font-size:13px">Sin pendientes ✓</p>`
     : `<ul style="list-style:none;padding:0;margin:0">${items.map((i) => `<li style="padding:6px 0;border-bottom:1px solid #eee;font-size:13px">${render(i)}</li>`).join('')}</ul>`
 
@@ -126,19 +164,19 @@ function buildEmailHTML(companyName: string, s: any, currency: string): string {
       </div>
 
       <h2 style="font-size:15px;margin:20px 0 8px">🔴 Facturas vencidas (${s.invoicesOverdue.length})</h2>
-      ${row('Vencidas', s.invoicesOverdue, (i: any) => `<strong>${i.legal_number}</strong> — ${i.client?.name || 's/cliente'} · <strong style="color:#ef4444">${cur}${Math.round(i.total).toLocaleString('es-AR')}</strong>`)}
+      ${row('Vencidas', s.invoicesOverdue, (i: DigestRow) => `<strong>${i.legal_number}</strong> — ${i.client?.name || 's/cliente'} · <strong style="color:#ef4444">${cur}${Math.round(Number(i.total) || 0).toLocaleString('es-AR')}</strong>`)}
 
       <h2 style="font-size:15px;margin:20px 0 8px">🟠 Facturas por vencer</h2>
-      ${row('Próximas', s.invoicesDueSoon, (i: any) => `<strong>${i.legal_number}</strong> — ${i.client?.name || 's/cliente'} · <strong>${cur}${Math.round(i.total).toLocaleString('es-AR')}</strong>`)}
+      ${row('Próximas', s.invoicesDueSoon, (i: DigestRow) => `<strong>${i.legal_number}</strong> — ${i.client?.name || 's/cliente'} · <strong>${cur}${Math.round(Number(i.total) || 0).toLocaleString('es-AR')}</strong>`)}
 
       <h2 style="font-size:15px;margin:20px 0 8px">🔥 Leads HOT a contactar</h2>
-      ${row('Leads', s.leadsHot, (i: any) => `<strong>${i.name}</strong>${i.company_name ? ' @ ' + i.company_name : ''} — score <strong>${i.ai_score}%</strong>`)}
+      ${row('Leads', s.leadsHot, (i: DigestRow) => `<strong>${i.name}</strong>${i.company_name ? ' @ ' + i.company_name : ''} — score <strong>${i.ai_score}%</strong>`)}
 
       <h2 style="font-size:15px;margin:20px 0 8px">🎯 Top oportunidades abiertas</h2>
-      ${row('Oportunidades', s.oppsOpen, (o: any) => `<strong>${o.title}</strong> — ${o.stage} · ${cur}${Math.round(o.value || 0).toLocaleString('es-AR')}`)}
+      ${row('Oportunidades', s.oppsOpen, (o: DigestRow) => `<strong>${o.title}</strong> — ${o.stage} · ${cur}${Math.round(o.value || 0).toLocaleString('es-AR')}`)}
 
       <h2 style="font-size:15px;margin:20px 0 8px">⏰ Cotizaciones por vencer (próximos 3 días)</h2>
-      ${row('Cotizaciones', s.quotesExpiring, (q: any) => `<strong>${q.quote_number}</strong> — ${q.client?.name || 's/cliente'} · ${cur}${Math.round(q.total || 0).toLocaleString('es-AR')}`)}
+      ${row('Cotizaciones', s.quotesExpiring, (q: DigestRow) => `<strong>${q.quote_number}</strong> — ${q.client?.name || 's/cliente'} · ${cur}${Math.round(q.total || 0).toLocaleString('es-AR')}`)}
 
       <div style="margin-top:24px;padding-top:16px;border-top:1px solid #eee;font-size:12px;opacity:.7">
         ${s.newLeadsYesterday} lead(s) nuevos en las últimas 24h · Mocciaro Soft ERP
@@ -155,10 +193,10 @@ async function sendEmail(to: string | null, subject: string, html: string): Prom
   try {
     // Placeholder — integración con Gmail API real cuando el user configure credenciales OAuth.
     // Por ahora, loguea en consola para debug.
-    console.log(`📧 Digest para ${to}: ${subject} (${html.length} chars)`)
+    logger.info(`📧 Digest para ${to}: ${subject} (${html.length} chars)`)
     return true  // Marcar como enviado; el user conectará Gmail después
   } catch (e) {
-    console.error('sendEmail error:', e)
+    logger.error('sendEmail error:', e)
     return false
   }
 }

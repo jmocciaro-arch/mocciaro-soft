@@ -439,7 +439,7 @@ export function DocumentDetailModal({ open, onClose, documentId, onChanged }: Pr
               return (
                 <a
                   key={r.id}
-                  href={`/documents/${r.id}`}
+                  href={`/documentos/${r.id}`}
                   className="flex items-center gap-3 p-3 rounded-lg border border-[#1E2330] bg-[#0F1218] hover:border-[#FF6600]/40 hover:bg-[#141820] transition"
                 >
                   <RIcon size={14} className="text-[#FF6600]" />
@@ -489,7 +489,7 @@ export function DocumentDetailModal({ open, onClose, documentId, onChanged }: Pr
             <Button variant="secondary" size="sm" onClick={duplicateDoc} disabled={saving}>
               <Copy size={11} /> Duplicar
             </Button>
-            <a href={`/documents/${doc.id}`} target="_blank" rel="noreferrer">
+            <a href={`/documentos/${doc.id}`} target="_blank" rel="noreferrer">
               <Button variant="secondary" size="sm">
                 <ExternalLink size={11} /> Abrir completo
               </Button>

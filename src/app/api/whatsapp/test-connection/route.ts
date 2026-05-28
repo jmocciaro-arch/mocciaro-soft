@@ -8,10 +8,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { testConnection } from '@/lib/whatsapp/client'
 import type { WhatsAppAccount } from '@/lib/whatsapp/types'
+import { requireAuth } from '@/lib/auth/require-admin'
 
 export const runtime = 'nodejs'
 
 export async function POST(req: NextRequest) {
+  const auth = await requireAuth()
+  if (!auth.ok) return auth.response
+
   const body = await req.json()
   const supabase = await createClient()
 

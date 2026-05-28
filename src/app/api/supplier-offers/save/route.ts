@@ -30,6 +30,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient as createServiceClient } from '@supabase/supabase-js'
+import { withCompanyFilter } from '@/lib/auth/with-company-filter'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -83,6 +84,9 @@ interface SaveOfferBody {
 }
 
 export async function POST(req: NextRequest) {
+  const guard = await withCompanyFilter()
+  if (!guard.ok) return guard.response
+
   let body: SaveOfferBody
   try {
     body = (await req.json()) as SaveOfferBody
@@ -97,6 +101,10 @@ export async function POST(req: NextRequest) {
   const offerInput = body.offer
   if (!offerInput.supplier_name || !offerInput.supplier_name.trim()) {
     return NextResponse.json({ error: 'offer.supplier_name es requerido' }, { status: 400 })
+  }
+
+  if (offerInput.company_id && !guard.assertAccess(offerInput.company_id)) {
+    return NextResponse.json({ error: 'Sin acceso a esta empresa' }, { status: 403 })
   }
 
   const supabase = createServiceClient(

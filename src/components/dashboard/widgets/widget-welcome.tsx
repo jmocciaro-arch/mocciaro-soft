@@ -6,6 +6,8 @@ import { createClient } from '@/lib/supabase/client'
 export function WidgetWelcome() {
   const [stats, setStats] = useState({ products: 0, clients: 0, quotes: 0 })
   const [loading, setLoading] = useState(true)
+  const [userName, setUserName] = useState<string | null>(null)
+  const [userLoading, setUserLoading] = useState(true)
 
   useEffect(() => {
     async function load() {
@@ -14,12 +16,19 @@ export function WidgetWelcome() {
         const now = new Date()
         const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
 
-        const [p, c, qLocal, qDoc] = await Promise.all([
+        const [userRes, p, c, qLocal, qDoc] = await Promise.all([
+          supabase.auth.getUser(),
           supabase.from('tt_products').select('*', { count: 'exact', head: true }),
           supabase.from('tt_clients').select('*', { count: 'exact', head: true }),
           supabase.from('tt_quotes').select('*', { count: 'exact', head: true }).gte('created_at', startOfMonth),
           supabase.from('tt_documents').select('*', { count: 'exact', head: true }).eq('doc_type', 'coti').gte('created_at', startOfMonth),
         ])
+
+        const user = userRes.data?.user
+        if (user) {
+          const fullName = (user.user_metadata as Record<string, unknown> | undefined)?.full_name as string | undefined
+          setUserName(fullName || user.email?.split('@')[0] || null)
+        }
 
         setStats({
           products: p.count ?? 0,
@@ -30,6 +39,7 @@ export function WidgetWelcome() {
         // silently fail
       } finally {
         setLoading(false)
+        setUserLoading(false)
       }
     }
     load()
@@ -48,7 +58,11 @@ export function WidgetWelcome() {
   return (
     <div className="flex flex-col justify-between h-full">
       <div>
-        <h2 className="text-xl font-bold text-[#F0F2F5]">{greeting}, Juan</h2>
+        {userLoading ? (
+          <div className="h-6 w-40 bg-[#1E2330] rounded animate-pulse" />
+        ) : (
+          <h2 className="text-xl font-bold text-[#F0F2F5]">{greeting}{userName ? `, ${userName}` : ''}</h2>
+        )}
         <p className="text-xs text-[#6B7280] mt-0.5 capitalize">{dateStr}</p>
         <p className="text-[11px] text-[#4B5563] mt-1">Mocciaro Soft &middot; Administrador</p>
       </div>

@@ -117,6 +117,7 @@ export default function RecurrentesPage() {
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
   // Detail state
   const [selectedSub, setSelectedSub] = useState<RecurringInvoice | null>(null)
@@ -412,19 +413,24 @@ export default function RecurrentesPage() {
   }, [])
 
   // ─── DELETE ────────────────────────────────────────────────
-  const handleDelete = useCallback(async (id: string) => {
-    if (!confirm('Seguro que queres eliminar esta suscripcion?')) return
+  const handleDelete = useCallback((id: string) => {
+    setDeleteTarget(id)
+  }, [])
+
+  const confirmDelete = useCallback(async () => {
+    if (!deleteTarget) return
     const sb = createClient()
-    await sb.from('tt_recurring_invoice_items').delete().eq('recurring_invoice_id', id)
-    const { error } = await sb.from('tt_recurring_invoices').delete().eq('id', id)
+    await sb.from('tt_recurring_invoice_items').delete().eq('recurring_invoice_id', deleteTarget)
+    const { error } = await sb.from('tt_recurring_invoices').delete().eq('id', deleteTarget)
     if (error) {
       addToast({ type: 'error', title: 'Error al eliminar', message: error.message })
       return
     }
     addToast({ type: 'success', title: 'Suscripcion eliminada' })
-    if (selectedSub?.id === id) setSelectedSub(null)
+    if (selectedSub?.id === deleteTarget) setSelectedSub(null)
+    setDeleteTarget(null)
     loadSubscriptions()
-  }, [selectedSub])
+  }, [deleteTarget, selectedSub, addToast, loadSubscriptions])
 
   // ─── LOAD DETAIL ───────────────────────────────────────────
   const loadDetail = useCallback(async (id: string) => {
@@ -457,6 +463,47 @@ export default function RecurrentesPage() {
     setGenerating(sub.id)
     const sb = createClient()
 
+    // Fix 9 — calcular periodo actual según frequency e idempotencia
+    const now = new Date()
+    const y = now.getFullYear()
+    const m = now.getMonth() + 1
+    let currentPeriod: string
+    switch ((sub.frequency || 'monthly').toLowerCase()) {
+      case 'quarterly': {
+        const q = Math.floor((m - 1) / 3) + 1
+        currentPeriod = `${y}-Q${q}`
+        break
+      }
+      case 'yearly':
+      case 'annual':
+        currentPeriod = `${y}`
+        break
+      case 'weekly': {
+        // Semana ISO aproximada
+        const onejan = new Date(y, 0, 1)
+        const week = Math.ceil((((now.getTime() - onejan.getTime()) / 86400000) + onejan.getDay() + 1) / 7)
+        currentPeriod = `${y}-W${week.toString().padStart(2, '0')}`
+        break
+      }
+      case 'monthly':
+      default:
+        currentPeriod = `${y}-${m.toString().padStart(2, '0')}`
+    }
+    const periodMarker = `[sub:${sub.id}|period:${currentPeriod}]`
+
+    // Chequear si ya existe factura para este periodo
+    const { data: existing } = await sb
+      .from('tt_documents')
+      .select('id, display_ref')
+      .eq('doc_type', 'factura')
+      .ilike('internal_notes', `%${periodMarker}%`)
+      .limit(1)
+    if (existing && existing.length > 0) {
+      addToast({ type: 'warning', title: 'Ya facturada este período', message: `Factura ${existing[0].display_ref || ''} ya existe para ${currentPeriod}` })
+      setGenerating(null)
+      return
+    }
+
     // Load recurring items
     const { data: recItems } = await sb
       .from('tt_recurring_invoice_items')
@@ -488,7 +535,7 @@ export default function RecurrentesPage() {
         payment_terms: sub.payment_terms,
         incoterm: sub.incoterm,
         notes: sub.notes,
-        internal_notes: `Generada automaticamente desde suscripcion: ${sub.name}`,
+        internal_notes: `Generada automaticamente desde suscripcion: ${sub.name} ${periodMarker}`,
       })
       .select()
       .single()
@@ -1189,6 +1236,16 @@ export default function RecurrentesPage() {
             <Button onClick={handleSave} loading={saving}>
               <Save size={14} /> {editingId ? 'Guardar cambios' : 'Crear suscripcion'}
             </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="Eliminar suscripcion" size="sm">
+        <div className="space-y-4">
+          <p className="text-sm text-[#D1D5DB]">¿Seguro que querés eliminar esta suscripción? Esta acción no se puede deshacer.</p>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setDeleteTarget(null)}>Cancelar</Button>
+            <Button onClick={confirmDelete}>Eliminar</Button>
           </div>
         </div>
       </Modal>
