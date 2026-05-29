@@ -16,7 +16,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/modal'
 import { SearchBar } from '@/components/ui/search-bar'
-import { User, X, Plus, Building2, Mail, Phone } from 'lucide-react'
+import Link from 'next/link'
+import { User, X, Plus, Building2, Mail, Phone, BookText, ExternalLink } from 'lucide-react'
 import type { Client } from '@/types'
 import {
   ROLE_OPTIONS,
@@ -144,8 +145,22 @@ export function DocumentContactsPanel({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-sm flex items-center gap-2">
-          <Building2 size={16} className="text-[#FF6600]" /> Cliente
+        <CardTitle className="text-sm flex items-center justify-between gap-2">
+          <span className="flex items-center gap-2">
+            <Building2 size={16} className="text-[#FF6600]" /> Cliente
+          </span>
+          {/* Link a la ficha del cliente (datos + glosario SKU + historial).
+              Solo aparece cuando hay un cliente seleccionado para no mostrar
+              un link roto sin destino. */}
+          <Link
+            href={`/clientes/${selectedClient.id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Abrir ficha del cliente (datos + glosario SKU)"
+            className="text-[11px] text-[#9CA3AF] hover:text-[#FF6600] flex items-center gap-1 font-normal"
+          >
+            <BookText size={11} /> Ver ficha <ExternalLink size={10} />
+          </Link>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
