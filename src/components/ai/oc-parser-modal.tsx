@@ -5,13 +5,20 @@ import { Modal } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import type { ParsedOC, OCDiscrepancy } from '@/lib/ai/parse-oc-pdf'
 
+interface SKUMatch {
+  externalSKU: string
+  product: { id: string; sku: string; name: string; brand: string | null; price_eur: number | null } | null
+  confidence: number
+  source: string
+}
+
 interface Props {
   open: boolean
   onClose: () => void
   companyId: string
   clientId?: string
   quoteDocumentId?: string
-  onParsed?: (result: { data: ParsedOC; discrepancies: OCDiscrepancy[]; ocParsedId?: string }) => void
+  onParsed?: (result: { data: ParsedOC; discrepancies: OCDiscrepancy[]; ocParsedId?: string; matches?: SKUMatch[] }) => void
 }
 
 export function OCParserModal({ open, onClose, companyId, clientId, quoteDocumentId, onParsed }: Props) {
@@ -40,7 +47,10 @@ export function OCParserModal({ open, onClose, companyId, clientId, quoteDocumen
       if (!res.ok) throw new Error(j.error || 'Error parseando')
       setResult({ data: j.data, discrepancies: j.discrepancies || [], ocParsedId: j.ocParsedId })
       setMsg(`✓ Parseado con ${j.data.provider_used}`)
-      onParsed?.({ data: j.data, discrepancies: j.discrepancies, ocParsedId: j.ocParsedId })
+      // matches: arreglo de match cliente↔catálogo (uno por item, mismo orden).
+      // Lo pasamos al callback para que el cotizador aplique SKU del catálogo
+      // y muestre badges ✓ matched / ❓ vincular.
+      onParsed?.({ data: j.data, discrepancies: j.discrepancies, ocParsedId: j.ocParsedId, matches: j.matches })
     } catch (err) {
       setMsg('✗ ' + (err as Error).message)
     } finally {

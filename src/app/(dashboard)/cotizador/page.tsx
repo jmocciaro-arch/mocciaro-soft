@@ -176,6 +176,12 @@ export default function CotizadorPage() {
   const handleOCParsed = useCallback(async (result: {
     ocParsedId?: string
     discrepancies?: unknown[]
+    matches?: Array<{
+      externalSKU: string
+      product: { id: string; sku: string; name: string; brand: string | null; price_eur: number | null } | null
+      confidence: number
+      source: string
+    }>
     data?: {
       numero_oc?: string
       fecha?: string
@@ -204,18 +210,55 @@ export default function CotizadorPage() {
 
     setConvertingOc(true)
     try {
-      // 1. Cargar items en el cotizador
-      const newItems: QuoteLineItem[] = data.items.map((it) => ({
-        id: Math.random().toString(36).slice(2),
-        product_id: null,
-        sku: it.codigo || '',
-        description: it.descripcion || '',
-        quantity: it.cantidad || 1,
-        unitPrice: it.precio_unitario || 0,
-        discount: 0,
-        notes: it.observaciones || '',
-      }))
+      // 1. Cargar items en el cotizador APLICANDO el match cliente↔catálogo.
+      //    Si hay match → usamos el SKU/product_id del catálogo y guardamos el
+      //    código del cliente en notes para trazabilidad ("OC: ATR-001").
+      //    Si no hay match → dejamos el código del cliente como SKU y marcamos
+      //    en notes que requiere vinculación manual.
+      const matches = result.matches || []
+      let matchedCount = 0
+      let unmatchedCount = 0
+      const newItems: QuoteLineItem[] = data.items.map((it, idx) => {
+        const m = matches[idx]
+        const externalSKU = it.codigo || ''
+        if (m?.product) {
+          matchedCount++
+          const note = it.observaciones ? `${it.observaciones} · ` : ''
+          return {
+            id: Math.random().toString(36).slice(2),
+            product_id: m.product.id,
+            sku: m.product.sku,
+            description: m.product.name,
+            quantity: it.cantidad || 1,
+            unitPrice: it.precio_unitario || m.product.price_eur || 0,
+            discount: 0,
+            notes: `${note}OC cliente: ${externalSKU || it.descripcion}`,
+          }
+        }
+        unmatchedCount++
+        return {
+          id: Math.random().toString(36).slice(2),
+          product_id: null,
+          sku: externalSKU,
+          description: it.descripcion || '',
+          quantity: it.cantidad || 1,
+          unitPrice: it.precio_unitario || 0,
+          discount: 0,
+          notes: `❓ Sin match en catálogo — vincular${it.observaciones ? ' · ' + it.observaciones : ''}`,
+        }
+      })
       setItems(newItems)
+
+      // Toast informativo del matching
+      if (matchedCount > 0 || unmatchedCount > 0) {
+        addToast({
+          type: matchedCount > 0 ? 'success' : 'warning',
+          title: `Match SKU: ${matchedCount} ✓ / ${unmatchedCount} sin vincular`,
+          message: unmatchedCount > 0
+            ? 'Los items sin match aparecen con ❓ en las notas. Vinculalos desde la ficha del cliente → Glosario SKU.'
+            : 'Todos los códigos del cliente fueron matcheados con tu catálogo.',
+        })
+      }
 
       // 2. Pre-cargar moneda
       if (data.moneda) {
@@ -530,15 +573,93 @@ export default function CotizadorPage() {
     setSaving(true)
     const supabase = createClient()
     try {
+      // Migrado a tt_documents (Fase 2) — antes escribía a tt_quotes + tt_quote_items.
+      const userIdResult = (await supabase.from('tt_users').select('id').eq('role', 'admin').limit(1).single()).data?.id || null
       const { data: quoteData, error: quoteError } = await supabase
-        .from('tt_quotes')
-        .insert({ number: quoteNumber, company_id: selectedCompanyId, client_id: selectedClient?.id || null, user_id: (await supabase.from('tt_users').select('id').eq('role', 'admin').limit(1).single()).data?.id || null, status: 'borrador', doc_subtype: docSubtype, notes, internal_notes: internalNotes, incoterm: incoterm || null, payment_terms: paymentTerms || null, payment_days: paymentDays || null, payment_terms_type: paymentTermsType || null, currency, subtotal, subject_iva: ivaEnabled, tax_rate: ivaEnabled ? taxRate : 0, tax_amount: taxAmount, irpf_rate: irpfEnabled ? irpfRate : 0, irpf_amount: irpfAmount, re_rate: reEnabled ? reRate : 0, re_amount: reAmount, total, valid_until: validUntil ? new Date(validUntil).toISOString() : null })
+        .from('tt_documents')
+        .insert({
+          doc_type: 'presupuesto',
+          subtype: docSubtype || 'standard',
+          system_code: quoteNumber,
+          display_ref: quoteNumber,
+          company_id: selectedCompanyId,
+          client_id: selectedClient?.id || null,
+          user_id: userIdResult,
+          status: 'draft',
+          notes,
+          internal_notes: internalNotes,
+          incoterm: incoterm || null,
+          payment_terms: paymentTerms || null,
+          currency,
+          subtotal,
+          tax_rate: ivaEnabled ? taxRate : 0,
+          tax_amount: taxAmount,
+          total,
+          valid_until: validUntil ? new Date(validUntil).toISOString() : null,
+          metadata: {
+            subject_iva: ivaEnabled,
+            irpf_enabled: irpfEnabled,
+            irpf_rate: irpfEnabled ? irpfRate : 0,
+            irpf_amount: irpfAmount,
+            re_enabled: reEnabled,
+            re_rate: reEnabled ? reRate : 0,
+            re_amount: reAmount,
+            payment_days: paymentDays || null,
+            payment_terms_type: paymentTermsType || null,
+          },
+        })
         .select('id').single()
       if (quoteError) throw quoteError
-      const quoteItems = items.map((item, idx) => ({ quote_id: quoteData.id, product_id: item.product_id, sort_order: idx + 1, sku: item.sku, description: item.description, quantity: item.quantity, unit_price: item.unitPrice, discount_pct: item.discount, subtotal: item.quantity * item.unitPrice * (1 - item.discount / 100), notes: item.notes || null }))
-      const { error: itemsError } = await supabase.from('tt_quote_items').insert(quoteItems)
+      const docLines = items.map((item, idx) => ({
+        document_id: quoteData.id,
+        product_id: item.product_id,
+        sort_order: idx + 1,
+        sku: item.sku,
+        description: item.description,
+        quantity: item.quantity,
+        unit_price: item.unitPrice,
+        discount_pct: item.discount,
+        subtotal: item.quantity * item.unitPrice * (1 - item.discount / 100),
+        notes: item.notes || null,
+      }))
+      const { error: itemsError } = await supabase.from('tt_document_lines').insert(docLines)
       if (itemsError) throw itemsError
-      await supabase.from('tt_activity_log').insert({ entity_type: 'quote', entity_id: quoteData.id, action: 'Cotizacion creada', detail: `${quoteNumber} - ${selectedClient?.name || 'Sin cliente'} - ${formatCurrency(total, currency)}` })
+
+      // ─── Auto-aprender aliases SKU desde la OC importada ───
+      // Si la cotización viene de una OC y tiene cliente seleccionado, guardamos
+      // los pares (SKU cliente → product_id) en tt_sku_aliases para que la
+      // próxima OC del mismo cliente se matchee automáticamente.
+      if (selectedClient?.id) {
+        const aliasesToLearn = items
+          .filter((it) => it.product_id && it.notes?.includes('OC cliente:'))
+          .map((it) => {
+            // Extraer el código del cliente del campo notes ("OC cliente: ATR-001")
+            const m = it.notes?.match(/OC cliente:\s*([^\s·]+)/)
+            const externalSKU = m?.[1]?.trim()
+            return externalSKU && it.product_id
+              ? { externalSKU, productId: it.product_id }
+              : null
+          })
+          .filter((x): x is { externalSKU: string; productId: string } => !!x)
+
+        for (const alias of aliasesToLearn) {
+          try {
+            await fetch('/api/sku-aliases', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                company_id: selectedCompanyId,
+                client_id: selectedClient.id,
+                external_sku: alias.externalSKU,
+                product_id: alias.productId,
+                source: 'oc_import',
+              }),
+            })
+          } catch { /* swallow — el upsert puede fallar por dup y es OK */ }
+        }
+      }
+
+      await supabase.from('tt_activity_log').insert({ entity_type: 'document', entity_id: quoteData.id, action: 'Cotizacion creada', detail: `${quoteNumber} - ${selectedClient?.name || 'Sin cliente'} - ${formatCurrency(total, currency)}` })
       addToast({ type: 'success', title: 'Cotizacion guardada', message: 'Ahora podés adjuntar la OC, pliegos, etc.' })
       // No reseteamos los datos — dejamos al usuario sobre la cotización recién creada
       // para que pueda adjuntar archivos. setCurrentQuoteId expone el ID al panel de adjuntos.

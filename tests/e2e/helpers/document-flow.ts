@@ -22,8 +22,13 @@ export async function createQuote(
   opts: { clientName: string; productSkus: string[] }
 ): Promise<string> {
   await page.goto('/cotizador')
-  // Cambiar a vista "Nueva cotización"
-  await page.getByRole('button', { name: /nueva cotizaci[oó]n/i }).click()
+  // viewMode='create' es el default. El botón "Nueva" solo se necesita si
+  // venimos de "Guardadas". Lo clickeamos defensivamente si está visible y
+  // todavía no activo.
+  const nuevaBtn = page.getByRole('button', { name: /^nueva$/i }).first()
+  if (await nuevaBtn.isVisible().catch(() => false)) {
+    await nuevaBtn.click()
+  }
 
   // Seleccionar cliente: input search del cliente
   const clientSearch = page.locator('input[placeholder*="cliente" i]').first()

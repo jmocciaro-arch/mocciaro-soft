@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { getEnv } from '@/lib/env'
+import { withCompanyFilter } from '@/lib/auth/with-company-filter'
+import { logger } from '@/lib/observability/logger'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -16,9 +18,16 @@ interface Msg { role: 'user' | 'assistant'; content: string }
  */
 export async function POST(req: NextRequest) {
   try {
+    const guard = await withCompanyFilter()
+    if (!guard.ok) return guard.response
+
     const { messages, companyId, page } = await req.json()
     if (!Array.isArray(messages) || messages.length === 0) {
       return NextResponse.json({ error: 'messages requerido' }, { status: 400 })
+    }
+
+    if (companyId && !guard.assertAccess(companyId)) {
+      return NextResponse.json({ error: 'Sin acceso a esta empresa' }, { status: 403 })
     }
 
     // 1) Cargar contexto del ERP
@@ -40,7 +49,10 @@ export async function POST(req: NextRequest) {
         supabase.from('tt_clients').select('name, email, phone').eq('company_id', companyId).limit(10),
       ])
 
-      const c = company.data as any
+      const c = company.data as {
+        trade_name?: string; name?: string; legal_name?: string
+        code_prefix?: string; tax_id?: string; country?: string
+      } | null
       erpContext = `\n=== CONTEXTO DEL ERP (datos reales) ===
 Empresa activa: ${c?.trade_name || c?.name} ${c?.country ? '('+c.country+')' : ''}
 Razón social: ${c?.legal_name || '—'}
@@ -49,16 +61,16 @@ CUIT/NIF: ${c?.tax_id || '—'}
 
 Leads totales: ${leadsCount.count || 0}
 Leads HOT (top 5 por score):
-${(hotLeads.data || []).map((l: any) => `  - ${l.name}${l.company_name ? ' @ '+l.company_name : ''} — score ${l.ai_score} — ${(l.ai_tags||[]).join(', ')}`).join('\n') || '  (ninguno)'}
+${(hotLeads.data || []).map((l: Record<string, unknown>) => `  - ${l.name}${l.company_name ? ' @ '+l.company_name : ''} — score ${l.ai_score} — ${((l.ai_tags as string[]) || []).join(', ')}`).join('\n') || '  (ninguno)'}
 
 Leads recientes:
-${(recentLeads.data || []).map((l: any) => `  - ${l.name} (${l.ai_temperature || 'sin analizar'}) — ${l.status}`).join('\n') || '  (ninguno)'}
+${(recentLeads.data || []).map((l: Record<string, unknown>) => `  - ${l.name} (${l.ai_temperature || 'sin analizar'}) — ${l.status}`).join('\n') || '  (ninguno)'}
 
 Oportunidades recientes (top 5):
-${(opps.data || []).map((o: any) => `  - ${o.title} — ${o.stage} — ${o.currency} ${o.value} — ${o.probability}%`).join('\n') || '  (ninguna)'}
+${(opps.data || []).map((o: Record<string, unknown>) => `  - ${o.title} — ${o.stage} — ${o.currency} ${o.value} — ${o.probability}%`).join('\n') || '  (ninguna)'}
 
 Facturas pendientes de cobro (top 5):
-${(overdueInvoices.data || []).map((f: any) => `  - ${f.legal_number || '—'} — ${f.currency} ${f.total} — ${f.client?.name || 's/cliente'} — ${f.invoice_date}`).join('\n') || '  (ninguna)'}
+${(overdueInvoices.data || []).map((f: Record<string, unknown>) => `  - ${f.legal_number || '—'} — ${f.currency} ${f.total} — ${(f.client as { name?: string })?.name || 's/cliente'} — ${f.invoice_date}`).join('\n') || '  (ninguna)'}
 
 Clientes en esta empresa: ${topClients.data?.length || 0}
 `
@@ -112,10 +124,10 @@ ${page ? `\nEl usuario está viendo: ${page}` : ''}`
           reply = data.candidates?.[0]?.content?.parts?.[0]?.text || ''
           if (reply) provider = 'gemini'
         } else {
-          console.log(`Gemini falló con status ${res.status}, usando Claude como fallback`)
+          logger.info(`Gemini falló con status ${res.status}, usando Claude como fallback`)
         }
       } catch (geminiErr) {
-        console.log('Gemini error, fallback a Claude:', geminiErr)
+        logger.warn('Gemini error, fallback a Claude:', geminiErr)
       }
     }
 

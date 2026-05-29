@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { withCompanyFilter } from '@/lib/auth/with-company-filter'
 
 export const runtime = 'nodejs'
 
@@ -12,6 +13,9 @@ export const runtime = 'nodejs'
  */
 export async function POST(req: NextRequest) {
   try {
+    const guard = await withCompanyFilter()
+    if (!guard.ok) return guard.response
+
     const { lineId, action, documentId, confirmedBy } = await req.json()
     if (!lineId || !action) return NextResponse.json({ error: 'lineId y action requeridos' }, { status: 400 })
 
@@ -20,6 +24,17 @@ export async function POST(req: NextRequest) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!,
       { auth: { persistSession: false } }
     )
+
+    // Validar que la línea pertenece a una company accesible
+    const { data: lineCheck } = await supabase
+      .from('tt_bank_statement_lines')
+      .select('statement:tt_bank_statements(company_id)')
+      .eq('id', lineId)
+      .maybeSingle()
+    const lineCompanyId = (lineCheck?.statement as unknown as { company_id?: string })?.company_id
+    if (!guard.assertAccess(lineCompanyId)) {
+      return NextResponse.json({ error: 'Sin acceso a esta línea' }, { status: 403 })
+    }
 
     if (action === 'reject') {
       await supabase

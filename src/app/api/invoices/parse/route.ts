@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { parseInvoicePDF } from '@/lib/invoicing/parse-invoice-pdf'
+import { withCompanyFilter } from '@/lib/auth/with-company-filter'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
 export async function POST(req: NextRequest) {
   try {
+    const guard = await withCompanyFilter()
+    if (!guard.ok) return guard.response
+
     const formData = await req.formData()
     const file = formData.get('file') as File | null
 

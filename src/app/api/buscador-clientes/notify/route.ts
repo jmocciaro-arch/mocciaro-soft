@@ -10,19 +10,56 @@ function getResend(): Resend {
   return new Resend(process.env.RESEND_API_KEY)
 }
 
-// CORS: permitir requests desde el buscador público de Speedrill
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+// Whitelist de orígenes que pueden enviar notificaciones desde el buscador público.
+const ALLOWED_ORIGINS = new Set([
+  'https://speedrill.com.ar',
+  'https://www.speedrill.com.ar',
+  'http://localhost:3000',
+])
+
+function originAllowed(req: NextRequest): boolean {
+  const origin = req.headers.get('origin') || ''
+  if (!origin) return false
+  return ALLOWED_ORIGINS.has(origin)
+}
+
+function corsHeadersFor(req: NextRequest): Record<string, string> {
+  const origin = req.headers.get('origin') || ''
+  return {
+    'Access-Control-Allow-Origin': ALLOWED_ORIGINS.has(origin) ? origin : 'https://speedrill.com.ar',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    Vary: 'Origin',
+  }
+}
+
+// Rate-limit in-memory por IP. 5 notif / 5 min.
+const RATE_WINDOW_MS = 5 * 60 * 1000
+const RATE_MAX = 5
+const notifyTracker = new Map<string, number[]>()
+
+function rateLimited(ip: string): boolean {
+  const now = Date.now()
+  const arr = (notifyTracker.get(ip) || []).filter((t) => now - t < RATE_WINDOW_MS)
+  arr.push(now)
+  notifyTracker.set(ip, arr)
+  return arr.length > RATE_MAX
+}
+
+function getClientIp(req: NextRequest): string {
+  return (
+    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+    req.headers.get('x-real-ip') ||
+    'unknown'
+  )
 }
 
 /**
  * OPTIONS /api/buscador-clientes/notify
  * Preflight CORS para requests desde speedrill.com.ar
  */
-export async function OPTIONS() {
-  return new NextResponse(null, { status: 204, headers: CORS_HEADERS })
+export async function OPTIONS(req: NextRequest) {
+  return new NextResponse(null, { status: 204, headers: corsHeadersFor(req) })
 }
 
 /**
@@ -33,10 +70,23 @@ export async function OPTIONS() {
  * Body: { full_name, email, company?, phone?, country? }
  */
 export async function POST(req: NextRequest) {
+  const cors = corsHeadersFor(req)
+
+  // Whitelist de Origin
+  if (!originAllowed(req)) {
+    return NextResponse.json({ error: 'Origen no permitido' }, { status: 403, headers: cors })
+  }
+
+  // Rate-limit por IP
+  const ip = getClientIp(req)
+  if (rateLimited(ip)) {
+    return NextResponse.json({ error: 'Demasiados envíos. Probá en unos minutos.' }, { status: 429, headers: cors })
+  }
+
   // Verificar que la API key esté configurada
   if (!process.env.RESEND_API_KEY) {
     console.error('[notify] RESEND_API_KEY no configurada')
-    return NextResponse.json({ error: 'Email service not configured' }, { status: 503 })
+    return NextResponse.json({ error: 'Email service not configured' }, { status: 503, headers: cors })
   }
 
   let body: {
@@ -190,9 +240,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
-    return NextResponse.json({ ok: true, id: data?.id }, { headers: CORS_HEADERS })
+    return NextResponse.json({ ok: true, id: data?.id }, { headers: cors })
   } catch (err) {
     console.error('[notify] Unexpected error:', err)
-    return NextResponse.json({ error: 'Error enviando email' }, { status: 500, headers: CORS_HEADERS })
+    return NextResponse.json({ error: 'Error enviando email' }, { status: 500, headers: cors })
   }
 }

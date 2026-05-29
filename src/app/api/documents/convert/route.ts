@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { requireAdmin, userHasCompanyAccess } from '@/lib/auth/require-admin'
 
 export const runtime = 'nodejs'
 
@@ -43,6 +44,9 @@ const RELATION_TYPE: Record<TargetType, string> = {
 
 export async function POST(req: NextRequest) {
   try {
+    const guard = await requireAdmin()
+    if (!guard.ok) return guard.response
+
     const body = await req.json() as ConvertBody
     const { sourceDocId, targetType, companyId } = body
 
@@ -51,6 +55,10 @@ export async function POST(req: NextRequest) {
         { error: 'sourceDocId, targetType y companyId son requeridos' },
         { status: 400 }
       )
+    }
+
+    if (!(await userHasCompanyAccess(guard.ttUserId, guard.role, companyId))) {
+      return NextResponse.json({ error: 'Sin acceso a esta empresa' }, { status: 403 })
     }
 
     const validTypes: TargetType[] = ['pedido', 'delivery_note', 'factura']

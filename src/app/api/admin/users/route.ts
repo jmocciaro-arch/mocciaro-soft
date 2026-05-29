@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { requireAdmin } from '@/lib/auth/require-admin'
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -22,6 +23,9 @@ function generatePassword(length = 16): string {
 // POST: Create auth user + tt_users record
 export async function POST(req: NextRequest) {
   try {
+    const guard = await requireAdmin()
+    if (!guard.ok) return guard.response
+
     const body = await req.json()
     const { username, full_name, email, role, gmail, whatsapp, phone, company_id, active, permissions } = body
 
@@ -83,6 +87,9 @@ export async function POST(req: NextRequest) {
 // PUT: Update tt_users record
 export async function PUT(req: NextRequest) {
   try {
+    const guard = await requireAdmin()
+    if (!guard.ok) return guard.response
+
     const body = await req.json()
     const { id, ...updates } = body
 
@@ -151,9 +158,72 @@ export async function PUT(req: NextRequest) {
   }
 }
 
+// PATCH: Reset/set a user's password in Supabase Auth
+export async function PATCH(req: NextRequest) {
+  try {
+    const guard = await requireAdmin()
+    if (!guard.ok) return guard.response
+
+    const body = await req.json()
+    const { id, password: customPassword } = body
+
+    if (!id) {
+      return NextResponse.json({ error: 'Falta el ID del usuario' }, { status: 400 })
+    }
+
+    if (customPassword !== undefined && String(customPassword).length < 8) {
+      return NextResponse.json({ error: 'La contraseña debe tener al menos 8 caracteres' }, { status: 400 })
+    }
+
+    const admin = getAdminClient()
+
+    // Look up the auth_id for this tt_users record
+    const { data: userRow, error: lookupError } = await admin
+      .from('tt_users')
+      .select('auth_id, email')
+      .eq('id', id)
+      .single()
+
+    if (lookupError || !userRow) {
+      return NextResponse.json({ error: 'No se encontró el usuario' }, { status: 404 })
+    }
+
+    if (!userRow.auth_id) {
+      return NextResponse.json({ error: 'El usuario no tiene cuenta de autenticación asociada' }, { status: 400 })
+    }
+
+    const password = customPassword || generatePassword()
+
+    const { error: authError } = await admin.auth.admin.updateUserById(userRow.auth_id as string, {
+      password,
+    })
+
+    if (authError) {
+      return NextResponse.json({ error: `Error actualizando contraseña: ${authError.message}` }, { status: 400 })
+    }
+
+    // Touch updated_at so the list reflects the change
+    await admin
+      .from('tt_users')
+      .update({ updated_at: new Date().toISOString() })
+      .eq('id', id)
+
+    return NextResponse.json({
+      success: true,
+      // Only return the password when we generated it (so the admin can copy it)
+      generated_password: customPassword ? null : password,
+    })
+  } catch (err) {
+    return NextResponse.json({ error: `Error inesperado: ${(err as Error).message}` }, { status: 500 })
+  }
+}
+
 // DELETE: Deactivate user (set active=false)
 export async function DELETE(req: NextRequest) {
   try {
+    const guard = await requireAdmin()
+    if (!guard.ok) return guard.response
+
     const { searchParams } = new URL(req.url)
     const id = searchParams.get('id')
 

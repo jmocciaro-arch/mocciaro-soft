@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { Modal } from '@/components/ui/modal'
 import { Input } from '@/components/ui/input'
 import { SequenceBuilder } from '@/components/crm/sequence-builder'
+import { useToast } from '@/components/ui/toast'
 import { Plus, Mail, Play, Pause, Trash2, Users, ChevronRight } from 'lucide-react'
 
 interface SequenceStep {
@@ -42,12 +43,14 @@ const TRIGGER_LABELS: Record<string, string> = {
 export default function SequencesPage() {
   const supabase = createClient()
   const { visibleCompanies } = useCompanyContext()
+  const { addToast } = useToast()
   const [sequences, setSequences] = useState<Sequence[]>([])
   const [loading, setLoading] = useState(true)
   const [newOpen, setNewOpen] = useState(false)
   const [editSequence, setEditSequence] = useState<Sequence | null>(null)
   const [enrollmentsOpen, setEnrollmentsOpen] = useState<string | null>(null)
   const [enrollments, setEnrollments] = useState<Record<string, number>>({})
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
   // Form nuevo
   const [newName, setNewName] = useState('')
@@ -117,9 +120,15 @@ export default function SequencesPage() {
     await load()
   }
 
-  async function handleDelete(id: string) {
-    if (!confirm('¿Eliminás esta secuencia? Se van a borrar todos los enrollments.')) return
-    await supabase.from('tt_email_sequences').delete().eq('id', id)
+  function handleDelete(id: string) {
+    setDeleteTarget(id)
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return
+    await supabase.from('tt_email_sequences').delete().eq('id', deleteTarget)
+    setDeleteTarget(null)
+    addToast({ type: 'success', title: 'Secuencia eliminada' })
     await load()
   }
 
@@ -381,6 +390,16 @@ export default function SequencesPage() {
         {enrollmentsOpen && (
           <EnrollmentsList sequenceId={enrollmentsOpen} />
         )}
+      </Modal>
+
+      <Modal isOpen={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="Eliminar secuencia" size="sm">
+        <div className="space-y-4">
+          <p className="text-sm text-[#D1D5DB]">¿Eliminás esta secuencia? Se van a borrar todos los enrollments asociados.</p>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setDeleteTarget(null)}>Cancelar</Button>
+            <Button onClick={confirmDelete}>Eliminar</Button>
+          </div>
+        </div>
       </Modal>
     </div>
   )

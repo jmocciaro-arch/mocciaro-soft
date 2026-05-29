@@ -5,21 +5,22 @@ import { createClient } from '@/lib/supabase/client'
 import { Modal } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { formatCurrency, formatDate, formatRelative } from '@/lib/utils'
+import { formatCurrency, formatRelative } from '@/lib/utils'
+import { useToast } from '@/components/ui/toast'
 import {
   generateDocumentHTML,
   generateDocumentText,
   generateDocumentExcelXML,
-  printDocumentHTML,
   downloadDocument,
 } from '@/lib/document-template'
 import {
-  Mail, MessageCircle, Copy, ExternalLink, Check, X,
+  Mail, MessageCircle, Copy, Check, X,
   FileText, Globe, Table2, FileEdit, AlignLeft, Link2,
-  Eye, Paperclip, Plus, Shield, Clock, BookmarkPlus,
+  Eye, Paperclip, Shield, Clock, BookmarkPlus,
   Send, ChevronDown, ChevronUp, Loader2, Upload,
-  CheckCircle, AlertCircle, EyeOff,
+  CheckCircle, AlertCircle,
 } from 'lucide-react'
+import { TYPE_LABELS } from '@/lib/doc-types'
 
 // ===============================================================
 // TYPES
@@ -136,15 +137,7 @@ const FORMAT_OPTIONS: Array<{
   { value: 'link', label: 'Link compartible', icon: Link2, desc: 'Genera link para el cliente', color: '#FF6600' },
 ]
 
-const TYPE_LABELS: Record<string, string> = {
-  coti: 'Cotizacion',
-  pedido: 'Pedido de Venta',
-  delivery_note: 'Albaran / Remito',
-  factura: 'Factura',
-  pap: 'Pedido a Proveedor',
-  recepcion: 'Recepcion',
-  factura_compra: 'Factura de Compra',
-}
+// TYPE_LABELS centralizado en @/lib/doc-types
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
   sent: { label: 'Enviado', color: '#F59E0B', bg: '#F59E0B20' },
@@ -177,6 +170,7 @@ export function SendDocumentModal({
   onSent,
 }: SendDocumentModalProps) {
   const supabase = createClient()
+  const { addToast } = useToast()
 
   const docLabel = TYPE_LABELS[documentType] || documentType
 
@@ -412,7 +406,7 @@ TorqueTools`,
     }
   }
 
-  // Handle send
+  // Handle send — endpoints REALES, no stubs
   async function handleSend() {
     setSending(true)
     try {
@@ -422,75 +416,165 @@ TorqueTools`,
         ...bccRecipients.map(r => ({ ...r, type: 'bcc' as const })),
       ]
 
-      // Generate tracking ID
+      // Tracking ID único por envío
       const trackingId = trackOpens
         ? `trk_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`
         : null
 
-      // Generate share link for link format
-      let shareLink: string | null = null
-      if (selectedFormat === 'link') {
-        shareLink = `${window.location.origin}/doc/view/${trackingId || Date.now()}`
-      }
-
-      // Save send record
+      // company_id desde el doc (best-effort)
+      let companyId: string | null = null
       if (documentId) {
-        await supabase.from('tt_document_sends').insert({
-          document_id: documentId,
-          document_type: documentType,
-          document_ref: documentNumber,
-          channel: selectedFormat === 'link' ? 'link' : 'email',
-          format: selectedFormat,
-          recipients: allRecipients,
-          subject,
-          message: messageBody,
-          tracking_id: trackingId,
-          delivery_status: 'sent',
-          share_link: shareLink,
-          share_link_expires_at: shareLink
-            ? new Date(Date.now() + parseInt(linkExpiry) * 24 * 60 * 60 * 1000).toISOString()
-            : null,
-          share_link_password: linkPassword || null,
-          attachments: [
-            { name: `${documentNumber}.${selectedFormat === 'excel' ? 'xls' : selectedFormat === 'text' ? 'txt' : 'pdf'}`, size: '~', url: '' },
-            ...extraAttachments.map(a => ({ name: a.name, size: a.size, url: '' })),
-          ],
-        })
+        const { data: docRow } = await supabase
+          .from('tt_documents')
+          .select('company_id, client:tt_clients(phone)')
+          .eq('id', documentId)
+          .maybeSingle()
+        if (docRow) {
+          companyId = docRow.company_id as string | null
+        }
       }
-
-      // Execute format-specific action
-      const content = generateContent()
 
       switch (selectedFormat) {
+        // ─────────────────────────────────────────────────────────────────
         case 'pdf': {
-          printDocumentHTML(content)
+          // Descarga del PDF real generado server-side
+          if (!documentId) {
+            addToast({ type: 'error', title: 'No se puede generar PDF', message: 'Falta documentId' })
+            return
+          }
+          const res = await fetch(`/api/documents/${documentId}/pdf`)
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({ error: 'Error desconocido' }))
+            throw new Error(err.error || `HTTP ${res.status}`)
+          }
+          const blob = await res.blob()
+          const url = window.URL.createObjectURL(blob)
+          const a = window.document.createElement('a')
+          a.href = url
+          a.download = `${docLabel}-${documentNumber}.pdf`
+          window.document.body.appendChild(a)
+          a.click()
+          window.document.body.removeChild(a)
+          setTimeout(() => window.URL.revokeObjectURL(url), 1000)
+
+          // Log opcional
+          if (documentId) {
+            await supabase.from('tt_document_sends').insert({
+              document_id: documentId,
+              document_type: documentType,
+              document_ref: documentNumber,
+              company_id: companyId,
+              channel: 'pdf',
+              format: 'pdf',
+              recipients: allRecipients,
+              subject,
+              message: messageBody,
+              tracking_id: trackingId,
+              delivery_status: 'sent',
+              attachments: [{ name: `${documentNumber}.pdf`, size: `${(blob.size / 1024).toFixed(0)} KB`, url: '' }],
+            }).then(() => {}, () => {})
+          }
           break
         }
+
+        // ─────────────────────────────────────────────────────────────────
         case 'html': {
-          // Open in Gmail with HTML body
-          const toEmails = toRecipients.map(r => r.email).join(',')
-          const ccEmails = ccRecipients.map(r => r.email).join(',')
-          const gmailUrl = `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(toEmails)}&cc=${encodeURIComponent(ccEmails)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(messageBody)}`
-          window.open(gmailUrl, '_blank')
+          // Envío real via /api/documents/[id]/send con HTML + adjuntos opcionales
+          if (!documentId) {
+            addToast({ type: 'error', title: 'Falta documentId' })
+            return
+          }
+          if (toRecipients.length === 0) {
+            addToast({ type: 'error', title: 'Sin destinatarios', message: 'Agregá al menos un email en TO' })
+            return
+          }
+
+          const html = generateContent()
+          const res = await fetch(`/api/documents/${documentId}/send`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              channel: 'email',
+              recipients: allRecipients,
+              subject,
+              message: messageBody,
+              body_html: html,
+              attachments: ['pdf'],
+              tracking_id: trackingId,
+              companyId,
+            }),
+          })
+          const data = await res.json().catch(() => ({}))
+          if (!res.ok || data.sent === false) {
+            throw new Error(data.error || `HTTP ${res.status}`)
+          }
           break
         }
+
+        // ─────────────────────────────────────────────────────────────────
         case 'excel': {
+          const content = generateContent()
           downloadDocument(content, `${documentNumber}.xls`, 'application/vnd.ms-excel')
           break
         }
         case 'word': {
-          const wordContent = generateContent()
-          const wordHTML = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"></head><body>${wordContent}</body></html>`
+          const content = generateContent()
+          const wordHTML = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"></head><body>${content}</body></html>`
           downloadDocument(wordHTML, `${documentNumber}.doc`, 'application/msword')
           break
         }
         case 'text': {
+          const content = generateContent()
           downloadDocument(content, `${documentNumber}.txt`, 'text/plain')
           break
         }
+
+        // ─────────────────────────────────────────────────────────────────
         case 'link': {
-          if (shareLink) {
-            await navigator.clipboard.writeText(shareLink)
+          if (!documentId) {
+            addToast({ type: 'error', title: 'Falta documentId' })
+            return
+          }
+          // Crear share link real
+          const res = await fetch(`/api/documents/${documentId}/share-link`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              expires_days: parseInt(linkExpiry) || 30,
+              password: linkPassword || null,
+              companyId,
+            }),
+          })
+          const data = await res.json()
+          if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+
+          const shareLink = data.url as string
+          await navigator.clipboard.writeText(shareLink).catch(() => {})
+          addToast({
+            type: 'success',
+            title: 'Link copiado',
+            message: shareLink,
+          })
+
+          // Log
+          if (documentId) {
+            await supabase.from('tt_document_sends').insert({
+              document_id: documentId,
+              document_type: documentType,
+              document_ref: documentNumber,
+              company_id: companyId,
+              channel: 'link',
+              format: 'link',
+              recipients: allRecipients,
+              subject,
+              message: messageBody,
+              tracking_id: trackingId,
+              delivery_status: 'sent',
+              share_link: shareLink,
+              share_link_id: data.id,
+              share_link_expires_at: data.expires_at,
+              share_link_password: linkPassword || null,
+            }).then(() => {}, () => {})
           }
           break
         }
@@ -498,13 +582,14 @@ TorqueTools`,
 
       setSent(true)
       onSent?.()
+      addToast({ type: 'success', title: `${docLabel} enviado` })
 
-      // Reload history
       if (documentId) {
         await loadSendHistory()
       }
     } catch (err) {
       console.error('Error sending:', err)
+      addToast({ type: 'error', title: 'Error al enviar', message: (err as Error).message })
     } finally {
       setSending(false)
     }
@@ -517,10 +602,76 @@ TorqueTools`,
     setTimeout(() => setCopied(false), 2000)
   }
 
-  // Handle WhatsApp
-  function handleWhatsApp() {
-    const text = `${docLabel} ${documentNumber}\nCliente: ${clientName}\nTotal: ${formatCurrency(total, currency)}\n\n${messageBody}`
-    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank')
+  // Handle WhatsApp — vía /api/whatsapp/send (WA Business API real)
+  async function handleWhatsApp() {
+    const phone = clientData?.phone?.trim()
+    if (!phone) {
+      addToast({
+        type: 'error',
+        title: 'Cliente sin teléfono',
+        message: clientId
+          ? `Agregalo en /clientes/${clientId}`
+          : 'Agregalo en la ficha del cliente',
+      })
+      return
+    }
+
+    // Resolver company_id
+    let companyId: string | null = null
+    if (documentId) {
+      const { data: docRow } = await supabase
+        .from('tt_documents')
+        .select('company_id')
+        .eq('id', documentId)
+        .maybeSingle()
+      companyId = (docRow?.company_id as string | null) ?? null
+    }
+    if (!companyId) {
+      addToast({ type: 'error', title: 'Falta company_id' })
+      return
+    }
+
+    // Link al doc viewer (best-effort)
+    let viewerLink: string | null = null
+    if (documentId) {
+      try {
+        const lnkRes = await fetch(`/api/documents/${documentId}/share-link`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ expires_days: 30, companyId }),
+        })
+        if (lnkRes.ok) {
+          const lnkData = await lnkRes.json()
+          viewerLink = lnkData.url as string
+        }
+      } catch {
+        // ignore — mandamos solo el texto
+      }
+    }
+
+    const text = `${docLabel} ${documentNumber}\nCliente: ${clientName}\nTotal: ${formatCurrency(total, currency)}\n\n${messageBody}${viewerLink ? `\n\nVer documento: ${viewerLink}` : ''}`
+
+    try {
+      const res = await fetch('/api/whatsapp/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          company_id: companyId,
+          to: phone,
+          type: 'text',
+          body: text,
+          related_entity_type: 'document',
+          related_entity_id: documentId,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok || data.success === false) {
+        throw new Error(data.error || `HTTP ${res.status}`)
+      }
+      addToast({ type: 'success', title: 'WhatsApp enviado', message: phone })
+    } catch (err) {
+      addToast({ type: 'error', title: 'Error WhatsApp', message: (err as Error).message })
+    }
   }
 
   // ===============================================================

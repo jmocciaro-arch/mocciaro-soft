@@ -124,6 +124,32 @@ export function WidgetWrapper({
         </div>
       </div>
 
+      {/* Settings panel — visible solo cuando se togglea el botón Settings en modo edición */}
+      {editing && showSettings && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="px-3 py-2 border-b border-[#1E2330] bg-[#0F1218]"
+        >
+          <p className="text-[10px] font-bold text-[#6B7280] uppercase tracking-wider mb-2">
+            Configuración del widget
+          </p>
+          {onRemove ? (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                setShowSettings(false)
+                onRemove()
+              }}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-red-400 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-md transition-colors"
+            >
+              <X size={11} /> Quitar widget
+            </button>
+          ) : (
+            <p className="text-[11px] text-[#6B7280]">Próximamente</p>
+          )}
+        </div>
+      )}
+
       {/* Content — la navegación se maneja con onClick en el wrapper raíz
           (router.push) porque react-grid-layout intercepta mousedown y
           cancela el click natural de un <a>. */}

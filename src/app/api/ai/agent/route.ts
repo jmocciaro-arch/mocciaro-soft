@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { AgentExecutor } from '@/lib/ai/agent-executor'
+import { requireAuth } from '@/lib/auth/require-admin'
+import { withCompanyFilter } from '@/lib/auth/with-company-filter'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -11,6 +13,9 @@ const supabase = createClient(
 // Body: { companyId, task, dryRun? }
 export async function POST(request: NextRequest) {
   try {
+    const auth = await requireAuth()
+    if (!auth.ok) return auth.response
+
     const body = await request.json() as {
       companyId: string
       task: string
@@ -23,13 +28,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'companyId y task son requeridos' }, { status: 400 })
     }
 
-    // Create agent task record
+    const guard = await withCompanyFilter()
+    if (!guard.ok) return guard.response
+    if (!guard.assertAccess(companyId)) {
+      return NextResponse.json({ error: 'Sin acceso a esta empresa' }, { status: 403 })
+    }
+
+    // Create agent task record (incluye actor para auditoría)
     const { data: taskRecord, error: insertError } = await supabase
       .from('tt_agent_tasks')
       .insert({
         company_id: companyId,
         task_description: task,
         status: 'planning',
+        created_by: auth.ttUserId,
       })
       .select('id')
       .single()
@@ -78,6 +90,9 @@ export async function POST(request: NextRequest) {
 
 // GET /api/ai/agent?taskId=xxx — get task status
 export async function GET(request: NextRequest) {
+  const auth = await requireAuth()
+  if (!auth.ok) return auth.response
+
   const { searchParams } = new URL(request.url)
   const taskId = searchParams.get('taskId')
 
@@ -92,6 +107,12 @@ export async function GET(request: NextRequest) {
     .single()
 
   if (error || !data) {
+    return NextResponse.json({ error: 'Tarea no encontrada' }, { status: 404 })
+  }
+
+  const guard = await withCompanyFilter()
+  if (!guard.ok) return guard.response
+  if (!guard.assertAccess(data.company_id as string | undefined)) {
     return NextResponse.json({ error: 'Tarea no encontrada' }, { status: 404 })
   }
 

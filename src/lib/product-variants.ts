@@ -72,7 +72,7 @@ export async function computeCombinationHash(attrs: Record<string, string>): Pro
   }
 
   // Fallback Node — usar import dinámico para no romper el bundle del browser
-  const nodeCrypto = await import('node:crypto')
+  const nodeCrypto = await import('crypto')
   return nodeCrypto.createHash('sha256').update(json).digest('hex')
 }
 

@@ -378,10 +378,19 @@ export default function MailPage() {
 
             {/* Quick actions */}
             <div className="flex gap-2 pt-4 border-t border-[#1E2330]">
-              <Button variant="secondary" size="sm">
+              {/* TODO sesión 8: implementar selector cliente / crear evento calendar */}
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => addToast({ type: 'info', title: 'Próximamente', message: 'Vincular cliente disponible en próxima versión' })}
+              >
                 <Link2 size={14} /> Vincular cliente
               </Button>
-              <Button variant="secondary" size="sm">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => addToast({ type: 'info', title: 'Próximamente', message: 'Crear seguimiento disponible en próxima versión' })}
+              >
                 <Bell size={14} /> Crear seguimiento
               </Button>
             </div>

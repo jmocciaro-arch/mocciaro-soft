@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { TangoClient } from '@/lib/invoicing/tango-client'
+import { requireAdmin, userHasCompanyAccess } from '@/lib/auth/require-admin'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -18,8 +19,15 @@ export const maxDuration = 60
  */
 export async function POST(req: NextRequest) {
   try {
+    const guard = await requireAdmin()
+    if (!guard.ok) return guard.response
+
     const { companyId, from, to } = await req.json()
     if (!companyId) return NextResponse.json({ error: 'companyId requerido' }, { status: 400 })
+
+    if (!(await userHasCompanyAccess(guard.ttUserId, guard.role, companyId))) {
+      return NextResponse.json({ error: 'Sin acceso a esta empresa' }, { status: 403 })
+    }
 
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,

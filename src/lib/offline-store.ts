@@ -2,6 +2,19 @@
 // TorqueTools ERP — Offline Store (IndexedDB)
 // Sistema de almacenamiento offline completo con sync
 // ============================================================================
+//
+// Stores activos en esta versión (DB_VERSION=1):
+//   1. products
+//   2. clients
+//   3. quotes  (índices: client_id, created_at)
+//   4. pending_actions  (índices: createdAt, type)
+//   5. user_settings
+//
+// NOTE: La memoria del proyecto (project_mocciaro_offline_pwa.md) menciona 21
+// stores planeados para PWA full-offline (compras, ventas, stock, sat,
+// catálogo, leads, etc.). Hoy hay 5 activos — el resto está en roadmap. Si
+// agregás un store nuevo, subí DB_VERSION y registralo en onupgradeneeded.
+// ============================================================================
 
 const DB_NAME = 'torquetools-offline';
 const DB_VERSION = 1;
@@ -126,9 +139,24 @@ async function getAllFromStore<T>(storeName: string): Promise<T[]> {
   return idbRequest<T[]>(store.getAll());
 }
 
+/**
+ * Inyecta updated_at (ms epoch) si el record no lo trae. Necesario para LWW
+ * (last-write-wins) en sync con el servidor — ver sync-queue.ts.
+ * No tocamos pending_actions ni user_settings, que tienen su propio timestamp.
+ */
+function withUpdatedAt<T>(storeName: string, data: T): T {
+  if (storeName === 'pending_actions' || storeName === 'user_settings') {
+    return data;
+  }
+  if (data && typeof data === 'object' && !('updated_at' in (data as object))) {
+    return { ...(data as object), updated_at: Date.now() } as T;
+  }
+  return data;
+}
+
 async function putInStore<T>(storeName: string, data: T): Promise<void> {
   const store = await getStore(storeName, 'readwrite');
-  await idbRequest(store.put(data));
+  await idbRequest(store.put(withUpdatedAt(storeName, data)));
 }
 
 async function putManyInStore<T>(storeName: string, items: T[]): Promise<void> {
@@ -137,7 +165,7 @@ async function putManyInStore<T>(storeName: string, items: T[]): Promise<void> {
   const store = tx.objectStore(storeName);
 
   for (const item of items) {
-    store.put(item);
+    store.put(withUpdatedAt(storeName, item));
   }
 
   return new Promise((resolve, reject) => {
@@ -161,9 +189,24 @@ async function clearStore(storeName: string): Promise<void> {
 // ============================================================================
 
 export async function saveProducts(products: OfflineProduct[]): Promise<void> {
-  await clearStore('products');
+  // Upsert por id — NO hacemos clear previo. Antes, el clear dejaba al
+  // usuario offline sin productos durante el rebuild. Si después necesitamos
+  // sweep de ids obsoletos, hay que hacerlo comparando ids post-success.
   await putManyInStore('products', products);
-  console.log(`[OfflineStore] ${products.length} productos guardados offline`);
+  console.log(`[OfflineStore] ${products.length} productos upserteados offline`);
+}
+
+/**
+ * Elimina del store local los productos cuyo id NO esté en el set provisto.
+ * Llamalo DESPUÉS de un saveProducts exitoso si querés purgar borrados del server.
+ */
+export async function pruneProducts(keepIds: Set<string>): Promise<number> {
+  const all = await getProducts();
+  const toDelete = all.filter((p) => !keepIds.has(p.id));
+  for (const p of toDelete) {
+    await deleteFromStore('products', p.id);
+  }
+  return toDelete.length;
 }
 
 export async function getProducts(): Promise<OfflineProduct[]> {
@@ -180,9 +223,18 @@ export async function getProduct(id: string): Promise<OfflineProduct | undefined
 // ============================================================================
 
 export async function saveClients(clients: OfflineClient[]): Promise<void> {
-  await clearStore('clients');
+  // Upsert por id — sin clear previo (ver comentario en saveProducts).
   await putManyInStore('clients', clients);
-  console.log(`[OfflineStore] ${clients.length} clientes guardados offline`);
+  console.log(`[OfflineStore] ${clients.length} clientes upserteados offline`);
+}
+
+export async function pruneClients(keepIds: Set<string>): Promise<number> {
+  const all = await getClients();
+  const toDelete = all.filter((c) => !keepIds.has(c.id));
+  for (const c of toDelete) {
+    await deleteFromStore('clients', c.id);
+  }
+  return toDelete.length;
 }
 
 export async function getClients(): Promise<OfflineClient[]> {
@@ -203,9 +255,18 @@ export async function saveClient(client: OfflineClient): Promise<void> {
 // ============================================================================
 
 export async function saveQuotes(quotes: OfflineQuote[]): Promise<void> {
-  await clearStore('quotes');
+  // Upsert por id — sin clear previo (ver comentario en saveProducts).
   await putManyInStore('quotes', quotes);
-  console.log(`[OfflineStore] ${quotes.length} cotizaciones guardadas offline`);
+  console.log(`[OfflineStore] ${quotes.length} cotizaciones upserteadas offline`);
+}
+
+export async function pruneQuotes(keepIds: Set<string>): Promise<number> {
+  const all = await getQuotes();
+  const toDelete = all.filter((q) => !keepIds.has(q.id));
+  for (const q of toDelete) {
+    await deleteFromStore('quotes', q.id);
+  }
+  return toDelete.length;
 }
 
 export async function getQuotes(): Promise<OfflineQuote[]> {

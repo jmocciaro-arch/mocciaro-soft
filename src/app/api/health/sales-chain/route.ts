@@ -1,14 +1,24 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { requireAdmin } from '@/lib/auth/require-admin'
 
 export const runtime = 'nodejs'
 
 /**
  * GET /api/health/sales-chain
  * Diagnóstico completo del estado de la cadena de ventas.
- * Chequea: tablas, columnas clave, migrations aplicadas, API keys, buckets.
+ * Requiere admin o CRON_SECRET (para health-check externo).
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
+  // Cron / external health check con Bearer CRON_SECRET
+  const authHeader = req.headers.get('authorization') ?? ''
+  const cronSecret = process.env.CRON_SECRET ?? ''
+  const isCron = !!cronSecret && authHeader === `Bearer ${cronSecret}`
+  if (!isCron) {
+    const guard = await requireAdmin()
+    if (!guard.ok) return guard.response
+  }
+
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -45,21 +55,21 @@ export async function GET() {
   const { data: companies } = await supabase
     .from('tt_companies')
     .select('id, name, code_prefix, trade_name, legal_name, tax_id, country')
-  const prefixed = (companies || []).filter((c: any) => c.code_prefix)
+  const prefixed = (companies || []).filter((c: { code_prefix?: string }) => c.code_prefix)
   checks.push({
     name: `COMPANIES con code_prefix: ${prefixed.length}/${(companies || []).length}`,
     ok: prefixed.length > 0,
-    detail: prefixed.map((c: any) => `${c.code_prefix}=${c.name}`).join(', '),
+    detail: prefixed.map((c: { code_prefix: string; name: string }) => `${c.code_prefix}=${c.name}`).join(', '),
   })
 
   // 4) Función next_document_code existe
   try {
-    const firstCompany = companies?.[0] as any
+    const firstCompany = companies?.[0] as { id?: string } | undefined
     if (firstCompany?.id) {
       const { data, error } = await supabase.rpc('next_document_code', {
         p_company_id: firstCompany.id,
         p_type: 'cotizacion',
-      } as any)
+      } as never)
       checks.push({
         name: 'FUNCTION: next_document_code',
         ok: !error && typeof data === 'string',
@@ -94,7 +104,7 @@ export async function GET() {
   checks.push({
     name: `INVOICE PROVIDERS: ${providers?.length || 0}`,
     ok: (providers?.length || 0) > 0,
-    detail: providers?.map((p: any) => p.provider_type).join(', '),
+    detail: providers?.map((p: { provider_type: string }) => p.provider_type).join(', '),
   })
 
   // 8) Counts por entidad (para que veas volumen)

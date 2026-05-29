@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import fs from 'node:fs/promises'
-import path from 'node:path'
+import fs from 'fs/promises'
+import path from 'path'
 import { callClaude } from '@/lib/ai/ai-helper'
 import { requireAuth } from '@/lib/auth/require-admin'
 

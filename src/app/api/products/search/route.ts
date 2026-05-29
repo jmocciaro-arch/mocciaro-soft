@@ -13,6 +13,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { requireAuth } from '@/lib/auth/require-admin';
 
 type SearchFilters = {
   q: string | null;
@@ -43,6 +44,9 @@ function parseFilters(params: URLSearchParams): SearchFilters {
 
 export async function GET(request: NextRequest) {
   try {
+    const guard = await requireAuth();
+    if (!guard.ok) return guard.response;
+
     const supabase = await createClient();
     const { searchParams } = new URL(request.url);
     const f = parseFilters(searchParams);

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { TangoClient } from '@/lib/invoicing/tango-client'
+import { requireAdmin, userHasCompanyAccess } from '@/lib/auth/require-admin'
 
 export const runtime = 'nodejs'
 
@@ -29,8 +30,15 @@ function admin() {
 }
 
 export async function GET(req: NextRequest) {
+  const guard = await requireAdmin()
+  if (!guard.ok) return guard.response
+
   const companyId = req.nextUrl.searchParams.get('companyId')
   if (!companyId) return NextResponse.json({ error: 'companyId requerido' }, { status: 400 })
+
+  if (!(await userHasCompanyAccess(guard.ttUserId, guard.role, companyId))) {
+    return NextResponse.json({ error: 'Sin acceso a esta empresa' }, { status: 403 })
+  }
 
   const supabase = admin()
   const { data } = await supabase
@@ -57,11 +65,18 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    const guard = await requireAdmin()
+    if (!guard.ok) return guard.response
+
     const body = await req.json()
     const { companyId, userIdentifier, applicationPublicKey, perfilComprobanteId, puntoVentaDefault, testConnection } = body
 
     if (!companyId || !userIdentifier || !applicationPublicKey) {
       return NextResponse.json({ error: 'Faltan credenciales' }, { status: 400 })
+    }
+
+    if (!(await userHasCompanyAccess(guard.ttUserId, guard.role, companyId))) {
+      return NextResponse.json({ error: 'Sin acceso a esta empresa' }, { status: 403 })
     }
 
     // 1) Test: pedir token

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { TangoClient, type TangoCrearFacturaInput, type TangoLetra } from '@/lib/invoicing/tango-client'
+import { requireAdmin, userHasCompanyAccess } from '@/lib/auth/require-admin'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -21,6 +22,10 @@ export const maxDuration = 60
  */
 export async function POST(req: NextRequest) {
   try {
+    // Auth: solo admin puede emitir facturas reales en AFIP
+    const guard = await requireAdmin()
+    if (!guard.ok) return guard.response
+
     const body = await req.json()
     const {
       companyId,
@@ -36,6 +41,11 @@ export async function POST(req: NextRequest) {
 
     if (!companyId || !items?.length) {
       return NextResponse.json({ error: 'companyId e items son requeridos' }, { status: 400 })
+    }
+
+    // Defense in depth: verificar acceso del admin a esta empresa
+    if (!(await userHasCompanyAccess(guard.ttUserId, guard.role, companyId))) {
+      return NextResponse.json({ error: 'Sin acceso a esta empresa' }, { status: 403 })
     }
 
     // Usamos service role para saltar RLS en server
@@ -115,7 +125,15 @@ export async function POST(req: NextRequest) {
       Letra: letra as TangoLetra,
       ...clienteData,
       Observacion: observacion,
-      DetallesMovimiento: items.map((it: any) => ({
+      DetallesMovimiento: items.map((it: {
+        sku?: string
+        tango_producto_codigo?: string
+        description?: string
+        quantity: number | string
+        unit_price: number | string
+        discount_pct?: number | string
+        iva_pct?: number | string
+      }) => ({
         ProductoCodigo: it.sku || it.tango_producto_codigo,
         ProductoNombre: it.description,
         Cantidad: Number(it.quantity),
