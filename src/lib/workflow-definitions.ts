@@ -40,6 +40,12 @@ export const WORKFLOWS: Record<DocumentType, Array<{ id: string; label: string; 
 
   quote: [
     { id: 'draft', label: 'Borrador', hint: 'Datos, cliente, items' },
+    // Solo aplica cuando la cotización fue importada desde una OC del cliente.
+    // El cotizador pasa overrides desde page.tsx según items con client_sku:
+    //   - sin OC importada → status 'pending' (gris, decorativo, no bloquea)
+    //   - con OC y items sin vincular → 'current' (ámbar, bloquea avance)
+    //   - con OC y todo vinculado → 'completed' (verde)
+    { id: 'match', label: 'Match productos', hint: 'Vincular SKU cliente ↔ catálogo', optional: true },
     { id: 'conditions', label: 'Condiciones', hint: 'Incoterm, pago, validez' },
     { id: 'approval', label: 'Aprobación', hint: 'Revisar antes de enviar' },
     { id: 'sent', label: 'Enviada' },
