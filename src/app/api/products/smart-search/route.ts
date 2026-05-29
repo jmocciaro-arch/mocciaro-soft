@@ -230,7 +230,18 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // 2f) Fallback: query cruda en search_text (siempre, peso bajo)
+  // 2f) Brand match puro — todos los productos de la marca detectada.
+  // Garantiza que aunque no haya match exacto de modelo, los productos de
+  // la marca correcta aparezcan rankeados arriba de productos de otras marcas
+  // con keywords coincidentes.
+  if (parsed.brand) {
+    promises.push(
+      sb.from('tt_products').select(SELECT).eq('active', true).ilike('brand', parsed.brand).limit(15)
+        .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 50, `🏷️ Es de marca ${parsed.brand}`)))
+    )
+  }
+
+  // 2g) Fallback: query cruda en search_text (siempre, peso bajo)
   promises.push(
     sb.from('tt_products').select(SELECT).eq('active', true).ilike('search_text', `%${query.slice(0, 30)}%`).limit(10)
       .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 15, '🔍 Texto similar')))
@@ -238,7 +249,25 @@ export async function POST(req: NextRequest) {
 
   await Promise.all(promises)
 
-  // 3) Ordenar por score y devolver top N
+  // 3) Bonus/penalty post-merge basado en brand de la query parseada.
+  // Si el usuario buscó "FEIN ASW18", un Sumake con keyword "atornillador"
+  // no debería superar a un FEIN aunque el FEIN no haga match perfecto.
+  if (parsed.brand) {
+    const queryBrand = parsed.brand.toUpperCase()
+    for (const c of candidates.values()) {
+      const productBrand = (c.brand || '').toUpperCase()
+      if (productBrand === queryBrand) {
+        // Bonus +20 por marca correcta — siempre rankea sobre los de otras marcas
+        c.score += 20
+      } else if (productBrand && productBrand !== queryBrand) {
+        // Penalty -25 por marca distinta cuando la query especifica marca
+        c.score = Math.max(0, c.score - 25)
+        c.match_reasons.push(`⚠️ Marca ${c.brand} (vos pediste ${parsed.brand})`)
+      }
+    }
+  }
+
+  // 4) Ordenar por score y devolver top N
   const items = Array.from(candidates.values())
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)

@@ -290,14 +290,15 @@ export function ProductMatchModal({
                       <div className="text-xs font-mono text-[#FF6600]">{p.sku}</div>
                       {typeof p.score === 'number' && p.score > 0 && (
                         <span
-                          className={`text-[9px] px-1 py-px rounded font-semibold ${
-                            p.score >= 90 ? 'bg-emerald-500/15 text-emerald-400'
-                            : p.score >= 60 ? 'bg-indigo-500/15 text-indigo-300'
-                            : 'bg-[#1E2330] text-[#9CA3AF]'
+                          className={`text-[10px] px-1.5 py-px rounded font-semibold ${
+                            p.score >= 100 ? 'bg-emerald-500/20 text-emerald-300'
+                            : p.score >= 70 ? 'bg-indigo-500/15 text-indigo-300'
+                            : p.score >= 40 ? 'bg-amber-500/15 text-amber-300'
+                            : 'bg-[#1E2330] text-[#6B7280]'
                           }`}
-                          title={`Score ${p.score} — IA combinó marca/modelo/código`}
+                          title={`Score ${p.score} — suma de marca/modelo/código/keywords`}
                         >
-                          {p.score >= 90 ? '★★★' : p.score >= 60 ? '★★' : '★'}
+                          {p.score >= 100 ? '★★★' : p.score >= 70 ? '★★' : p.score >= 40 ? '★' : '·'} {p.score}
                         </span>
                       )}
                     </div>
