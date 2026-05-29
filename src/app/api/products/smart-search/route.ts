@@ -7,19 +7,13 @@
  * El buscador tradicional (ILIKE sobre search_text) no encuentra el producto
  * porque la descripción no está escrita exactamente igual en el catálogo.
  *
- * Este endpoint:
- *   1. Llama a Claude (Haiku, cacheado) para desglozar la query en componentes:
- *      - brand: "TOHNICHI" (marca)
- *      - model: "QSP200N4" (modelo)
- *      - internal_code: "PRO02114" (código interno proveedor/fabricante)
- *      - keywords: ["torquímetro", "200 NM"] (palabras descriptivas)
- *   2. Hace múltiples sub-queries en tt_products combinándolas con scoring:
- *      - SKU exacto / manufacturer_code / supplier_code → 100
- *      - brand + modelo match → 85
- *      - brand + similitud fuzzy en name → 65
- *      - keywords en search_text → 30-50
- *   3. Devuelve top 20 con `match_reasons` explicando por qué cada producto
- *      apareció (para que la UI muestre "🎯 marca + modelo · 🔢 código interno").
+ * Estrategia v3 (después de feedback de Juan):
+ *   - Matches EXACTOS (SKU, manufacturer_code) dominan con scores ≥150
+ *   - Bonus suave por marca correcta (+25), SIN penalty por otras marcas
+ *     (la IA puede equivocarse parseando — no destruimos resultados buenos)
+ *   - NO trasladamos "todos los productos de marca X" como filler — eso
+ *     metía 15 productos random de la marca aunque no tuvieran nada que ver
+ *   - Keywords contribuyen poco (15 c/u), exactos pesan mucho más
  *
  * Body:
  *   { query: string, limit?: number }
@@ -96,13 +90,14 @@ Devolvé SOLO un JSON con esta forma (sin comentarios, sin markdown):
 Ejemplos:
 - "TOHNICHI MOD.QSP200N4 PRO02114 40-200 NM" → { "brand": "TOHNICHI", "model": "QSP200N4", "internal_code": "PRO02114", "keywords": ["torquímetro", "40-200 NM"] }
 - "FEIN ASW18-60PC ANGULAR 25 A 60 NM" → { "brand": "FEIN", "model": "ASW18-60PC", "internal_code": null, "keywords": ["atornillador", "angular", "25-60 NM"] }
+- "CRPR009720 ATORNILLADOR ACOPLE 1/4 FEIN ASM18-12 PC 4-12 RANGO" → { "brand": "FEIN", "model": "ASM18-12", "internal_code": "CRPR009720", "keywords": ["atornillador", "acople", "1/4", "4-12"] }
 - "Atornillador 1/4 8 puntas" → { "brand": null, "model": null, "internal_code": null, "keywords": ["atornillador", "1/4", "8 puntas"] }
 
 Reglas:
-- brand: solo marcas reales conocidas (FEIN, TOHNICHI, GEDORE, INGERSOLL RAND, APEX, etc). Si no estás seguro, null.
+- brand: solo marcas reales conocidas (FEIN, TOHNICHI, GEDORE, INGERSOLL RAND, APEX, MAKITA, BOSCH, etc). Si no estás seguro, null.
 - model: código alfanumérico del fabricante (suele tener letras + números). Quitá MOD. y abreviaciones.
-- internal_code: códigos del tipo PRO00808, CR20311, CRPR009720 que parecen códigos internos.
-- keywords: 2-5 palabras útiles para fuzzy match. Sin la marca/modelo/código (ya van en los otros campos).`
+- internal_code: códigos del tipo PRO00808, CR20311, CRPR009720 que parecen códigos internos. Si la query empieza con uno, probablemente sea este.
+- keywords: 3-6 palabras útiles para fuzzy match. Sin la marca/modelo/código (ya van en los otros campos). Incluí descripciones técnicas (rangos, medidas, "acople", "angular", etc).`
 
 async function parseQuery(query: string, userId: string | null, companyId: string | null): Promise<ParsedQuery> {
   // Si la query es muy corta o solo números/letras pegadas, devolver vacío y dejar fuzzy puro
@@ -153,8 +148,6 @@ export async function POST(req: NextRequest) {
   const parsed = await parseQuery(query, guard.ttUserId, null)
 
   // 2) Sub-queries paralelas
-  // Cada una devuelve un set de productos con un score base. Después mergeamos
-  // por id y sumamos scores + acumulamos razones.
   const candidates = new Map<string, SmartProduct>()
 
   function add(p: ProductRow, score: number, reason: string) {
@@ -168,101 +161,103 @@ export async function POST(req: NextRequest) {
   }
 
   const SELECT = 'id, sku, name, brand, modelo, category, manufacturer_code, supplier_code, price_eur, image_url, search_text'
-
-  // Tipo PromiseLike: el builder de Supabase devuelve un thenable, no un Promise estricto
   const promises: PromiseLike<unknown>[] = []
 
-  // 2a) SKU exacto (case insensitive)
+  // ─── A) MATCHES EXACTOS DE CÓDIGOS (los más fuertes, scores ≥150) ───
+
+  // SKU = código interno (CRPR009720 es el caso más común en OCs)
   if (parsed.internal_code) {
     promises.push(
       sb.from('tt_products').select(SELECT).eq('active', true).ilike('sku', parsed.internal_code).limit(5)
-        .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 100, '🎯 SKU coincide con código interno')))
+        .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 200, '🎯 SKU exacto')))
     )
-  }
-  if (parsed.model) {
-    promises.push(
-      sb.from('tt_products').select(SELECT).eq('active', true).ilike('sku', parsed.model).limit(5)
-        .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 100, '🎯 SKU coincide con modelo')))
-    )
-  }
-
-  // 2b) manufacturer_code o supplier_code = internal_code
-  if (parsed.internal_code) {
+    // manufacturer_code y supplier_code
     promises.push(
       sb.from('tt_products').select(SELECT).eq('active', true).ilike('manufacturer_code', parsed.internal_code).limit(5)
-        .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 95, '🔢 Código fabricante coincide')))
+        .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 180, '🔢 Código fabricante exacto')))
     )
     promises.push(
       sb.from('tt_products').select(SELECT).eq('active', true).ilike('supplier_code', parsed.internal_code).limit(5)
-        .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 90, '🔢 Código proveedor coincide')))
+        .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 170, '🔢 Código proveedor exacto')))
+    )
+    // SKU CONTIENE el código (parcial)
+    promises.push(
+      sb.from('tt_products').select(SELECT).eq('active', true).ilike('sku', `%${parsed.internal_code}%`).limit(8)
+        .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 150, '🔢 SKU contiene código')))
     )
   }
 
-  // 2c) brand + modelo (combo fuerte)
+  // SKU = modelo (a veces el modelo del fabricante coincide con nuestro SKU)
+  if (parsed.model) {
+    promises.push(
+      sb.from('tt_products').select(SELECT).eq('active', true).ilike('sku', parsed.model).limit(5)
+        .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 200, '🎯 SKU = modelo')))
+    )
+  }
+
+  // ─── B) MARCA + MODELO (combo fuerte, ≥100) ───
   if (parsed.brand && parsed.model) {
     promises.push(
       sb.from('tt_products').select(SELECT).eq('active', true).ilike('brand', parsed.brand).ilike('modelo', `%${parsed.model}%`).limit(10)
-        .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 85, `🏷️ Marca ${parsed.brand} + modelo`)))
+        .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 140, `🎯 ${parsed.brand} + modelo`)))
     )
-    // También: brand + modelo en sku (común que el SKU contenga el modelo)
     promises.push(
       sb.from('tt_products').select(SELECT).eq('active', true).ilike('brand', parsed.brand).ilike('sku', `%${parsed.model}%`).limit(10)
-        .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 80, `🏷️ Marca ${parsed.brand} + SKU contiene modelo`)))
+        .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 130, `🎯 ${parsed.brand} + SKU con modelo`)))
     )
-  }
-
-  // 2d) Solo brand → fuzzy en name
-  if (parsed.brand) {
     promises.push(
-      sb.from('tt_products').select(SELECT).eq('active', true).ilike('brand', parsed.brand).ilike('search_text', `%${query.slice(0, 30)}%`).limit(10)
-        .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 60, `🏷️ Marca ${parsed.brand} + texto similar`)))
+      sb.from('tt_products').select(SELECT).eq('active', true).ilike('brand', parsed.brand).ilike('name', `%${parsed.model}%`).limit(10)
+        .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 120, `🎯 ${parsed.brand} + name con modelo`)))
     )
   }
 
-  // 2e) Keywords en search_text — útil cuando IA no encontró marca/modelo
+  // ─── C) SOLO MODELO (sin brand) — para cuando IA no detectó marca ───
+  if (parsed.model && !parsed.brand) {
+    promises.push(
+      sb.from('tt_products').select(SELECT).eq('active', true).ilike('modelo', `%${parsed.model}%`).limit(10)
+        .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 90, `📐 Modelo ${parsed.model}`)))
+    )
+    promises.push(
+      sb.from('tt_products').select(SELECT).eq('active', true).ilike('name', `%${parsed.model}%`).limit(10)
+        .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 75, `📐 Name contiene modelo`)))
+    )
+  }
+
+  // ─── D) KEYWORDS — contribución menor, max 4 ───
+  // Buscamos en `name` (más preciso que search_text que tiene mucho ruido)
   if (parsed.keywords && parsed.keywords.length > 0) {
-    for (const kw of parsed.keywords.slice(0, 3)) {
-      if (kw.length < 3) continue
+    for (const kw of parsed.keywords.slice(0, 4)) {
+      const cleaned = kw.trim()
+      if (cleaned.length < 3) continue
       promises.push(
-        sb.from('tt_products').select(SELECT).eq('active', true).ilike('search_text', `%${kw}%`).limit(8)
-          .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 25, `🔍 Contiene "${kw}"`)))
+        sb.from('tt_products').select(SELECT).eq('active', true).ilike('name', `%${cleaned}%`).limit(8)
+          .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 15, `🔍 "${cleaned}"`)))
       )
     }
   }
 
-  // 2f) Brand match puro — todos los productos de la marca detectada.
-  // Garantiza que aunque no haya match exacto de modelo, los productos de
-  // la marca correcta aparezcan rankeados arriba de productos de otras marcas
-  // con keywords coincidentes.
-  if (parsed.brand) {
-    promises.push(
-      sb.from('tt_products').select(SELECT).eq('active', true).ilike('brand', parsed.brand).limit(15)
-        .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 50, `🏷️ Es de marca ${parsed.brand}`)))
-    )
-  }
-
-  // 2g) Fallback: query cruda en search_text (siempre, peso bajo)
+  // ─── E) FALLBACK: query cruda completa (peso muy bajo, sólo para no quedar vacío) ───
+  // Tomamos hasta 60 chars de la query para tener contexto pero sin ser excesivo
   promises.push(
-    sb.from('tt_products').select(SELECT).eq('active', true).ilike('search_text', `%${query.slice(0, 30)}%`).limit(10)
-      .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 15, '🔍 Texto similar')))
+    sb.from('tt_products').select(SELECT).eq('active', true).ilike('search_text', `%${query.slice(0, 60)}%`).limit(10)
+      .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 10, '🔍 Texto similar')))
   )
 
   await Promise.all(promises)
 
-  // 3) Bonus/penalty post-merge basado en brand de la query parseada.
-  // Si el usuario buscó "FEIN ASW18", un Sumake con keyword "atornillador"
-  // no debería superar a un FEIN aunque el FEIN no haga match perfecto.
+  // 3) Bonus SUAVE por marca match — NO penalizamos otras marcas.
+  // La IA puede equivocarse parseando "FEIN" cuando en realidad el producto
+  // está mal escrito o la marca está en otro campo. Mejor premiar match
+  // exacto sin destruir resultados buenos.
   if (parsed.brand) {
-    const queryBrand = parsed.brand.toUpperCase()
+    const queryBrand = parsed.brand.toUpperCase().trim()
     for (const c of candidates.values()) {
-      const productBrand = (c.brand || '').toUpperCase()
-      if (productBrand === queryBrand) {
-        // Bonus +20 por marca correcta — siempre rankea sobre los de otras marcas
-        c.score += 20
-      } else if (productBrand && productBrand !== queryBrand) {
-        // Penalty -25 por marca distinta cuando la query especifica marca
-        c.score = Math.max(0, c.score - 25)
-        c.match_reasons.push(`⚠️ Marca ${c.brand} (vos pediste ${parsed.brand})`)
+      const productBrand = (c.brand || '').toUpperCase().trim()
+      if (productBrand && productBrand === queryBrand) {
+        c.score += 25
+        if (!c.match_reasons.some((r) => r.startsWith('🏷️ Marca'))) {
+          c.match_reasons.unshift(`🏷️ Marca ${parsed.brand} correcta`)
+        }
       }
     }
   }
