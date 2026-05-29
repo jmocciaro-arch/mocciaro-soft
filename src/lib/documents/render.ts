@@ -217,6 +217,26 @@ async function loadContext(
       renderedAt: new Date(),
       locale,
     },
+    // Contactos del cliente involucrados — persistidos en metadata.participating_contacts
+    // por el cotizador (PR #57). El template los renderea como sección "Atención"
+    // en el bloque del cliente del PDF.
+    participating_contacts: (() => {
+      const meta = (doc.metadata as Record<string, unknown> | null) || null
+      const raw = meta && Array.isArray(meta.participating_contacts) ? meta.participating_contacts : null
+      if (!raw) return undefined
+      return raw
+        .map((p) => {
+          if (!p || typeof p !== 'object') return null
+          const obj = p as Record<string, unknown>
+          if (typeof obj.role !== 'string' || typeof obj.name_snapshot !== 'string') return null
+          return {
+            role: obj.role,
+            name_snapshot: obj.name_snapshot,
+            email_snapshot: typeof obj.email_snapshot === 'string' ? obj.email_snapshot : null,
+          }
+        })
+        .filter((p): p is { role: string; name_snapshot: string; email_snapshot: string | null } => p !== null)
+    })(),
   }
 
   return { ctx, docCode }
