@@ -24,6 +24,11 @@ export interface DocumentItem {
   po_status?: string
   notes?: string
   hasComponents: boolean
+  // Referencias originales del cliente cuando esta línea proviene de una OC.
+  // Persistidas en tt_document_lines.metadata.{client_sku, client_description}.
+  // Si existen, se muestran como subfila gris debajo del SKU/descripción del catálogo.
+  client_sku?: string
+  client_description?: string
 }
 
 export interface DocumentItemComponent {
@@ -132,6 +137,17 @@ function ItemRow({
             )}
           </div>
           <span className="text-[10px] text-[#6B7280] font-mono">{item.sku}</span>
+          {/* Render dual: ref cliente debajo si existe y difiere del SKU/desc principal.
+              Se muestra como subfila gris pequeña con el flechita ↳ — consistente
+              con el render del cotizador. */}
+          {(item.client_sku && item.client_sku !== item.sku) || (item.client_description && item.client_description !== item.description) ? (
+            <div className="text-[10px] text-[#4B5563] mt-0.5 truncate" title={`Ref. cliente: ${item.client_sku || ''} ${item.client_description || ''}`.trim()}>
+              {'↳ '}
+              {item.client_sku && item.client_sku !== item.sku && <span className="font-mono">{item.client_sku}</span>}
+              {item.client_sku && item.client_description && item.client_sku !== item.sku && item.client_description !== item.description && <span> · </span>}
+              {item.client_description && item.client_description !== item.description && <span>{item.client_description}</span>}
+            </div>
+          ) : null}
         </div>
 
         {/* Quantity */}

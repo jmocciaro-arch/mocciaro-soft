@@ -161,24 +161,33 @@ async function loadContext(
       external_ref: doc.external_ref,
       customer_po_number: doc.customer_po_number,
     },
-    lines: (linesRes.data ?? []).map((l) => ({
-      line_number: l.line_number,
-      product_sku: l.product_sku,
-      product_name: l.product_name,
-      description: l.description,
-      quantity: Number(l.quantity),
-      unit: l.unit,
-      unit_price: Number(l.unit_price),
-      discount_pct: Number(l.discount_pct),
-      discount_amount: Number(l.discount_amount),
-      tax_rate: Number(l.tax_rate),
-      tax_amount: Number(l.tax_amount),
-      subtotal: Number(l.subtotal),
-      total: Number(l.total),
-      attributes: l.attributes ?? {},
-      image_url: l.image_url,
-      notes: l.notes,
-    })),
+    lines: (linesRes.data ?? []).map((l) => {
+      // Refs cliente desde metadata jsonb (PR #51): visibles como subfila gris
+      // bajo el SKU/desc del catálogo en el PDF si difieren del principal.
+      const meta = (l.metadata as Record<string, unknown> | null) || null
+      const clientSku = meta && typeof meta.client_sku === 'string' ? meta.client_sku : null
+      const clientDesc = meta && typeof meta.client_description === 'string' ? meta.client_description : null
+      return {
+        line_number: l.line_number,
+        product_sku: l.product_sku,
+        product_name: l.product_name,
+        description: l.description,
+        quantity: Number(l.quantity),
+        unit: l.unit,
+        unit_price: Number(l.unit_price),
+        discount_pct: Number(l.discount_pct),
+        discount_amount: Number(l.discount_amount),
+        tax_rate: Number(l.tax_rate),
+        tax_amount: Number(l.tax_amount),
+        subtotal: Number(l.subtotal),
+        total: Number(l.total),
+        attributes: l.attributes ?? {},
+        image_url: l.image_url,
+        notes: l.notes,
+        client_sku: clientSku,
+        client_description: clientDesc,
+      }
+    }),
     company: {
       id: company.id,
       name: company.name,
