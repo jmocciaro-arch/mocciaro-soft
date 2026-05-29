@@ -21,7 +21,7 @@ import {
   Settings, Users, Building2, Sliders, Warehouse, Activity,
   Save, Plus, Loader2, ChevronLeft, ChevronRight, Edit, Shield,
   UserPlus, Power, Copy, Eye, EyeOff, Check, ShieldCheck, X,
-  FileText, Trash2, Palette
+  FileText, Trash2, Palette, Key, RefreshCw
 } from 'lucide-react'
 
 type Row = Record<string, unknown>
@@ -288,6 +288,12 @@ export default function AdminPage() {
   // User RBAC assignments
   const [userRbacRoles, setUserRbacRoles] = useState<Record<string, string[]>>({})
   const [userEffectivePerms, setUserEffectivePerms] = useState<string[]>([])
+  // Reset password modal
+  const [resetPwUser, setResetPwUser] = useState<Row | null>(null)
+  const [resetPwValue, setResetPwValue] = useState('')
+  const [resetPwShow, setResetPwShow] = useState(false)
+  const [resetPwResult, setResetPwResult] = useState<string | null>(null)
+  const [savingResetPw, setSavingResetPw] = useState(false)
 
   // Companies
   const [companies, setCompanies] = useState<Row[]>([])
@@ -517,6 +523,50 @@ export default function AdminPage() {
       }
     } catch (err) {
       addToast({ type: 'error', title: 'Error', message: (err as Error).message })
+    }
+  }
+
+  const openResetPassword = (u: Row) => {
+    setResetPwUser(u)
+    setResetPwValue('')
+    setResetPwShow(false)
+    setResetPwResult(null)
+  }
+
+  // mode 'manual' uses the typed password; mode 'generate' lets the server create one
+  const submitResetPassword = async (mode: 'manual' | 'generate') => {
+    if (!resetPwUser) return
+    if (mode === 'manual' && resetPwValue.trim().length < 8) {
+      addToast({ type: 'warning', title: 'La contraseña debe tener al menos 8 caracteres' })
+      return
+    }
+    setSavingResetPw(true)
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: resetPwUser.id,
+          ...(mode === 'manual' ? { password: resetPwValue.trim() } : {}),
+        }),
+      })
+      const result = await res.json()
+      if (!res.ok) {
+        addToast({ type: 'error', title: 'Error', message: result.error })
+      } else if (mode === 'generate') {
+        setResetPwResult(result.generated_password || null)
+        setResetPwShow(true)
+        addToast({ type: 'success', title: 'Contraseña temporal generada' })
+        loadUsers()
+      } else {
+        addToast({ type: 'success', title: 'Contraseña actualizada' })
+        setResetPwUser(null)
+        loadUsers()
+      }
+    } catch (err) {
+      addToast({ type: 'error', title: 'Error de red', message: (err as Error).message })
+    } finally {
+      setSavingResetPw(false)
     }
   }
 
@@ -1093,6 +1143,9 @@ export default function AdminPage() {
                                   <Button variant="ghost" size="sm" onClick={() => openEditUser(u)} title="Editar">
                                     <Edit size={14} />
                                   </Button>
+                                  <Button variant="ghost" size="sm" onClick={() => openResetPassword(u)} title="Resetear contraseña">
+                                    <Key size={14} className="text-amber-400" />
+                                  </Button>
                                   {u.active !== false && (
                                     <Button variant="ghost" size="sm" onClick={() => deactivateUser(u.id as string)} title="Desactivar">
                                       <Power size={14} className="text-red-400" />
@@ -1567,6 +1620,82 @@ export default function AdminPage() {
         )}
       </Tabs>
       </Suspense>
+
+      {/* ─── RESET PASSWORD MODAL ─── */}
+      <Modal
+        isOpen={!!resetPwUser}
+        onClose={() => { if (!savingResetPw) setResetPwUser(null) }}
+        title="Resetear contraseña"
+        size="md"
+      >
+        {resetPwUser && (
+          <div className="space-y-4">
+            <p className="text-sm text-[#9CA3AF]">
+              Usuario: <span className="text-[#F0F2F5] font-medium">{(resetPwUser.full_name as string) || (resetPwUser.username as string)}</span>
+              {' '}<span className="text-[#6B7280]">({resetPwUser.email as string})</span>
+            </p>
+
+            {resetPwResult ? (
+              // Generated-password result view
+              <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+                <div className="flex items-center gap-2 mb-2">
+                  <Check size={18} className="text-emerald-400" />
+                  <p className="text-sm font-medium text-emerald-400">Contraseña temporal generada</p>
+                </div>
+                <p className="text-xs text-[#9CA3AF] mb-3">Copiala y envíasela al usuario. No vas a poder verla de nuevo.</p>
+                <div className="flex items-center gap-2 p-3 rounded-lg bg-[#0F1218] border border-[#2A3040]">
+                  <code className="flex-1 text-sm text-[#F0F2F5] font-mono">
+                    {resetPwShow ? resetPwResult : '••••••••••••••••'}
+                  </code>
+                  <Button variant="ghost" size="sm" onClick={() => setResetPwShow(!resetPwShow)}>
+                    {resetPwShow ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => {
+                    navigator.clipboard.writeText(resetPwResult)
+                    addToast({ type: 'success', title: 'Contraseña copiada al portapapeles' })
+                  }}>
+                    <Copy size={14} />
+                  </Button>
+                </div>
+                <div className="flex justify-end mt-4">
+                  <Button onClick={() => setResetPwUser(null)}>Cerrar</Button>
+                </div>
+              </div>
+            ) : (
+              // Set / generate view
+              <>
+                <div>
+                  <label className="block text-xs text-[#9CA3AF] mb-1">Nueva contraseña (mínimo 8 caracteres)</label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type={resetPwShow ? 'text' : 'password'}
+                      value={resetPwValue}
+                      onChange={(e) => setResetPwValue(e.target.value)}
+                      placeholder="Escribí una contraseña manual..."
+                      className="flex-1"
+                    />
+                    <Button variant="ghost" size="sm" onClick={() => setResetPwShow(!resetPwShow)}>
+                      {resetPwShow ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </Button>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-2 pt-2">
+                  <Button variant="ghost" onClick={() => submitResetPassword('generate')} disabled={savingResetPw}>
+                    <RefreshCw size={14} className="mr-1" /> Generar temporal
+                  </Button>
+                  <div className="flex gap-2">
+                    <Button variant="ghost" onClick={() => setResetPwUser(null)} disabled={savingResetPw}>Cancelar</Button>
+                    <Button onClick={() => submitResetPassword('manual')} disabled={savingResetPw}>
+                      {savingResetPw ? <Loader2 size={14} className="animate-spin mr-1" /> : <Save size={14} className="mr-1" />}
+                      Guardar contraseña
+                    </Button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </Modal>
 
       {/* ─── CREATE / EDIT USER MODAL ─── */}
       <Modal
