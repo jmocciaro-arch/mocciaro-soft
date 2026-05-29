@@ -27,6 +27,17 @@ export interface CatalogProduct {
   price_eur: number | null
   image_url?: string | null
   category?: string | null
+  // Smart-search: explica por qué este producto apareció en los resultados
+  // ("🎯 SKU coincide con modelo", "🏷️ Marca FEIN + modelo", etc.).
+  score?: number
+  match_reasons?: string[]
+}
+
+interface ParsedQuery {
+  brand?: string | null
+  model?: string | null
+  internal_code?: string | null
+  keywords?: string[]
 }
 
 interface Props {
@@ -57,6 +68,7 @@ export function ProductMatchModal({
 }: Props) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<CatalogProduct[]>([])
+  const [parsed, setParsed] = useState<ParsedQuery | null>(null)
   const [loading, setLoading] = useState(false)
   const [saveAsAlias, setSaveAsAlias] = useState(true)
   const [savingAlias, setSavingAlias] = useState(false)
@@ -88,7 +100,14 @@ export function ProductMatchModal({
     setLoading(true)
     setError(null)
     try {
-      const r = await fetch(`/api/products/search?q=${encodeURIComponent(term)}&limit=20`)
+      // Smart-search: IA parsea {brand, model, internal_code, keywords} y la DB
+      // combina múltiples sub-queries con scoring multi-factor. Devuelve también
+      // un campo `parsed` para mostrar al usuario qué entendió la IA de su query.
+      const r = await fetch('/api/products/smart-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: term, limit: 20 }),
+      })
       const j = await r.json()
       if (!r.ok) throw new Error(j?.error || 'Error buscando productos')
       const items: CatalogProduct[] = (j.items || []).map((p: Record<string, unknown>) => ({
@@ -99,11 +118,15 @@ export function ProductMatchModal({
         price_eur: (p.price_eur as number | null) ?? null,
         image_url: (p.image_url as string | null) ?? null,
         category: (p.category as string | null) ?? null,
+        score: typeof p.score === 'number' ? p.score : undefined,
+        match_reasons: Array.isArray(p.match_reasons) ? (p.match_reasons as string[]) : undefined,
       }))
       setResults(items)
+      setParsed(j.parsed || null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error desconocido')
       setResults([])
+      setParsed(null)
     } finally {
       setLoading(false)
     }
@@ -112,7 +135,9 @@ export function ProductMatchModal({
   useEffect(() => {
     if (!open) return
     if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => runSearch(query), 250)
+    // 400ms en lugar de 250ms — el smart-search llama a Claude, mejor no spamear.
+    // El cache hit del segundo keystroke (misma query) es instantáneo igual.
+    debounceRef.current = setTimeout(() => runSearch(query), 400)
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
@@ -202,6 +227,20 @@ export function ProductMatchModal({
           </div>
         )}
 
+        {/* Lo que la IA entendió — se muestra cuando hay parseo no trivial.
+            Da feedback de qué está buscando: marca, modelo, código interno. */}
+        {parsed && (parsed.brand || parsed.model || parsed.internal_code) && !loading && (
+          <div className="text-[11px] px-3 py-1.5 rounded-md flex flex-wrap items-center gap-1.5" style={{ background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.25)', color: '#a5b4fc' }}>
+            <span className="opacity-70">✨ IA entendió:</span>
+            {parsed.brand && <span className="px-1.5 py-0.5 rounded bg-indigo-500/15 font-mono text-indigo-300">🏷️ {parsed.brand}</span>}
+            {parsed.model && <span className="px-1.5 py-0.5 rounded bg-indigo-500/15 font-mono text-indigo-300">📐 {parsed.model}</span>}
+            {parsed.internal_code && <span className="px-1.5 py-0.5 rounded bg-indigo-500/15 font-mono text-indigo-300">🔢 {parsed.internal_code}</span>}
+            {parsed.keywords && parsed.keywords.length > 0 && (
+              <span className="text-[10px] opacity-60">+ {parsed.keywords.slice(0, 3).join(' · ')}</span>
+            )}
+          </div>
+        )}
+
         {/* Resultados */}
         <div
           className="border rounded-lg overflow-hidden"
@@ -240,12 +279,33 @@ export function ProductMatchModal({
                     </div>
                   )}
                   <div className="flex-1 min-w-0">
-                    <div className="text-xs font-mono text-[#FF6600]">{p.sku}</div>
+                    <div className="flex items-center gap-2">
+                      <div className="text-xs font-mono text-[#FF6600]">{p.sku}</div>
+                      {typeof p.score === 'number' && p.score > 0 && (
+                        <span
+                          className={`text-[9px] px-1 py-px rounded font-semibold ${
+                            p.score >= 90 ? 'bg-emerald-500/15 text-emerald-400'
+                            : p.score >= 60 ? 'bg-indigo-500/15 text-indigo-300'
+                            : 'bg-[#1E2330] text-[#9CA3AF]'
+                          }`}
+                          title={`Score ${p.score} — IA combinó marca/modelo/código`}
+                        >
+                          {p.score >= 90 ? '★★★' : p.score >= 60 ? '★★' : '★'}
+                        </span>
+                      )}
+                    </div>
                     <div className="text-sm text-[#F0F2F5] truncate">{p.name}</div>
-                    <div className="text-[10px] text-[#6B7280] flex gap-2">
+                    <div className="text-[10px] text-[#6B7280] flex gap-2 flex-wrap">
                       {p.brand && <span>{p.brand}</span>}
                       {p.category && <span>· {p.category}</span>}
                     </div>
+                    {/* Por qué este producto está en los resultados: ayuda al usuario
+                        a entender el match y a confiar en la sugerencia. */}
+                    {p.match_reasons && p.match_reasons.length > 0 && (
+                      <div className="mt-0.5 text-[10px] text-emerald-400/80 truncate" title={p.match_reasons.join(' · ')}>
+                        {p.match_reasons.slice(0, 2).join(' · ')}
+                      </div>
+                    )}
                   </div>
                   <div className="text-right flex-shrink-0">
                     {p.price_eur != null && (
