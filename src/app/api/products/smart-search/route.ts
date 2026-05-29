@@ -180,11 +180,15 @@ export async function POST(req: NextRequest) {
       sb.from('tt_products').select(SELECT).eq('active', true).ilike('supplier_code', parsed.internal_code).limit(5)
         .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 170, '🔢 Código proveedor exacto')))
     )
-    // SKU CONTIENE el código (parcial)
-    promises.push(
-      sb.from('tt_products').select(SELECT).eq('active', true).ilike('sku', `%${parsed.internal_code}%`).limit(8)
-        .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 150, '🔢 SKU contiene código')))
-    )
+    // SKU CONTIENE el código (parcial) — solo cuando el código es distintivo (≥5 chars).
+    // Códigos cortos como "8727" matchean falsos positivos: "08727", "187271", "98727X"
+    // pueden ser productos sin nada que ver. Con ≥5 chars la probabilidad cae mucho.
+    if (parsed.internal_code.length >= 5) {
+      promises.push(
+        sb.from('tt_products').select(SELECT).eq('active', true).ilike('sku', `%${parsed.internal_code}%`).limit(8)
+          .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 90, '🔢 SKU contiene código')))
+      )
+    }
   }
 
   // SKU = modelo (a veces el modelo del fabricante coincide con nuestro SKU)
@@ -211,15 +215,24 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  // ─── C) SOLO MODELO (sin brand) — para cuando IA no detectó marca ───
-  if (parsed.model && !parsed.brand) {
+  // ─── C) MODELO en cualquier marca (siempre, incluso con brand detectada) ───
+  // Fix: antes solo corría con !parsed.brand. Pero si la DB tiene productos
+  // con brand=null (caso TOHNICHI 13195: name="TOHNICHI QSP50N3 TORQUE WRENCH"
+  // pero campo brand vacío), el sub-query brand+model los excluía. Ahora
+  // siempre buscamos el modelo en name/modelo, con peso bajo si no hay brand
+  // confirmada, alto si la marca coincide (lo agrega el bonus post-merge).
+  if (parsed.model) {
     promises.push(
       sb.from('tt_products').select(SELECT).eq('active', true).ilike('modelo', `%${parsed.model}%`).limit(10)
         .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 90, `📐 Modelo ${parsed.model}`)))
     )
     promises.push(
       sb.from('tt_products').select(SELECT).eq('active', true).ilike('name', `%${parsed.model}%`).limit(10)
-        .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 75, `📐 Name contiene modelo`)))
+        .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 85, `📐 Name contiene ${parsed.model}`)))
+    )
+    promises.push(
+      sb.from('tt_products').select(SELECT).eq('active', true).ilike('sku', `%${parsed.model}%`).limit(10)
+        .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 80, `📐 SKU contiene ${parsed.model}`)))
     )
   }
 

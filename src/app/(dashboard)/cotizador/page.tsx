@@ -1396,7 +1396,7 @@ export default function CotizadorPage() {
                               {/* Ref. cliente debajo en verde sutil cuando hay match (= producto vinculado OK).
                                   Antes era gris oscuro #4B5563 — no se leía sobre fondo oscuro. */}
                               {hasMatch && showClientRefs && item.client_sku && (
-                                <div className="text-[10px] font-mono text-emerald-400/70 mt-0.5 truncate" title={`Ref. cliente: ${item.client_sku}`}>
+                                <div className="text-[10px] font-mono text-emerald-400 mt-0.5 truncate" title={`Ref. cliente: ${item.client_sku}`}>
                                   ↳ {item.client_sku}
                                 </div>
                               )}
@@ -1404,12 +1404,12 @@ export default function CotizadorPage() {
                             <td className="py-2 px-2 align-top">
                               <input value={item.description} onChange={(e) => updateItem(item.id, 'description', e.target.value)} className="w-full bg-transparent text-sm text-[#F0F2F5] outline-none" placeholder="Descripcion del producto" />
                               {hasMatch && showClientRefs && item.client_description && item.client_description !== item.description && (
-                                <div className="text-[10px] text-emerald-400/70 mt-0.5 truncate" title={`Ref. cliente: ${item.client_description}`}>
+                                <div className="text-[10px] text-emerald-400 mt-0.5 truncate" title={`Ref. cliente: ${item.client_description}`}>
                                   ↳ {item.client_description}
                                 </div>
                               )}
                               {hasMatch && showClientRefs && item.client_sku && (!item.client_description || item.client_description === item.description) && (
-                                <div className="text-[10px] text-emerald-400/80 mt-0.5 flex items-center gap-1">
+                                <div className="text-[10px] text-emerald-400 mt-0.5 flex items-center gap-1">
                                   <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400" />
                                   Vinculado con catálogo
                                 </div>
