@@ -79,10 +79,17 @@ export function ProductMatchModal({
   // Reset state cuando se abre con un item distinto
   useEffect(() => {
     if (open) {
-      // Pre-cargar query con la descripción del cliente (truncada a 30 chars
-      // para no romper la búsqueda fuzzy del catálogo con frases largas).
-      const initial = (clientDescription || clientSKU || '').slice(0, 30).trim()
-      setQuery(initial)
+      // Pre-cargar query con SKU del cliente + descripción COMPLETA.
+      // Smart-search se beneficia de más contexto: la IA usa el texto
+      // entero para identificar marca, modelo y código interno.
+      // Antes truncábamos a 30 chars para fuzzy plano — ya no aplica.
+      const parts = [clientSKU, clientDescription].filter((s) => s && s.trim()).map((s) => s!.trim())
+      // Dedup si SKU está dentro de la descripción (común en OCs)
+      const initial = parts.length === 2 && parts[1].includes(parts[0])
+        ? parts[1]
+        : parts.join(' ')
+      // Capear a 200 chars para evitar excesos (los items raramente son tan largos)
+      setQuery(initial.slice(0, 200))
       setError(null)
       setSaveAsAlias(Boolean(clientId && clientSKU))
       // Auto-focus input al abrir
