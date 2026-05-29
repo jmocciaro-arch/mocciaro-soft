@@ -1392,10 +1392,11 @@ export default function CotizadorPage() {
                               {isService && <span className="ml-1 text-[8px] text-blue-400" title="Servicio">S</span>}
                             </td>
                             <td className="py-2 px-2 align-top">
-                              <input value={item.sku} onChange={(e) => updateItem(item.id, 'sku', e.target.value)} className={`w-full bg-transparent text-xs font-mono outline-none ${hasMatch ? 'text-[#9CA3AF]' : 'text-amber-400'}`} placeholder="SKU" />
-                              {/* Ref. cliente debajo en gris cuando hay match (SKU principal = catálogo) */}
+                              <input value={item.sku} onChange={(e) => updateItem(item.id, 'sku', e.target.value)} className={`w-full bg-transparent text-xs font-mono outline-none ${hasMatch ? 'text-[#F0F2F5]' : 'text-amber-400'}`} placeholder="SKU" />
+                              {/* Ref. cliente debajo en verde sutil cuando hay match (= producto vinculado OK).
+                                  Antes era gris oscuro #4B5563 — no se leía sobre fondo oscuro. */}
                               {hasMatch && showClientRefs && item.client_sku && (
-                                <div className="text-[10px] font-mono text-[#4B5563] mt-0.5 truncate" title={`Ref. cliente: ${item.client_sku}`}>
+                                <div className="text-[10px] font-mono text-emerald-400/70 mt-0.5 truncate" title={`Ref. cliente: ${item.client_sku}`}>
                                   ↳ {item.client_sku}
                                 </div>
                               )}
@@ -1403,8 +1404,14 @@ export default function CotizadorPage() {
                             <td className="py-2 px-2 align-top">
                               <input value={item.description} onChange={(e) => updateItem(item.id, 'description', e.target.value)} className="w-full bg-transparent text-sm text-[#F0F2F5] outline-none" placeholder="Descripcion del producto" />
                               {hasMatch && showClientRefs && item.client_description && item.client_description !== item.description && (
-                                <div className="text-[10px] text-[#4B5563] mt-0.5 truncate" title={`Ref. cliente: ${item.client_description}`}>
+                                <div className="text-[10px] text-emerald-400/70 mt-0.5 truncate" title={`Ref. cliente: ${item.client_description}`}>
                                   ↳ {item.client_description}
+                                </div>
+                              )}
+                              {hasMatch && showClientRefs && item.client_sku && (!item.client_description || item.client_description === item.description) && (
+                                <div className="text-[10px] text-emerald-400/80 mt-0.5 flex items-center gap-1">
+                                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                                  Vinculado con catálogo
                                 </div>
                               )}
                               {needsMatch && (
