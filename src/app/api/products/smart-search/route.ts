@@ -223,25 +223,32 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  // ─── D) KEYWORDS — contribución menor, max 4 ───
-  // Buscamos en `name` (más preciso que search_text que tiene mucho ruido)
+  // ─── D) KEYWORDS — contribución menor, solo keywords distintivas ───
+  // Filtramos keywords muy cortas o numéricas/medidas comunes que generan ruido:
+  //   "1/4", "8mm", "20", "50 NM" matchean miles de productos sin aportar señal.
+  // Solo usamos keywords con ≥5 chars Y que tengan al menos una letra.
   if (parsed.keywords && parsed.keywords.length > 0) {
-    for (const kw of parsed.keywords.slice(0, 4)) {
-      const cleaned = kw.trim()
-      if (cleaned.length < 3) continue
+    const distinctiveKeywords = parsed.keywords
+      .map((k) => k.trim())
+      .filter((k) => k.length >= 5 && /[a-zA-Z]/.test(k))
+      .slice(0, 3)
+    for (const kw of distinctiveKeywords) {
       promises.push(
-        sb.from('tt_products').select(SELECT).eq('active', true).ilike('name', `%${cleaned}%`).limit(8)
-          .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 15, `🔍 "${cleaned}"`)))
+        sb.from('tt_products').select(SELECT).eq('active', true).ilike('name', `%${kw}%`).limit(6)
+          .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 15, `🔍 "${kw}"`)))
       )
     }
   }
 
-  // ─── E) FALLBACK: query cruda completa (peso muy bajo, sólo para no quedar vacío) ───
-  // Tomamos hasta 60 chars de la query para tener contexto pero sin ser excesivo
-  promises.push(
-    sb.from('tt_products').select(SELECT).eq('active', true).ilike('search_text', `%${query.slice(0, 60)}%`).limit(10)
-      .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 10, '🔍 Texto similar')))
-  )
+  // ─── E) FALLBACK: solo si NO tenemos brand/model/code parseados ───
+  // Antes corría siempre y traía ruido. Ahora solo cuando la IA no detectó
+  // ningún componente estructural (búsqueda libre tipo "atornillador chico").
+  if (!parsed.brand && !parsed.model && !parsed.internal_code) {
+    promises.push(
+      sb.from('tt_products').select(SELECT).eq('active', true).ilike('name', `%${query.slice(0, 50)}%`).limit(15)
+        .then(({ data }) => (data || []).forEach((p) => add(p as ProductRow, 20, '🔍 Búsqueda libre')))
+    )
+  }
 
   await Promise.all(promises)
 
@@ -285,8 +292,20 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // 4) Ordenar por score y devolver top N
-  const items = Array.from(candidates.values())
+  // 4) Threshold de relevancia: descartamos productos que aparecieron solo por
+  // razones débiles (1-2 keywords sin match estructural).
+  //
+  // Threshold dinámico:
+  //   - Si hay productos con score ≥100 (matches exactos/fuertes), descartamos
+  //     todo lo que tenga <40 (probablemente solo keyword genérica)
+  //   - Si NO hay matches fuertes, mantenemos threshold mínimo de 20 para
+  //     no devolver basura pura
+  const allCandidates = Array.from(candidates.values())
+  const maxScore = allCandidates.reduce((m, c) => Math.max(m, c.score), 0)
+  const threshold = maxScore >= 100 ? 40 : 20
+
+  const items = allCandidates
+    .filter((c) => c.score >= threshold)
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
 
