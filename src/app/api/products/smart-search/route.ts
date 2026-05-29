@@ -245,20 +245,43 @@ export async function POST(req: NextRequest) {
 
   await Promise.all(promises)
 
-  // 3) Bonus SUAVE por marca match — NO penalizamos otras marcas.
-  // La IA puede equivocarse parseando "FEIN" cuando en realidad el producto
-  // está mal escrito o la marca está en otro campo. Mejor premiar match
-  // exacto sin destruir resultados buenos.
+  // 3) Filtro por marca + bonus.
+  //
+  // Si la IA detectó marca con confianza (parsed.brand existe), filtramos
+  // FUERA todos los productos con marca distinta. Es lo que pide la lógica
+  // del usuario: "si dije TOHNICHI no me muestres INGERSOLL RAND".
+  //
+  // Excepciones (productos que SE MANTIENEN aunque la marca sea distinta):
+  //   - Match exacto por SKU/código fabricante/código proveedor: el match
+  //     es tan fuerte que probablemente la marca está mal cargada en DB
+  //   - Brand del producto es null: no podemos saber su marca, lo dejamos
+  //
+  // Para los que pasan el filtro: bonus +25 si la marca coincide.
   if (parsed.brand) {
     const queryBrand = parsed.brand.toUpperCase().trim()
-    for (const c of candidates.values()) {
+    const EXACT_MATCH_TAGS = ['🎯 SKU exacto', '🎯 SKU = modelo', '🔢 Código fabricante exacto', '🔢 Código proveedor exacto', '🔢 SKU contiene código']
+
+    for (const [id, c] of candidates.entries()) {
       const productBrand = (c.brand || '').toUpperCase().trim()
-      if (productBrand && productBrand === queryBrand) {
+
+      if (productBrand && productBrand !== queryBrand) {
+        // Marca distinta — verificamos si tiene un match exacto que justifique mantenerlo
+        const hasExactMatch = c.match_reasons.some((r) => EXACT_MATCH_TAGS.some((tag) => r.startsWith(tag)))
+        if (!hasExactMatch) {
+          candidates.delete(id)
+          continue
+        }
+        // Tiene match exacto: lo mantenemos pero con badge de advertencia y score reducido
+        c.score = Math.max(0, c.score - 30)
+        c.match_reasons.push(`⚠️ Marca ${c.brand} (vos pediste ${parsed.brand})`)
+      } else if (productBrand && productBrand === queryBrand) {
+        // Marca correcta — bonus
         c.score += 25
         if (!c.match_reasons.some((r) => r.startsWith('🏷️ Marca'))) {
           c.match_reasons.unshift(`🏷️ Marca ${parsed.brand} correcta`)
         }
       }
+      // productBrand vacío/null → lo dejamos pasar sin tocar el score
     }
   }
 
