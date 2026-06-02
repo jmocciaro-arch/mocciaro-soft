@@ -300,6 +300,7 @@ export default function AdminPage() {
   const [loadingCompanies, setLoadingCompanies] = useState(false)
   const [editCompany, setEditCompany] = useState<Row | null>(null)
   const [companyForm, setCompanyForm] = useState<Record<string, string>>({})
+  const [showInactiveCompanies, setShowInactiveCompanies] = useState(false)
 
   // Params
   const [params, setParams] = useState<Row[]>([])
@@ -1247,23 +1248,45 @@ export default function AdminPage() {
 
                 {/* ── Datos / Config ── */}
                 <Card>
-                  <CardHeader className="flex flex-row items-center justify-between">
+                  <CardHeader className="flex flex-row items-center justify-between gap-3 flex-wrap">
                     <CardTitle>Datos y configuración</CardTitle>
-                    <Link href="/admin/companies/new">
-                      <Button size="sm">
-                        <Plus size={14} /> Nueva empresa
-                      </Button>
-                    </Link>
+                    <div className="flex items-center gap-3">
+                      <label className="flex items-center gap-2 text-xs text-[#9CA3AF] cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={showInactiveCompanies}
+                          onChange={e => setShowInactiveCompanies(e.target.checked)}
+                          className="w-4 h-4 rounded border-[#2A3040] bg-[#1E2330] accent-orange-500"
+                        />
+                        Mostrar inactivas
+                      </label>
+                      <Link href="/admin/companies/new">
+                        <Button size="sm">
+                          <Plus size={14} /> Nueva empresa
+                        </Button>
+                      </Link>
+                    </div>
                   </CardHeader>
                   <CardContent>
                     {loadingCompanies ? (
                       <div className="flex justify-center py-10"><Loader2 className="animate-spin text-[#FF6600]" size={28} /></div>
-                    ) : companies.length === 0 ? (
-                      <p className="text-sm text-[#6B7280] text-center py-10">No hay empresas cargadas</p>
-                    ) : (
+                    ) : (() => {
+                      const visible = companies.filter(c => showInactiveCompanies || c.active !== false)
+                      if (visible.length === 0) {
+                        return <p className="text-sm text-[#6B7280] text-center py-10">
+                          {companies.length === 0 ? 'No hay empresas cargadas' : 'No hay empresas activas. Activá "Mostrar inactivas" para verlas.'}
+                        </p>
+                      }
+                      return (
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {companies.map((c) => (
-                          <div key={c.id as string} className="p-4 rounded-xl bg-[#0F1218] border border-[#1E2330] hover:border-[#2A3040] transition-all">
+                        {visible.map((c) => {
+                          const isInactive = c.active === false
+                          return (
+                          <div key={c.id as string} className={`p-4 rounded-xl border transition-all ${
+                            isInactive
+                              ? 'bg-[#0A0D12] border-[#2A3040] opacity-70'
+                              : 'bg-[#0F1218] border-[#1E2330] hover:border-[#2A3040]'
+                          }`}>
                             <div className="flex items-center gap-3 mb-3">
                               {/* Logo miniatura */}
                               {!!c.logo_url && (
@@ -1271,26 +1294,45 @@ export default function AdminPage() {
                                 <img
                                   src={c.logo_url as string}
                                   alt={(c.name as string) || ''}
-                                  className="h-8 w-16 object-contain rounded bg-white/5 p-0.5"
+                                  className={`h-8 w-16 object-contain rounded bg-white/5 p-0.5 ${isInactive ? 'grayscale' : ''}`}
                                 />
                               )}
                               <div className="flex-1 min-w-0">
                                 <h3 className="text-sm font-semibold text-[#F0F2F5] truncate">{(c.name as string) || '-'}</h3>
                               </div>
-                              <Badge variant="success">Activa</Badge>
+                              {isInactive ? (
+                                <Badge variant="default">Inactiva</Badge>
+                              ) : (
+                                <Badge variant="success">Activa</Badge>
+                              )}
                             </div>
                             <div className="grid grid-cols-3 gap-2 text-sm">
                               <div><p className="text-[10px] text-[#6B7280]">CIF/CUIT</p><p className="text-[#D1D5DB] text-xs">{(c.tax_id as string) || '-'}</p></div>
                               <div><p className="text-[10px] text-[#6B7280]">Pais</p><p className="text-[#D1D5DB] text-xs">{(c.country as string) || '-'}</p></div>
                               <div><p className="text-[10px] text-[#6B7280]">IVA</p><p className="text-[#D1D5DB] text-xs">{c.default_tax_rate ? `${c.default_tax_rate}%` : '-'}</p></div>
                             </div>
-                            <Button variant="ghost" size="sm" className="mt-3 w-full" onClick={() => openEditCompany(c)}>
-                              <Edit size={14} /> Configurar
-                            </Button>
+                            {isInactive ? (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="mt-3 w-full text-emerald-300 hover:text-emerald-200"
+                                onClick={async () => {
+                                  const res = await fetch(`/api/companies/${c.id}?mode=reactivate`, { method: 'DELETE' })
+                                  if (res.ok) loadCompanies()
+                                }}
+                              >
+                                Reactivar empresa
+                              </Button>
+                            ) : (
+                              <Button variant="ghost" size="sm" className="mt-3 w-full" onClick={() => openEditCompany(c)}>
+                                <Edit size={14} /> Configurar
+                              </Button>
+                            )}
                           </div>
-                        ))}
+                        )})}
                       </div>
-                    )}
+                      )
+                    })()}
                   </CardContent>
                 </Card>
               </div>

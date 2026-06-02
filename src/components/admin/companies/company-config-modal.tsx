@@ -21,6 +21,7 @@ import { createClient } from '@/lib/supabase/client'
 import {
   Building2, MapPin, Receipt, Banknote, Save, Plus, Trash2,
   Star, AlertCircle, CheckCircle2, Globe2, Hash, Mail, Phone, Sparkles,
+  ShieldAlert, X,
 } from 'lucide-react'
 
 export interface CompanyConfigData {
@@ -163,11 +164,20 @@ export function CompanyConfigModal({ open, onClose, company, onSaved }: Props) {
   const [saving, setSaving] = useState(false)
   const [migrating, setMigrating] = useState(false)
 
+  // Eliminación
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [deleteDeps, setDeleteDeps] = useState<Array<{ table: string; label: string; count: number }> | null>(null)
+  const [deleteConfirmName, setDeleteConfirmName] = useState('')
+  const [deleting, setDeleting] = useState(false)
+
   useEffect(() => {
     if (!open || !company) return
     setForm({ ...company })
     setTab('general')
     setEditingAccount(null)
+    setShowDeleteDialog(false)
+    setDeleteDeps(null)
+    setDeleteConfirmName('')
     // Cargar cuentas bancarias
     void supabase
       .from('tt_company_bank_accounts')
@@ -334,6 +344,66 @@ export function CompanyConfigModal({ open, onClose, company, onSaved }: Props) {
       .order('is_default', { ascending: false })
       .order('alias')
     setAccounts((data || []) as BankAccount[])
+  }
+
+  // ----------------- ELIMINACIÓN -----------------
+  const openDeleteDialog = async () => {
+    if (!form?.id) return
+    setShowDeleteDialog(true)
+    setDeleteDeps(null)
+    setDeleteConfirmName('')
+    try {
+      const res = await fetch(`/api/companies/${form.id}?mode=dry-run`, { method: 'DELETE' })
+      const json = await res.json()
+      if (res.ok && Array.isArray(json.dependencies)) {
+        setDeleteDeps(json.dependencies)
+      } else {
+        setDeleteDeps([])
+      }
+    } catch {
+      setDeleteDeps([])
+    }
+  }
+
+  const handleSoftDelete = async () => {
+    if (!form?.id) return
+    setDeleting(true)
+    try {
+      const res = await fetch(`/api/companies/${form.id}?mode=soft`, { method: 'DELETE' })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Error al desactivar')
+      addToast({ type: 'success', title: 'Empresa desactivada', message: json.message })
+      onSaved()
+      onClose()
+    } catch (e) {
+      addToast({ type: 'error', title: 'Error', message: (e as Error).message })
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const handleHardDelete = async () => {
+    if (!form?.id || !form.name) return
+    if (deleteConfirmName.trim() !== form.name.trim()) {
+      addToast({ type: 'warning', title: 'El nombre no coincide', message: `Tipeá exactamente: ${form.name}` })
+      return
+    }
+    setDeleting(true)
+    try {
+      const res = await fetch(
+        `/api/companies/${form.id}?mode=hard&confirm=${encodeURIComponent(form.name)}`,
+        { method: 'DELETE' },
+      )
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Error al eliminar')
+      addToast({ type: 'success', title: 'Empresa eliminada definitivamente', message: json.message })
+      onSaved()
+      onClose()
+    } catch (e) {
+      addToast({ type: 'error', title: 'Error', message: (e as Error).message })
+    } finally {
+      setDeleting(false)
+    }
   }
 
   if (!form) return null
@@ -711,14 +781,37 @@ export function CompanyConfigModal({ open, onClose, company, onSaved }: Props) {
         )}
 
         {/* Footer */}
-        <div className="flex justify-end gap-3 pt-4 border-t border-[#1E2330]">
-          <Button variant="secondary" onClick={onClose}>Cancelar</Button>
-          {tab !== 'bank' && (
-            <Button onClick={handleSave} loading={saving}>
-              <Save size={14} /> Guardar cambios
-            </Button>
-          )}
+        <div className="flex items-center justify-between gap-3 pt-4 border-t border-[#1E2330]">
+          <button
+            type="button"
+            onClick={openDeleteDialog}
+            className="inline-flex items-center gap-1.5 px-3 h-9 rounded-lg border border-red-500/30 bg-red-500/5 text-red-300 hover:bg-red-500/15 hover:text-red-200 text-xs font-medium transition"
+          >
+            <Trash2 size={13} /> Eliminar empresa
+          </button>
+          <div className="flex items-center gap-3">
+            <Button variant="secondary" onClick={onClose}>Cancelar</Button>
+            {tab !== 'bank' && (
+              <Button onClick={handleSave} loading={saving}>
+                <Save size={14} /> Guardar cambios
+              </Button>
+            )}
+          </div>
         </div>
+
+        {/* Sub-diálogo de confirmación de eliminación */}
+        {showDeleteDialog && (
+          <DeleteCompanyConfirm
+            companyName={form.name || 'sin nombre'}
+            dependencies={deleteDeps}
+            confirmName={deleteConfirmName}
+            onConfirmNameChange={setDeleteConfirmName}
+            onSoftDelete={handleSoftDelete}
+            onHardDelete={handleHardDelete}
+            onCancel={() => setShowDeleteDialog(false)}
+            deleting={deleting}
+          />
+        )}
       </div>
     </Modal>
   )
@@ -727,6 +820,155 @@ export function CompanyConfigModal({ open, onClose, company, onSaved }: Props) {
 // ================================================================
 // SUBCOMPONENTES
 // ================================================================
+
+function DeleteCompanyConfirm({
+  companyName, dependencies, confirmName, onConfirmNameChange,
+  onSoftDelete, onHardDelete, onCancel, deleting,
+}: {
+  companyName: string
+  dependencies: Array<{ table: string; label: string; count: number }> | null
+  confirmName: string
+  onConfirmNameChange: (v: string) => void
+  onSoftDelete: () => void
+  onHardDelete: () => void
+  onCancel: () => void
+  deleting: boolean
+}) {
+  const loading = dependencies === null
+  const isEmpty = !loading && dependencies.length === 0
+  const nameMatches = confirmName.trim() === companyName.trim()
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+      <div className="w-full max-w-lg rounded-2xl bg-[#0F1218] border border-red-500/30 shadow-2xl shadow-red-500/10 overflow-hidden">
+        {/* Header */}
+        <div className="flex items-start gap-3 p-5 border-b border-[#1E2330]">
+          <div className="w-10 h-10 rounded-lg bg-red-500/15 border border-red-500/30 flex items-center justify-center shrink-0">
+            <ShieldAlert size={18} className="text-red-400" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="text-base font-semibold text-[#F0F2F5]">Eliminar empresa</h3>
+            <p className="text-xs text-[#9CA3AF] mt-0.5 truncate">
+              <span className="font-mono">{companyName}</span>
+            </p>
+          </div>
+          <button
+            onClick={onCancel}
+            disabled={deleting}
+            className="w-8 h-8 rounded-lg hover:bg-[#1E2330] text-[#6B7280] hover:text-[#F0F2F5] flex items-center justify-center"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          {loading ? (
+            <p className="text-sm text-[#9CA3AF]">Revisando datos asociados…</p>
+          ) : (
+            <>
+              {/* Conteo de dependencias */}
+              {dependencies.length > 0 ? (
+                <div className="rounded-lg bg-amber-500/5 border border-amber-500/30 p-3 space-y-2">
+                  <p className="text-xs font-semibold text-amber-300 flex items-center gap-1.5">
+                    <AlertCircle size={12} /> Esta empresa tiene datos asociados
+                  </p>
+                  <ul className="text-xs text-[#D1D5DB] space-y-0.5 ml-1">
+                    {dependencies.map(d => (
+                      <li key={d.table} className="flex justify-between">
+                        <span className="capitalize">{d.label}</span>
+                        <span className="font-mono text-amber-300">{d.count}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-[10px] text-[#9CA3AF] pt-1 border-t border-amber-500/20">
+                    Por seguridad, solo podés <strong>desactivarla</strong>. Los datos históricos
+                    (facturas, clientes, documentos) quedan intactos.
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-lg bg-emerald-500/5 border border-emerald-500/30 p-3">
+                  <p className="text-xs text-emerald-300 flex items-center gap-1.5">
+                    <CheckCircle2 size={12} /> Esta empresa no tiene datos asociados.
+                  </p>
+                  <p className="text-[10px] text-[#9CA3AF] mt-1">
+                    Podés eliminarla definitivamente o solo desactivarla.
+                  </p>
+                </div>
+              )}
+
+              {/* Opción 1: Soft delete (siempre disponible) */}
+              <div className="rounded-lg border border-[#2A3040] bg-[#0A0D12] p-3 space-y-2">
+                <div className="flex items-start gap-2">
+                  <Building2 size={14} className="text-[#9CA3AF] mt-0.5 shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-[#F0F2F5]">Desactivar (recomendado)</p>
+                    <p className="text-xs text-[#9CA3AF] mt-0.5">
+                      La empresa deja de aparecer en el selector y filtros, pero todos sus datos
+                      quedan en la base. Reversible.
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="w-full"
+                  onClick={onSoftDelete}
+                  loading={deleting}
+                  disabled={deleting}
+                >
+                  Desactivar empresa
+                </Button>
+              </div>
+
+              {/* Opción 2: Hard delete (solo si está vacía) */}
+              {isEmpty && (
+                <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 space-y-2.5">
+                  <div className="flex items-start gap-2">
+                    <Trash2 size={14} className="text-red-400 mt-0.5 shrink-0" />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-red-200">Eliminar definitivamente</p>
+                      <p className="text-xs text-[#9CA3AF] mt-0.5">
+                        Borra la empresa y todos sus satélites (direcciones, cuentas bancarias,
+                        perfil fiscal, accesos). <strong className="text-red-300">Irreversible.</strong>
+                      </p>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] uppercase tracking-wider text-[#9CA3AF] mb-1">
+                      Para confirmar, tipeá: <span className="font-mono text-red-300">{companyName}</span>
+                    </label>
+                    <input
+                      value={confirmName}
+                      onChange={e => onConfirmNameChange(e.target.value)}
+                      placeholder={companyName}
+                      autoComplete="off"
+                      className="w-full h-9 rounded-lg bg-[#0A0D12] border border-red-500/30 px-3 text-sm font-mono text-red-200 placeholder-[#4B5563] focus:outline-none focus:ring-2 focus:ring-red-500/50"
+                    />
+                  </div>
+                  <button
+                    onClick={onHardDelete}
+                    disabled={!nameMatches || deleting}
+                    className="w-full h-9 rounded-lg bg-red-500 hover:bg-red-600 disabled:bg-red-500/20 disabled:text-red-500/50 disabled:cursor-not-allowed text-white text-sm font-medium transition flex items-center justify-center gap-1.5"
+                  >
+                    <Trash2 size={13} />
+                    {deleting ? 'Eliminando…' : 'Eliminar definitivamente'}
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex justify-end gap-2 px-5 py-3 border-t border-[#1E2330] bg-[#0A0D12]">
+          <Button variant="secondary" size="sm" onClick={onCancel} disabled={deleting}>
+            Cancelar
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function SectionHeader({ icon, title }: { icon: React.ReactNode; title: string }) {
   return (
