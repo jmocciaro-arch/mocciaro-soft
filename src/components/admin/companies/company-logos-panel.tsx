@@ -2,21 +2,29 @@
 
 import { useRef, useState } from 'react'
 import Image from 'next/image'
-import { Upload, RefreshCw, ImageOff, CheckCircle2 } from 'lucide-react'
+import { Upload, RefreshCw, ImageOff, CheckCircle2, Edit } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useToast } from '@/components/ui/toast'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 
-type CompanyRow = {
+export type CompanyRow = {
   id: string
   name: string
   logo_url?: string | null
   country?: string | null
   code_prefix?: string | null
+  tax_id?: string | null
+  default_tax_rate?: number | string | null
+  active?: boolean | null
 }
 
 interface Props {
   companies: CompanyRow[]
   onUpdated: () => void
+  showInactive?: boolean
+  onConfigure?: (company: CompanyRow) => void
+  onReactivate?: (companyId: string) => void
 }
 
 const COUNTRY_FLAGS: Record<string, string> = {
@@ -34,7 +42,9 @@ function bustCache(url: string) {
   return `${url}?t=${Date.now()}`
 }
 
-export function CompanyLogosPanel({ companies, onUpdated }: Props) {
+export function CompanyLogosPanel({
+  companies, onUpdated, showInactive = false, onConfigure, onReactivate,
+}: Props) {
   const supabase = createClient()
   const { addToast } = useToast()
 
@@ -112,35 +122,50 @@ export function CompanyLogosPanel({ companies, onUpdated }: Props) {
     }
   }
 
+  const visible = companies.filter(c => showInactive || c.active !== false)
+
   return (
     <div className="space-y-2">
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-[#6B7280] mb-4">
-        Logos de empresas — clic en la imagen o en el botón para reemplazar
-      </p>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {companies.map((c) => {
+      {visible.length === 0 ? (
+        <p className="text-sm text-[#6B7280] text-center py-10">
+          {companies.length === 0
+            ? 'No hay empresas cargadas'
+            : 'No hay empresas activas. Activá "Mostrar inactivas" para verlas.'}
+        </p>
+      ) : (
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {visible.map((c) => {
           const isUploading = uploading === c.id
           const wasJustUploaded = justUploaded === c.id
           const displayUrl = localPreviews[c.id] || (c.logo_url ? bustCache(c.logo_url) : null)
           const flag = COUNTRY_FLAGS[c.country ?? ''] ?? '🏢'
+          const isInactive = c.active === false
 
           return (
             <div
               key={c.id}
-              className="group relative flex flex-col items-center gap-3 p-4 rounded-xl bg-[#0F1218] border border-[#1E2330] hover:border-[#2A3040] transition-all"
+              className={`group relative flex flex-col gap-3 p-4 rounded-xl border transition-all ${
+                isInactive
+                  ? 'bg-[#0A0D12] border-[#2A3040] opacity-70'
+                  : 'bg-[#0F1218] border-[#1E2330] hover:border-[#2A3040]'
+              }`}
             >
-              {/* Nombre empresa */}
-              <div className="flex items-center gap-1.5 w-full">
-                <span className="text-base">{flag}</span>
-                <div>
-                  <p className="text-xs font-semibold text-[#F0F2F5] truncate max-w-[150px]">{c.name}</p>
+              {/* Header: nombre + badge */}
+              <div className="flex items-center gap-2 w-full">
+                <span className="text-base shrink-0">{flag}</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-[#F0F2F5] truncate">{c.name}</p>
                   {c.code_prefix && (
                     <p className="text-[10px] text-[#4B5563] font-mono">{c.code_prefix}</p>
                   )}
                 </div>
                 {wasJustUploaded && (
-                  <CheckCircle2 size={14} className="ml-auto text-emerald-400 shrink-0" />
+                  <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
+                )}
+                {isInactive ? (
+                  <Badge variant="default">Inactiva</Badge>
+                ) : (
+                  <Badge variant="success">Activa</Badge>
                 )}
               </div>
 
@@ -184,31 +209,41 @@ export function CompanyLogosPanel({ companies, onUpdated }: Props) {
                 )}
               </button>
 
-              {/* Botón explícito de upload */}
-              <button
-                type="button"
-                onClick={() => triggerInput(c.id)}
-                disabled={isUploading}
-                className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium bg-[#1E2330] hover:bg-[#2A3040] text-[#9CA3AF] hover:text-[#F0F2F5] transition-all disabled:opacity-50 disabled:cursor-not-allowed border border-[#2A3040]"
-              >
-                {isUploading ? (
-                  <>
-                    <RefreshCw size={12} className="animate-spin" />
-                    Subiendo…
-                  </>
-                ) : (
-                  <>
-                    <Upload size={12} />
-                    Subir nuevo logo
-                  </>
-                )}
-              </button>
+              {/* Datos compactos */}
+              <div className="grid grid-cols-3 gap-2 w-full">
+                <div>
+                  <p className="text-[10px] text-[#6B7280]">CIF/CUIT</p>
+                  <p className="text-[#D1D5DB] text-xs truncate" title={c.tax_id ?? undefined}>{c.tax_id || '-'}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-[#6B7280]">País</p>
+                  <p className="text-[#D1D5DB] text-xs">{c.country || '-'}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-[#6B7280]">IVA</p>
+                  <p className="text-[#D1D5DB] text-xs">{c.default_tax_rate ? `${c.default_tax_rate}%` : '-'}</p>
+                </div>
+              </div>
 
-              {/* URL actual (tooltip en hover) */}
-              {c.logo_url && (
-                <p className="text-[9px] text-[#374151] truncate w-full text-center" title={c.logo_url}>
-                  {c.logo_url.split('/').slice(-2).join('/')}
-                </p>
+              {/* Acción principal: Configurar o Reactivar */}
+              {isInactive ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full text-emerald-300 hover:text-emerald-200"
+                  onClick={() => onReactivate?.(c.id)}
+                >
+                  Reactivar empresa
+                </Button>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => onConfigure?.(c)}
+                >
+                  <Edit size={13} /> Configurar
+                </Button>
               )}
 
               {/* Input file oculto */}
@@ -225,6 +260,7 @@ export function CompanyLogosPanel({ companies, onUpdated }: Props) {
           )
         })}
       </div>
+      )}
     </div>
   )
 }
