@@ -29,7 +29,14 @@ interface OrderRow extends Record<string, unknown> {
   status: string
   received_at: string
   document_id: string | null
-  document: { system_code: string | null } | null
+  /** El embed many-to-one puede llegar como objeto o array según el client. */
+  document: { system_code: string | null } | { system_code: string | null }[] | null
+}
+
+function docCodeOf(document: OrderRow['document']): string | null {
+  if (!document) return null
+  const d = Array.isArray(document) ? document[0] : document
+  return d?.system_code ?? null
 }
 
 interface ListingRow extends Record<string, unknown> {
@@ -157,7 +164,7 @@ export default function CanalesPage() {
       key: 'document_id', label: 'Documento',
       render: (v, row) => {
         const r = row as OrderRow
-        if (v) return <span className="font-mono text-[12px]">{r.document?.system_code ?? 'Vinculado'}</span>
+        if (v) return <span className="font-mono text-[12px]">{docCodeOf(r.document) ?? 'Vinculado'}</span>
         if (!canManageOrders) return <span className="text-[#6B7280] text-xs">—</span>
         return (
           <Button
