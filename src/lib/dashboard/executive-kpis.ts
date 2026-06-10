@@ -98,7 +98,8 @@ export interface InvoiceLite {
   id: string
   total: number | null
   status: string
-  invoice_date: string | null
+  /** tt_documents de producción NO tiene invoice_date: queda opcional por si se agrega. */
+  invoice_date?: string | null
   created_at: string
 }
 
@@ -296,14 +297,22 @@ export interface ActivityEventRow {
   event_type: string
   created_at: string
   to_status: string | null
+  /** Esquema real de producción: system_code (no doc_code) y cliente vía tt_clients. */
   document: {
-    doc_code: string | null
-    counterparty_name: string | null
+    system_code: string | null
     total: number | null
     currency: string | null
     status: string | null
     doc_type: string
+    client: { name: string | null } | { name: string | null }[] | null
   } | null
+}
+
+/** El embed many-to-one llega como objeto, pero el client sin tipos lo infiere como array. */
+function clientNameOf(client: { name: string | null } | { name: string | null }[] | null): string | null {
+  if (!client) return null
+  const c = Array.isArray(client) ? client[0] : client
+  return c?.name ?? null
 }
 
 export interface ActivityItem {
@@ -342,8 +351,8 @@ export function buildActivity(
     .map(e => ({
       id: `ev-${e.id}`,
       ts: e.created_at,
-      code: e.document?.doc_code ?? e.document?.doc_type ?? '—',
-      party: e.document?.counterparty_name ?? '—',
+      code: e.document?.system_code ?? e.document?.doc_type ?? '—',
+      party: clientNameOf(e.document?.client ?? null) ?? '—',
       total: e.document?.total ?? null,
       currency: e.document?.currency ?? null,
       status: e.to_status ?? e.document?.status ?? e.event_type,

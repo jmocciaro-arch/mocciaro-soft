@@ -5,7 +5,7 @@ import { userHasRbacPermission } from '@/lib/auth/rbac-server'
 
 export const runtime = 'nodejs'
 
-const ORDER_COLS = 'id, channel_id, company_id, external_order_id, total, currency, status, received_at, document_id, buyer, document:tt_documents(doc_code)'
+const ORDER_COLS = 'id, channel_id, company_id, external_order_id, total, currency, status, received_at, document_id, buyer, document:tt_documents(system_code)'
 const LISTING_COLS = 'id, channel_id, company_id, title, price, currency, stock_published, status, last_sync_at, sync_error, product:tt_products(sku)'
 
 /**

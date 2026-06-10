@@ -172,7 +172,7 @@ describe('actividad (§2.3): unión de eventos + órdenes de canal', () => {
   const events = [
     {
       id: 'e1', event_type: 'issued', created_at: daysAgo(1), to_status: 'emitida',
-      document: { doc_code: 'FAC-2026-0891', counterparty_name: 'Mirgor', total: 12180, currency: 'USD', status: 'emitida', doc_type: 'factura' },
+      document: { system_code: 'FAC-2026-0891', total: 12180, currency: 'USD', status: 'emitida', doc_type: 'factura', client: { name: 'Mirgor' } },
     },
     { id: 'e2', event_type: 'created', created_at: daysAgo(2), to_status: null, document: null }, // sin doc → fuera
   ]

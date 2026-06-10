@@ -29,7 +29,7 @@ interface OrderRow extends Record<string, unknown> {
   status: string
   received_at: string
   document_id: string | null
-  document: { doc_code: string | null } | null
+  document: { system_code: string | null } | null
 }
 
 interface ListingRow extends Record<string, unknown> {
@@ -157,7 +157,7 @@ export default function CanalesPage() {
       key: 'document_id', label: 'Documento',
       render: (v, row) => {
         const r = row as OrderRow
-        if (v) return <span className="font-mono text-[12px]">{r.document?.doc_code ?? 'Vinculado'}</span>
+        if (v) return <span className="font-mono text-[12px]">{r.document?.system_code ?? 'Vinculado'}</span>
         if (!canManageOrders) return <span className="text-[#6B7280] text-xs">—</span>
         return (
           <Button

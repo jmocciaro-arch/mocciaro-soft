@@ -29,7 +29,8 @@ export interface ExecutiveKpisRaw {
   events: ActivityEventRow[]
 }
 
-const INVOICE_COLS = 'id, total, status, invoice_date, created_at'
+// tt_documents de producción no tiene invoice_date: se trabaja con created_at
+const INVOICE_COLS = 'id, total, status, created_at'
 const PO_CLOSED = '("recibida","received","cerrada","closed","cancelada","cancelled")'
 
 /**
@@ -72,7 +73,7 @@ export function useExecutiveKpis(period: PeriodKey) {
     const [invRes, unpaidRes, quotesRes, channelData, poRes, whRes, eventsRes] = await Promise.all([
       filterByCompany(
         sb.from('tt_documents').select(INVOICE_COLS)
-          .eq('doc_type', 'factura').in('status', ISSUED_INVOICE_STATUSES).gte('invoice_date', sparkISO),
+          .eq('doc_type', 'factura').in('status', ISSUED_INVOICE_STATUSES).gte('created_at', sparkISO),
       ),
       filterByCompany(
         sb.from('tt_documents').select(INVOICE_COLS)
@@ -89,7 +90,7 @@ export function useExecutiveKpis(period: PeriodKey) {
       filterByCompany(sb.from('tt_warehouses').select('id').eq('active', true)),
       filterByCompany(
         sb.from('tt_document_events')
-          .select('id, event_type, created_at, to_status, document:tt_documents(doc_code, counterparty_name, total, currency, status, doc_type)')
+          .select('id, event_type, created_at, to_status, document:tt_documents(system_code, total, currency, status, doc_type, client:tt_clients(name))')
           .order('created_at', { ascending: false }).limit(30),
       ),
     ])
