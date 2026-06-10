@@ -49,21 +49,37 @@ export const OPEN_QUOTE_STATUSES = ['draft', 'borrador', 'sent', 'enviada', 'pen
 export const UNPAID_INVOICE_STATUSES = ['emitida', 'autorizada', 'pendiente_cobro']
 export const ISSUED_INVOICE_STATUSES = [...UNPAID_INVOICE_STATUSES, 'cobrada']
 
-/** La orden de canal cuenta como facturación: el comprador ya pagó o se despachó. */
-export const CHANNEL_ORDER_BILLED_STATUSES = ['pagada', 'facturada', 'despachada', 'despachado', 'entregada', 'entregado', 'liquidada', 'cobrada']
-/** Liquidada = el marketplace ya transfirió la plata. Hasta entonces, pendiente de cobro. */
-export const CHANNEL_ORDER_SETTLED_STATUSES = ['liquidada', 'cobrada']
-export const CHANNEL_ORDER_CANCELLED_STATUSES = ['cancelada', 'cancelled', 'anulada']
+/**
+ * Dominio real de tt_channel_orders.status (CHECK constraint, migración v91):
+ * received | reserved | preparing | shipped | delivered | cancelled | action_required
+ */
+export const CHANNEL_ORDER_STATUSES = ['received', 'reserved', 'preparing', 'shipped', 'delivered', 'cancelled', 'action_required'] as const
+export const CHANNEL_ORDER_STATUS_LABELS: Record<string, string> = {
+  received: 'Recibida',
+  reserved: 'Reservada',
+  preparing: 'A preparar',
+  shipped: 'Despachada',
+  delivered: 'Entregada',
+  cancelled: 'Cancelada',
+  action_required: 'Requiere atención',
+}
+
+/** La orden cuenta como facturación: despachada/entregada (el comprador ya pagó). */
+export const CHANNEL_ORDER_BILLED_STATUSES = ['shipped', 'delivered']
+export const CHANNEL_ORDER_CANCELLED_STATUSES = ['cancelled']
 
 const COBRADO_STATUSES = new Set([
-  'cobrada', 'cobrado', 'pagada', 'pagado', 'paid', 'liquidada',
-  'entregada', 'entregado', 'delivered', 'despachada', 'despachado',
-  'cerrada', 'cerrado', 'closed', 'completada', 'completado',
+  // documentos nativos (castellano)
+  'cobrada', 'cobrado', 'pagada', 'pagado', 'paid',
+  'entregada', 'entregado', 'despachada', 'despachado',
+  'cerrada', 'cerrado', 'completada', 'completado',
+  // órdenes de canal (dominio v91)
+  'shipped', 'delivered', 'closed',
 ])
 const ATENCION_STATUSES = new Set([
-  'vencida', 'vencido', 'sin_stock', 'error', 'rechazada', 'rechazado',
+  'vencida', 'vencido', 'sin_stock', 'error', 'rechazada', 'rechazado', 'rejected',
   'cancelada', 'cancelado', 'cancelled', 'anulada', 'disputa',
-  'accion_requerida', 'requiere_atencion',
+  'accion_requerida', 'requiere_atencion', 'action_required',
 ])
 
 /** Mapea un estado libre al bucket del filtro Estado (§2.1). */
@@ -105,8 +121,13 @@ const invoiceDate = (inv: InvoiceLite) => inv.invoice_date ?? inv.created_at
 const isCancelled = (o: ChannelOrderLite) => CHANNEL_ORDER_CANCELLED_STATUSES.includes(o.status)
 const isBilled = (o: ChannelOrderLite) =>
   !isCancelled(o) && (o.document_id !== null || CHANNEL_ORDER_BILLED_STATUSES.includes(o.status))
-const isUnsettled = (o: ChannelOrderLite) =>
-  !isCancelled(o) && !CHANNEL_ORDER_SETTLED_STATUSES.includes(o.status)
+/**
+ * "Sin liquidar" (spec §2.2): plata que el marketplace todavía no transfirió.
+ * El dominio v91 no tiene estado de liquidación, así que en esta fase:
+ * orden no cancelada y sin documento nativo. Cuando tiene document_id, el
+ * pendiente vive en la factura nativa (y se cuenta por ahí).
+ */
+const isUnsettled = (o: ChannelOrderLite) => !isCancelled(o) && o.document_id === null
 
 function channelDocIds(orders: ChannelOrderLite[]): Set<string> {
   const ids = new Set<string>()
@@ -180,8 +201,8 @@ export function kpiPendienteCobro(
     let value = invoices.reduce((s, i) => s + Number(i.total || 0), 0)
     let count = invoices.length
     if (filter === 'todos') {
-      // Órdenes sin liquidar que todavía no generaron factura nativa
-      const pending = unsettledOrders.filter(o => isUnsettled(o) && o.document_id === null)
+      // Órdenes sin liquidar (todavía sin factura nativa — ver isUnsettled)
+      const pending = unsettledOrders.filter(isUnsettled)
       value += pending.reduce((s, o) => s + Number(o.total || 0), 0)
       count += pending.length
     }
@@ -337,7 +358,7 @@ export function buildActivity(
     party: buyerName(o.buyer),
     total: o.total,
     currency: o.currency,
-    status: o.status,
+    status: CHANNEL_ORDER_STATUS_LABELS[o.status] ?? o.status,
     estado: estadoBucketFor(o.status),
     origin: channelLabels[o.channel_id] ?? 'Canal',
     channelKey: o.channel_id,

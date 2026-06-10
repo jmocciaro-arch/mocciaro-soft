@@ -32,7 +32,6 @@ export interface ExecutiveKpisRaw {
 const CHANNEL_ORDER_COLS = 'id, channel_id, external_order_id, total, currency, status, received_at, document_id, buyer'
 const INVOICE_COLS = 'id, total, status, invoice_date, created_at'
 const PO_CLOSED = '("recibida","received","cerrada","closed","cancelada","cancelled")'
-const ORDER_SETTLED = '("liquidada","cobrada","cancelada","cancelled","anulada")'
 
 /**
  * Datos crudos del dashboard ejecutivo. Se refetchea al cambiar período o
@@ -66,9 +65,10 @@ export function useExecutiveKpis(period: PeriodKey) {
         sb.from('tt_channel_orders').select(CHANNEL_ORDER_COLS)
           .gte('received_at', sparkISO).order('received_at', { ascending: false }),
       ),
+      // Sin liquidar: no cancelada y sin documento nativo (dominio v91 sin estado de liquidación)
       filterByCompany(
         sb.from('tt_channel_orders').select(CHANNEL_ORDER_COLS)
-          .not('status', 'in', ORDER_SETTLED),
+          .neq('status', 'cancelled').is('document_id', null),
       ),
       filterByCompany(
         sb.from('tt_purchase_orders').select('id, total').not('status', 'in', PO_CLOSED),

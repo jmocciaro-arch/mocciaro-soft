@@ -20,7 +20,7 @@ function invoice(over: Partial<InvoiceLite> = {}): InvoiceLite {
 function order(over: Partial<ChannelOrderLite> = {}): ChannelOrderLite {
   return {
     id: 'ord-1', channel_id: 'ml', external_order_id: '88412', total: 50, currency: 'ARS',
-    status: 'pagada', received_at: daysAgo(3), document_id: null, buyer: { name: 'Comprador ML' },
+    status: 'shipped', received_at: daysAgo(3), document_id: null, buyer: { name: 'Comprador ML' },
     ...over,
   }
 }
@@ -34,10 +34,10 @@ describe('kpiFacturacion (spec §2.2: recalcula con filtro de canal)', () => {
     invoice({ id: 'i-canal', total: 200, invoice_date: daysAgo(2) }), // generada desde una orden ML
   ]
   const orders = [
-    order({ id: 'o1', total: 200, document_id: 'i-canal', status: 'facturada' }),
-    order({ id: 'o2', total: 300, status: 'pagada' }), // facturada por el canal, sin documento nativo aún
-    order({ id: 'o3', total: 999, status: 'cancelada' }),
-    order({ id: 'o4', channel_id: 'ebay', total: 80, status: 'despachada' }),
+    order({ id: 'o1', total: 200, document_id: 'i-canal', status: 'shipped' }),
+    order({ id: 'o2', total: 300, status: 'shipped' }), // facturada por el canal, sin documento nativo aún
+    order({ id: 'o3', total: 999, status: 'cancelled' }),
+    order({ id: 'o4', channel_id: 'ebay', total: 80, status: 'delivered' }),
   ]
 
   it('todos: facturas + órdenes facturadas sin documento (sin doble conteo)', () => {
@@ -58,7 +58,7 @@ describe('kpiFacturacion (spec §2.2: recalcula con filtro de canal)', () => {
   })
 
   it('las canceladas nunca cuentan', () => {
-    const r = kpiFacturacion([], [order({ status: 'cancelada', total: 999 })], 'ml', WIN)
+    const r = kpiFacturacion([], [order({ status: 'cancelled', total: 999 })], 'ml', WIN)
     expect(r.value).toBe(0)
   })
 
@@ -86,9 +86,9 @@ describe('kpiPendienteCobro', () => {
     invoice({ id: 'i-canal', total: 50, invoice_date: daysAgo(2) }),
   ]
   const unsettled = [
-    order({ id: 'o1', total: 50, document_id: 'i-canal', status: 'pagada' }),
-    order({ id: 'o2', total: 70, status: 'despachada' }),
-    order({ id: 'o3', channel_id: 'ebay', total: 30, status: 'a_preparar' }),
+    order({ id: 'o1', total: 50, document_id: 'i-canal', status: 'shipped' }), // con doc nativo: el pendiente vive en la factura
+    order({ id: 'o2', total: 70, status: 'shipped' }),
+    order({ id: 'o3', channel_id: 'ebay', total: 30, status: 'preparing' }),
   ]
 
   it('todos: impagas + órdenes sin liquidar sin documento', () => {
@@ -103,8 +103,8 @@ describe('kpiPendienteCobro', () => {
 
   it('canal: órdenes sin liquidar de ese canal', () => {
     const r = kpiPendienteCobro(unpaid, unsettled, 'ml', NOW)
-    expect(r.value).toBe(120) // o1 (50, pagada pero no liquidada) + o2 (70)
-    expect(r.count).toBe(2)
+    expect(r.value).toBe(70) // solo o2: o1 ya tiene documento nativo
+    expect(r.count).toBe(1)
   })
 })
 
@@ -114,7 +114,7 @@ describe('kpiOrdenesMarketplace', () => {
     order({ id: 'o2', received_at: daysAgo(10) }),
     order({ id: 'o3', received_at: daysAgo(40) }), // período anterior
     order({ id: 'o4', channel_id: 'ebay', received_at: daysAgo(1) }),
-    order({ id: 'o5', status: 'cancelada', received_at: daysAgo(1) }),
+    order({ id: 'o5', status: 'cancelled', received_at: daysAgo(1) }),
   ]
 
   it('todos: count del período con mix por canal', () => {
@@ -176,7 +176,7 @@ describe('actividad (§2.3): unión de eventos + órdenes de canal', () => {
     },
     { id: 'e2', event_type: 'created', created_at: daysAgo(2), to_status: null, document: null }, // sin doc → fuera
   ]
-  const orders = [order({ id: 'o1', received_at: daysAgo(0.5), status: 'pagada' })]
+  const orders = [order({ id: 'o1', received_at: daysAgo(0.5), status: 'shipped' })]
 
   it('mezcla, ordena descendente y etiqueta origen', () => {
     const items = buildActivity(events, orders, LABELS)
@@ -192,15 +192,19 @@ describe('actividad (§2.3): unión de eventos + órdenes de canal', () => {
     const items = buildActivity(events, orders, LABELS)
     expect(filterActivity(items, 'ml', 'todos')).toHaveLength(1)
     expect(filterActivity(items, 'directo', 'todos')).toHaveLength(1)
-    expect(filterActivity(items, 'todos', 'cobrado')).toHaveLength(1) // la orden pagada
+    expect(filterActivity(items, 'todos', 'cobrado')).toHaveLength(1) // la orden despachada
     expect(filterActivity(items, 'todos', 'atencion')).toHaveLength(0)
   })
 
   it('estadoBucketFor mapea estados libres a los 3 buckets del filtro', () => {
     expect(estadoBucketFor('pagada')).toBe('cobrado')
     expect(estadoBucketFor('entregado')).toBe('cobrado')
+    expect(estadoBucketFor('shipped')).toBe('cobrado')
+    expect(estadoBucketFor('delivered')).toBe('cobrado')
     expect(estadoBucketFor('sin_stock')).toBe('atencion')
+    expect(estadoBucketFor('action_required')).toBe('atencion')
     expect(estadoBucketFor('vencida')).toBe('atencion')
+    expect(estadoBucketFor('preparing')).toBe('abierto')
     expect(estadoBucketFor('enviada')).toBe('abierto')
     expect(estadoBucketFor(null)).toBe('abierto')
   })
