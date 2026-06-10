@@ -61,15 +61,18 @@ export async function POST(_req: NextRequest, { params }: Ctx) {
   const canAccess = await userHasCompanyAccess(auth.ttUserId, auth.role, order.company_id as string)
   if (!canAccess) return NextResponse.json({ error: 'Sin acceso a esa empresa' }, { status: 403 })
 
-  // Misma validación de moneda que POST /api/documents
+  // Misma validación de moneda que POST /api/documents, pero tolerante:
+  // tt_company_currencies NO existe en producción (verificado 2026-06-10),
+  // así que solo se valida si la consulta resuelve. El mismo problema existe
+  // en POST /api/documents (preexistente, anotado — no se toca acá).
   const currency = (order.currency as string | null) ?? 'EUR'
-  const { data: cur } = await admin
+  const { data: cur, error: curErr } = await admin
     .from('tt_company_currencies')
     .select('currency_code')
     .eq('company_id', order.company_id)
     .eq('currency_code', currency)
     .maybeSingle()
-  if (!cur) {
+  if (!curErr && !cur) {
     return NextResponse.json(
       { error: `Moneda ${currency} no habilitada para la empresa. Habilitala en Admin → Empresas.` },
       { status: 400 },
