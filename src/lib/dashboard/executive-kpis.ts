@@ -320,7 +320,7 @@ export interface ActivityItem {
   channelKey: 'directo' | string
 }
 
-function buyerName(buyer: unknown): string {
+export function buyerName(buyer: unknown): string {
   if (buyer && typeof buyer === 'object') {
     const b = buyer as Record<string, unknown>
     for (const key of ['name', 'nickname', 'full_name']) {
