@@ -1,19 +1,36 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo, Suspense } from 'react'
 import Link from 'next/link'
+import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useCompanyContext } from '@/lib/company-context'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { KPICard } from '@/components/ui/kpi-card'
+import { SegmentedControl } from '@/components/ui/segmented-control'
+import { FilterChips, type FilterChip } from '@/components/ui/filter-chips'
+import { EmptyState } from '@/components/ui/empty-state'
 import { DailySummaryCard } from '@/components/ai/daily-summary-card'
 import {
-  TrendingUp, TrendingDown, DollarSign, FileText, Target, Sparkles,
-  AlertTriangle, CheckCircle2, Clock, Users, RefreshCw, BarChart3,
-  Mail, Paperclip, ExternalLink,
+  DollarSign, FileText, Sparkles,
+  AlertTriangle, RefreshCw, BarChart3,
+  Mail, Paperclip, ExternalLink, Activity,
 } from 'lucide-react'
 import { formatRelative } from '@/lib/utils'
+import { useChannelsGate } from '@/hooks/use-channels-gate'
+import { useExecutiveKpis } from '@/hooks/use-executive-kpis'
+import {
+  periodWindow, isPeriodKey, DEFAULT_PERIOD, PERIOD_OPTIONS, PERIOD_LABELS,
+  type PeriodKey,
+} from '@/lib/dashboard/periods'
+import {
+  kpiFacturacion, kpiPipeline, kpiPendienteCobro, kpiOrdenesMarketplace,
+  kpiOcEnCurso, stockAlerts, trendFrom, appliesChannelDimming,
+  buildActivity, filterActivity, ESTADO_OPTIONS,
+  type ChannelFilter, type EstadoFilter, type EstadoBucket,
+} from '@/lib/dashboard/executive-kpis'
 
 interface EmailItem {
   id: string
@@ -48,13 +65,104 @@ interface Stats {
   currency: string
 }
 
+const SELECT_CLS = 'bg-[#141820] border border-[#2A3040] rounded-lg px-2.5 py-1.5 text-xs font-semibold text-[#F0F2F5] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#FF6600]'
+const FILTER_LBL = 'text-[10.5px] uppercase tracking-wider font-bold text-[#6B7280]'
+
+const ESTADO_BADGE: Record<EstadoBucket, 'success' | 'info' | 'danger'> = {
+  cobrado: 'success',
+  abierto: 'info',
+  atencion: 'danger',
+}
+
+function timeLabel(ts: string): string {
+  const d = new Date(ts)
+  const sameDay = d.toDateString() === new Date().toDateString()
+  return sameDay
+    ? d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString('es-AR', { day: '2-digit', month: 'short' })
+}
+
 export default function DashboardEjecutivoPage() {
+  // useSearchParams exige un boundary de Suspense (mismo patrón que catálogo)
+  return (
+    <Suspense fallback={<div className="p-6"><div className="h-24 rounded-lg animate-pulse" style={{ background: '#1E2330' }} /></div>}>
+      <DashboardEjecutivo />
+    </Suspense>
+  )
+}
+
+function DashboardEjecutivo() {
   const { activeCompanyIds, activeCompany } = useCompanyContext()
   const supabase = createClient()
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
   const [stats, setStats] = useState<Stats | null>(null)
   const [loading, setLoading] = useState(true)
   const [emailsData, setEmailsData] = useState<EmailsData>({ connected: true, emails: [], unreadCount: 0 })
   const [emailsLoading, setEmailsLoading] = useState(true)
+
+  // ---- Filtros del dashboard (spec §2.1): período en URL, canal/estado en estado local ----
+  const pParam = searchParams.get('p')
+  const period: PeriodKey = isPeriodKey(pParam) ? pParam : DEFAULT_PERIOD
+  const [canal, setCanal] = useState<ChannelFilter>('todos')
+  const [estado, setEstado] = useState<EstadoFilter>('todos')
+  const gate = useChannelsGate()
+  const { raw, loading: kpisLoading, refetch } = useExecutiveKpis(period)
+
+  const setPeriod = useCallback((p: PeriodKey) => {
+    const sp = new URLSearchParams(searchParams.toString())
+    sp.set('p', p)
+    router.replace(`${pathname}?${sp.toString()}`, { scroll: false })
+  }, [searchParams, router, pathname])
+
+  // Si cambia la empresa activa y el canal elegido ya no está habilitado, volver a "todos"
+  useEffect(() => {
+    if (canal !== 'todos' && canal !== 'directo' && !gate.enabledChannels.some(c => c.id === canal)) {
+      setCanal('todos')
+    }
+  }, [gate.enabledChannels, canal])
+
+  const channelLabels = useMemo(
+    () => Object.fromEntries(gate.enabledChannels.map(c => [c.id, c.label])),
+    [gate.enabledChannels],
+  )
+
+  const kpis = useMemo(() => {
+    if (!raw) return null
+    const win = periodWindow(period)
+    return {
+      fact: kpiFacturacion(raw.invoices, raw.channelOrders, canal, win),
+      pipe: kpiPipeline(raw.openQuotes, canal),
+      pend: kpiPendienteCobro(raw.unpaidInvoices, raw.unsettledOrders, canal),
+      ord: kpiOrdenesMarketplace(raw.channelOrders, canal, win, channelLabels),
+      oc: kpiOcEnCurso(raw.purchaseOrders),
+      alerts: stockAlerts(raw.stock),
+      activity: buildActivity(raw.events, raw.channelOrders, channelLabels),
+    }
+  }, [raw, period, canal, channelLabels])
+
+  const visibleActivity = useMemo(
+    () => (kpis ? filterActivity(kpis.activity, canal, estado) : []),
+    [kpis, canal, estado],
+  )
+
+  const dimming = appliesChannelDimming(canal)
+  const canalLabel = canal === 'directo' ? 'Directo' : channelLabels[canal]
+  const isMarketplaceFilter = canal !== 'todos' && canal !== 'directo'
+
+  const chips: FilterChip[] = useMemo(() => {
+    const out: FilterChip[] = []
+    if (canal !== 'todos') out.push({ key: 'canal', label: canalLabel ?? 'Canal' })
+    if (estado !== 'todos') out.push({ key: 'estado', label: ESTADO_OPTIONS.find(o => o.value === estado)?.label ?? estado })
+    return out
+  }, [canal, estado, canalLabel])
+
+  const removeChip = useCallback((key: string) => {
+    if (key === 'canal') setCanal('todos')
+    if (key === 'estado') setEstado('todos')
+  }, [])
+  const clearFilters = useCallback(() => { setCanal('todos'); setEstado('todos') }, [])
 
   const loadEmails = useCallback(async () => {
     setEmailsLoading(true)
@@ -100,8 +208,9 @@ export default function DashboardEjecutivoPage() {
     ])
 
     // Agrupar top clients
+    type TopClientRow = { total: number | null; currency: string | null; client: { name: string | null } | null }
     const clientTotals = new Map<string, { total: number; currency: string }>()
-    for (const d of (topClientsRes.data || []) as any[]) {
+    for (const d of ((topClientsRes.data || []) as unknown as TopClientRow[])) {
       const name = d.client?.name || 'Sin cliente'
       const c = clientTotals.get(name) || { total: 0, currency: d.currency || 'EUR' }
       c.total += Number(d.total || 0)
@@ -114,8 +223,8 @@ export default function DashboardEjecutivoPage() {
 
     // Aging
     const aging = { d0_30: 0, d31_60: 0, d61_90: 0, d90plus: 0 }
-    for (const inv of (invPendRes.data || []) as any[]) {
-      const d = (inv as any).invoice_date ? new Date((inv as any).invoice_date) : new Date()
+    for (const inv of ((invPendRes.data || []) as unknown as { total: number | null; invoice_date: string | null }[])) {
+      const d = inv.invoice_date ? new Date(inv.invoice_date) : new Date()
       const days = Math.floor((Date.now() - d.getTime()) / 86400000)
       const total = Number(inv.total || 0)
       if (days <= 30) aging.d0_30 += total
@@ -126,11 +235,11 @@ export default function DashboardEjecutivoPage() {
 
     // Status counts
     const invByStatus: Record<string, number> = {}
-    for (const d of (invByStatusRes.data || []) as any[]) {
+    for (const d of ((invByStatusRes.data || []) as { status: string }[])) {
       invByStatus[d.status] = (invByStatus[d.status] || 0) + 1
     }
 
-    const sum = (rows: any[]) => (rows || []).reduce((s, r) => s + Number(r.total || 0), 0)
+    const sum = (rows: { total: number | null }[]) => rows.reduce((s, r) => s + Number(r.total || 0), 0)
 
     setStats({
       leadsTotal: leadsRes.count || 0,
@@ -146,18 +255,18 @@ export default function DashboardEjecutivoPage() {
       topClients,
       invoicesByStatus: invByStatus,
       agingBuckets: aging,
-      currency: (activeCompany as any)?.currency || 'EUR',
+      currency: (activeCompany as { currency?: string } | null)?.currency || 'EUR',
     })
     setLoading(false)
+    // supabase (createClient) es estable entre renders; las deps reales son empresa activa
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCompanyIds, activeCompany])
 
   useEffect(() => { void load() }, [load])
 
-  const mom = stats && stats.totalLastMonth > 0
-    ? ((stats.totalMonth - stats.totalLastMonth) / stats.totalLastMonth) * 100
-    : null
+  const companyCurrency = (activeCompany as { currency?: string } | null)?.currency || 'EUR'
 
-  function fmt(v: number, cur = stats?.currency || 'EUR') {
+  function fmt(v: number, cur = stats?.currency || companyCurrency) {
     return `${cur === 'EUR' ? '€' : cur === 'ARS' ? '$' : '$'}${v.toLocaleString('es-AR', { maximumFractionDigits: 0 })}`
   }
 
@@ -172,52 +281,149 @@ export default function DashboardEjecutivoPage() {
             {activeCompany?.name || 'Todas las empresas'} · {new Date().toLocaleDateString('es-AR', { dateStyle: 'full' })}
           </p>
         </div>
-        <Button variant="secondary" onClick={load} disabled={loading}>
-          <RefreshCw className={`w-4 h-4 mr-1 ${loading ? 'animate-spin' : ''}`} /> Refrescar
+        <Button variant="secondary" onClick={() => { void load(); void refetch() }} disabled={loading || kpisLoading}>
+          <RefreshCw className={`w-4 h-4 mr-1 ${(loading || kpisLoading) ? 'animate-spin' : ''}`} /> Refrescar
         </Button>
+      </div>
+
+      {/* Barra de filtros (spec §2.1) */}
+      <div className="flex items-center gap-3 flex-wrap rounded-xl bg-[#141820] border border-[#1E2330] px-3 py-2" role="group" aria-label="Filtros del dashboard">
+        <span className={FILTER_LBL}>Período</span>
+        <SegmentedControl options={PERIOD_OPTIONS} value={period} onChange={setPeriod} ariaLabel="Período del dashboard" />
+        {/* El filtro de canal solo se renderiza si el gating §1 pasa completo */}
+        {gate.functional && (
+          <>
+            <label htmlFor="f-canal" className={FILTER_LBL}>Canal</label>
+            <select id="f-canal" className={SELECT_CLS} value={canal} onChange={e => setCanal(e.target.value)}>
+              <option value="todos">Todos</option>
+              <option value="directo">Directo</option>
+              {gate.enabledChannels.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+            </select>
+          </>
+        )}
+        <label htmlFor="f-estado" className={FILTER_LBL}>Estado</label>
+        <select id="f-estado" className={SELECT_CLS} value={estado} onChange={e => setEstado(e.target.value as EstadoFilter)}>
+          {ESTADO_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+        <FilterChips chips={chips} onRemove={removeChip} onClear={clearFilters} />
+      </div>
+
+      {/* KPIs con filtros (spec §2.2) */}
+      {kpisLoading || !kpis ? (
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+          {[1, 2, 3, 4, 5, 6].map(i => <div key={i} className="h-28 rounded-xl animate-pulse" style={{ background: '#1E2330' }} />)}
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+          <KPICard
+            label="Facturación"
+            value={fmt(kpis.fact.value)}
+            trend={trendFrom(kpis.fact.value, kpis.fact.prev)}
+            sparkline={kpis.fact.spark}
+            sparklineColor="#10b981"
+            subtitle={PERIOD_LABELS[period] + (canal !== 'todos' && canalLabel ? ` · ${canalLabel}` : '')}
+          />
+          <KPICard
+            label="Pipeline abierto"
+            value={fmt(kpis.pipe.value)}
+            subtitle={isMarketplaceFilter ? 'las cotizaciones son del canal directo' : `${kpis.pipe.count} cotizaciones`}
+          />
+          <KPICard
+            label="Pendiente cobro"
+            value={fmt(kpis.pend.value)}
+            subtitle={isMarketplaceFilter
+              ? `${kpis.pend.count} sin liquidar`
+              : <span className={kpis.pend.overdue > 0 ? 'text-red-400' : undefined}>{kpis.pend.overdue} vencidas</span>}
+          />
+          <KPICard
+            label="OC en curso"
+            value={kpis.oc.count}
+            muted={dimming}
+            subtitle={dimming ? 'no aplica filtro de canal' : `${fmt(kpis.oc.committed)} comprometido`}
+          />
+          <KPICard
+            label="Órdenes marketplace"
+            value={kpis.ord.value}
+            trend={trendFrom(kpis.ord.value, kpis.ord.prev)}
+            sparkline={kpis.ord.spark}
+            sparklineColor="#FF6600"
+            subtitle={kpis.ord.mix}
+          />
+          <KPICard
+            label="Alertas stock"
+            value={kpis.alerts.low}
+            muted={dimming}
+            subtitle={dimming
+              ? 'no aplica filtro de canal'
+              : <span className={kpis.alerts.critical > 0 ? 'text-red-400' : undefined}>{kpis.alerts.critical} críticos</span>}
+          />
+        </div>
+      )}
+
+      {/* Actividad reciente (spec §2.3) + resumen IA */}
+      <div className="grid grid-cols-1 xl:grid-cols-[2.2fr_1fr] gap-3 items-start">
+        <Card className="p-0 overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#1E2330]">
+            <Activity size={14} className="text-[#6B7280]" />
+            <strong className="text-[12.5px]">Actividad reciente</strong>
+            {kpis && kpis.activity.length > 0 && (
+              <span className="text-[11px] text-[#6B7280] font-mono ml-auto">{visibleActivity.length} de {kpis.activity.length}</span>
+            )}
+          </div>
+          {kpisLoading || !kpis ? (
+            <div className="p-4 space-y-2">
+              {[1, 2, 3, 4, 5].map(i => <div key={i} className="h-7 rounded animate-pulse" style={{ background: '#1E2330' }} />)}
+            </div>
+          ) : kpis.activity.length === 0 ? (
+            <EmptyState
+              className="border-0 rounded-none"
+              icon={<Activity size={36} />}
+              title="Sin actividad reciente"
+              description="Cuando se emitan documentos o entren órdenes de canal, los últimos movimientos van a aparecer acá."
+            />
+          ) : visibleActivity.length === 0 ? (
+            <div className="px-4 py-8 text-center text-xs text-[#9CA3AF]">
+              Ninguna actividad coincide con los filtros activos.{' '}
+              <button type="button" onClick={clearFilters} className="underline hover:text-[#F0F2F5]">Limpiar filtros</button>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-[12.5px]">
+                <thead>
+                  <tr className="text-left text-[10.5px] uppercase tracking-wider text-[#6B7280] border-b border-[#1E2330]">
+                    <th className="px-3 py-2 font-bold">Hora</th>
+                    <th className="px-3 py-2 font-bold">Documento</th>
+                    <th className="px-3 py-2 font-bold">Tercero</th>
+                    <th className="px-3 py-2 font-bold text-right">Importe</th>
+                    <th className="px-3 py-2 font-bold">Estado</th>
+                    <th className="px-3 py-2 font-bold">Origen</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleActivity.map(item => (
+                    <tr key={item.id} className="border-b border-[#1E2330]/60 last:border-0 hover:bg-[#1E2330]/40">
+                      <td className="px-3 py-1.5 font-mono text-[11.5px] text-[#9CA3AF] whitespace-nowrap">{timeLabel(item.ts)}</td>
+                      <td className="px-3 py-1.5 font-mono whitespace-nowrap">{item.code}</td>
+                      <td className="px-3 py-1.5 max-w-[180px] truncate">{item.party}</td>
+                      <td className="px-3 py-1.5 font-mono text-right whitespace-nowrap">{item.total != null ? fmt(item.total, item.currency ?? undefined) : '—'}</td>
+                      <td className="px-3 py-1.5"><Badge variant={ESTADO_BADGE[item.estado]}>{item.status}</Badge></td>
+                      <td className="px-3 py-1.5"><Badge variant={item.channelKey === 'directo' ? 'default' : 'orange'}>{item.origin}</Badge></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+        <DailySummaryCard />
       </div>
 
       {loading || !stats ? (
         <div className="grid grid-cols-4 gap-3">
-          {[1,2,3,4,5,6,7,8].map(i => <div key={i} className="h-24 rounded-lg animate-pulse" style={{ background: '#1E2330' }} />)}
+          {[1, 2, 3, 4].map(i => <div key={i} className="h-24 rounded-lg animate-pulse" style={{ background: '#1E2330' }} />)}
         </div>
       ) : (
         <>
-          {/* KPIs principales */}
-          <div className="grid grid-cols-4 gap-3">
-            <KPI
-              icon={<DollarSign />}
-              label="Cobrado este mes"
-              value={fmt(stats.totalMonth)}
-              subtitle={mom != null ? <span style={{ color: mom >= 0 ? '#10b981' : '#ef4444' }}>{mom >= 0 ? '↑' : '↓'} {Math.abs(mom).toFixed(1)}% vs mes anterior</span> : undefined}
-              color="#10b981"
-            />
-            <KPI
-              icon={<Clock />}
-              label="Por cobrar"
-              value={String(stats.invoicesPending)}
-              subtitle={`${stats.invoicesOverdue} vencidas`}
-              color={stats.invoicesOverdue > 0 ? '#ef4444' : '#f97316'}
-              href="/ventas?tab=facturas"
-            />
-            <KPI
-              icon={<Sparkles />}
-              label="Leads HOT"
-              value={String(stats.leadsHot)}
-              subtitle={`de ${stats.leadsTotal} total`}
-              color="#ef4444"
-              href="/crm/leads"
-            />
-            <KPI
-              icon={<Target />}
-              label="Pipeline abierto"
-              value={String(stats.opportunitiesOpen)}
-              subtitle={`${stats.quotesOpen} cotizaciones · ${stats.ordersOpen} pedidos`}
-              color="#f97316"
-              href="/crm?tab=pipeline"
-            />
-          </div>
-
           {/* Aging + Top clientes */}
           <div className="grid grid-cols-2 gap-3">
             <Card className="p-4">
@@ -402,9 +608,6 @@ export default function DashboardEjecutivoPage() {
             )}
           </Card>
 
-          {/* Resumen ejecutivo IA */}
-          <DailySummaryCard />
-
           {/* Accesos rápidos */}
           <Card className="p-4">
             <strong className="block mb-3">Accesos rápidos</strong>
@@ -420,24 +623,6 @@ export default function DashboardEjecutivoPage() {
       )}
     </div>
   )
-}
-
-function KPI({ icon, label, value, subtitle, color, href }: {
-  icon: React.ReactNode; label: string; value: string; subtitle?: React.ReactNode; color: string; href?: string
-}) {
-  const content = (
-    <Card className="p-3 h-full hover:opacity-90 cursor-pointer">
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="text-xs opacity-60">{label}</div>
-          <div className="text-2xl font-bold mt-1" style={{ color }}>{value}</div>
-          {subtitle && <div className="text-xs mt-1">{subtitle}</div>}
-        </div>
-        <div style={{ color }}>{icon}</div>
-      </div>
-    </Card>
-  )
-  return href ? <Link href={href}>{content}</Link> : content
 }
 
 function AgingBucket({ label, value, fmt, color }: { label: string; value: number; fmt: (v: number) => string; color: string }) {
