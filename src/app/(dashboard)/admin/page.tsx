@@ -1052,6 +1052,27 @@ export default function AdminPage() {
   // (el onChange de Tabs solo dispara al clickear)
   useEffect(() => { if (canManageChannels) void loadChannels() }, [canManageChannels, loadChannels])
 
+  // Resultado del OAuth de MercadoLibre: el callback redirige a /admin?tab=canales&ml=...
+  // Mostramos el toast una sola vez y limpiamos los params para no repetirlo al refrescar.
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search)
+    const ml = sp.get('ml')
+    if (!ml) return
+    const detail = sp.get('ml_detail') ?? undefined
+    if (ml === 'connected') {
+      addToast({ type: 'success', title: 'MercadoLibre conectado', message: 'El canal quedó activo.' })
+      void loadChannels()
+    } else if (ml === 'denied') {
+      addToast({ type: 'warning', title: 'Conexión cancelada', message: detail })
+    } else {
+      addToast({ type: 'error', title: 'No se pudo conectar MercadoLibre', message: detail })
+    }
+    sp.delete('ml'); sp.delete('ml_detail')
+    const qs = sp.toString()
+    window.history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : ''))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // La tab Canales solo existe para quien tiene manage_channels (spec §4);
   // Tabs valida ?tab= contra esta lista, así el deep-link sin permiso cae en 'users'
   const visibleTabs = canManageChannels ? tabs : tabs.filter(t => t.id !== 'canales')
@@ -1383,42 +1404,59 @@ export default function AdminPage() {
                             {adminChannels.filter(ch => adminChannelCompanyName(ch) === companyName).map(ch => {
                               const visual = CHANNEL_VISUAL[ch.code] ?? { initials: ch.label.slice(0, 2).toUpperCase(), bg: '#2A3040', fg: '#F0F2F5' }
                               return (
-                                <div key={ch.id} className="flex items-center gap-2.5 rounded-lg bg-[#0F1218] border border-[#1E2330] px-3 py-2.5">
-                                  <span
-                                    className="w-6 h-6 rounded grid place-items-center text-[10px] font-extrabold shrink-0"
-                                    style={{ background: visual.bg, color: visual.fg }}
-                                    aria-hidden="true"
-                                  >
-                                    {visual.initials}
-                                  </span>
-                                  <div className="min-w-0">
-                                    <div className="text-[12.5px] font-semibold truncate">{ch.label}</div>
-                                    <Badge variant={ch.enabled ? (CHANNEL_STATUS_BADGE[ch.status] ?? 'default') : 'default'} size="sm">
-                                      {ch.enabled ? (CHANNEL_STATUS_LABELS[ch.status] ?? ch.status) : 'Deshabilitado'}
-                                    </Badge>
-                                  </div>
-                                  <button
-                                    type="button"
-                                    role="switch"
-                                    aria-checked={ch.enabled}
-                                    aria-label={`${ch.enabled ? 'Deshabilitar' : 'Habilitar'} ${ch.label} en ${companyName}`}
-                                    disabled={togglingChannelId !== null}
-                                    onClick={() => void toggleChannel(ch)}
-                                    className={cn(
-                                      'relative ml-auto w-9 h-5 rounded-full shrink-0 transition-colors',
-                                      'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF6600]',
-                                      'disabled:opacity-50',
-                                      ch.enabled ? 'bg-[#FF6600]' : 'bg-[#2A3040]',
-                                    )}
-                                  >
+                                <div key={ch.id} className="rounded-lg bg-[#0F1218] border border-[#1E2330] px-3 py-2.5">
+                                  <div className="flex items-center gap-2.5">
                                     <span
-                                      className={cn(
-                                        'absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform',
-                                        ch.enabled ? 'translate-x-[18px]' : 'translate-x-0.5',
-                                      )}
+                                      className="w-6 h-6 rounded grid place-items-center text-[10px] font-extrabold shrink-0"
+                                      style={{ background: visual.bg, color: visual.fg }}
                                       aria-hidden="true"
-                                    />
-                                  </button>
+                                    >
+                                      {visual.initials}
+                                    </span>
+                                    <div className="min-w-0">
+                                      <div className="text-[12.5px] font-semibold truncate">{ch.label}</div>
+                                      <Badge variant={ch.enabled ? (CHANNEL_STATUS_BADGE[ch.status] ?? 'default') : 'default'} size="sm">
+                                        {ch.enabled ? (CHANNEL_STATUS_LABELS[ch.status] ?? ch.status) : 'Deshabilitado'}
+                                      </Badge>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      role="switch"
+                                      aria-checked={ch.enabled}
+                                      aria-label={`${ch.enabled ? 'Deshabilitar' : 'Habilitar'} ${ch.label} en ${companyName}`}
+                                      disabled={togglingChannelId !== null}
+                                      onClick={() => void toggleChannel(ch)}
+                                      className={cn(
+                                        'relative ml-auto w-9 h-5 rounded-full shrink-0 transition-colors',
+                                        'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF6600]',
+                                        'disabled:opacity-50',
+                                        ch.enabled ? 'bg-[#FF6600]' : 'bg-[#2A3040]',
+                                      )}
+                                    >
+                                      <span
+                                        className={cn(
+                                          'absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform',
+                                          ch.enabled ? 'translate-x-[18px]' : 'translate-x-0.5',
+                                        )}
+                                        aria-hidden="true"
+                                      />
+                                    </button>
+                                  </div>
+                                  {ch.code === 'mercadolibre' && ch.enabled && (
+                                    <a
+                                      href={`/api/channels/mercadolibre/connect?channel_id=${ch.id}`}
+                                      className={cn(
+                                        'mt-2.5 flex items-center justify-center gap-1.5 rounded-md px-2.5 py-1.5 text-[11.5px] font-semibold transition-colors',
+                                        ch.status === 'active'
+                                          ? 'bg-[#1E2330] text-[#9CA3AF] hover:bg-[#262C3A]'
+                                          : 'bg-[#FF6600] text-white hover:bg-[#E65C00]',
+                                      )}
+                                    >
+                                      {ch.status === 'active'
+                                        ? (<><RefreshCw size={13} /> Reconectar cuenta</>)
+                                        : (<><Power size={13} /> Conectar con MercadoLibre</>)}
+                                    </a>
+                                  )}
                                 </div>
                               )
                             })}
