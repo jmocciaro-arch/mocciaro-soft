@@ -11,7 +11,7 @@ import {
   Cpu, Box, Layers, BookOpen, Pause, History,
   Banknote, Sparkles, TrendingUp, GitBranch, FormInput, Bot,
   RefreshCw, Zap, Globe, MessageCircle, ArrowLeft, HelpCircle,
-  Inbox, Workflow,
+  Inbox, Workflow, ArrowLeftRight,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
@@ -68,6 +68,9 @@ const navItems: NavItem[] = [
   { label: 'Finanzas', href: '/finanzas', icon: TrendingUp, requiredPermissions: ['view_financials'] },
   { label: 'Compras', href: '/compras?tab=pedidos', icon: ShoppingCart, badgeKey: 'po_pending', requiredPermissions: ['create_purchase_order', 'view_suppliers'] },
   { label: 'Stock', href: '/stock', icon: Warehouse, requiredPermissions: ['view_stock'] },
+  // Gating §1 de SPEC-dashboard-canales: acá la condición A (RBAC); la condición B
+  // (≥1 canal habilitado en la empresa activa) la resuelve la página con useChannelsGate.
+  { label: 'Canales', href: '/canales', icon: ArrowLeftRight, requiredPermissions: ['view_channels'] },
   { label: 'Proveedores', href: '/compras?tab=proveedores', icon: Building2, requiredPermissions: ['view_suppliers'] },
   { label: 'Clientes', href: '/clientes', icon: Users, requiredPermissions: ['view_clients'] },
   { label: 'Catalogo', href: '/catalogo', icon: Package, requiredPermissions: ['view_catalog'] },
