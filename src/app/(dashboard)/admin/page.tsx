@@ -13,15 +13,17 @@ import { Tabs } from '@/components/ui/tabs'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { SearchBar } from '@/components/ui/search-bar'
 import { useToast } from '@/components/ui/toast'
-import { formatDate, formatDateTime, formatRelative, getInitials } from '@/lib/utils'
+import { cn, formatDate, formatDateTime, formatRelative, getInitials } from '@/lib/utils'
 import { ExportButton } from '@/components/ui/export-button'
 import { CompanyLogosPanel } from '@/components/admin/companies/company-logos-panel'
 import { CompanyConfigModal } from '@/components/admin/companies/company-config-modal'
+import { usePermissions } from '@/hooks/use-permissions'
+import { CHANNEL_VISUAL, CHANNEL_STATUS_LABELS, CHANNEL_STATUS_BADGE } from '@/lib/channels/constants'
 import {
   Settings, Users, Building2, Sliders, Warehouse, Activity,
   Save, Plus, Loader2, ChevronLeft, ChevronRight, Edit, Shield,
   UserPlus, Power, Copy, Eye, EyeOff, Check, ShieldCheck, X,
-  FileText, Trash2, Palette, Key, RefreshCw
+  FileText, Trash2, Palette, Key, RefreshCw, ArrowLeftRight
 } from 'lucide-react'
 
 type Row = Record<string, unknown>
@@ -253,6 +255,8 @@ const tabs = [
   { id: 'users', label: 'Usuarios', icon: <Users size={16} /> },
   { id: 'roles', label: 'Roles', icon: <Shield size={16} /> },
   { id: 'companies', label: 'Empresas', icon: <Building2 size={16} /> },
+  // 'canales' se filtra en runtime: solo visible con permiso manage_channels (spec §4)
+  { id: 'canales', label: 'Canales', icon: <ArrowLeftRight size={16} /> },
   { id: 'params', label: 'Parametros', icon: <Sliders size={16} /> },
   { id: 'warehouses', label: 'Almacenes', icon: <Warehouse size={16} /> },
   { id: 'audit', label: 'Auditoria', icon: <Activity size={16} /> },
@@ -260,9 +264,32 @@ const tabs = [
   { id: 'estados', label: 'Estados', icon: <Palette size={16} /> },
 ]
 
+interface AdminChannel {
+  id: string
+  company_id: string
+  code: string
+  label: string
+  enabled: boolean
+  status: string
+  company: { name: string } | { name: string }[] | null
+}
+
+function adminChannelCompanyName(ch: AdminChannel): string {
+  const c = ch.company
+  if (!c) return 'Empresa'
+  return Array.isArray(c) ? (c[0]?.name ?? 'Empresa') : c.name
+}
+
 export default function AdminPage() {
   const supabase = createClient()
   const { addToast } = useToast()
+  const { can: canPerm, loading: permsLoading } = usePermissions()
+
+  // ─── Canales (spec §4) ───
+  const canManageChannels = !permsLoading && canPerm('manage_channels')
+  const [adminChannels, setAdminChannels] = useState<AdminChannel[]>([])
+  const [loadingChannels, setLoadingChannels] = useState(false)
+  const [togglingChannelId, setTogglingChannelId] = useState<string | null>(null)
 
   // ─── RBAC state ───
   const [rbacRoles, setRbacRoles] = useState<RbacRole[]>([])
@@ -966,10 +993,52 @@ export default function AdminPage() {
     return acc
   }, {})
 
+  const loadChannels = useCallback(async () => {
+    setLoadingChannels(true)
+    try {
+      const res = await fetch('/api/admin/channels')
+      const json = await res.json() as { data?: AdminChannel[]; error?: string }
+      if (!res.ok) {
+        addToast({ type: 'error', title: 'Error cargando canales', message: json.error })
+        setAdminChannels([])
+        return
+      }
+      setAdminChannels(json.data ?? [])
+    } finally {
+      setLoadingChannels(false)
+    }
+  }, [addToast])
+
+  const toggleChannel = async (channel: AdminChannel) => {
+    setTogglingChannelId(channel.id)
+    try {
+      const res = await fetch(`/api/admin/channels/${channel.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !channel.enabled }),
+      })
+      const json = await res.json() as { data?: AdminChannel; error?: string }
+      if (!res.ok) {
+        addToast({ type: 'error', title: 'No se pudo actualizar el canal', message: json.error })
+        return
+      }
+      addToast({
+        type: 'success',
+        title: channel.enabled
+          ? `${channel.label} deshabilitado en ${adminChannelCompanyName(channel)}`
+          : `${channel.label} habilitado en ${adminChannelCompanyName(channel)} (onboarding)`,
+      })
+      await loadChannels()
+    } finally {
+      setTogglingChannelId(null)
+    }
+  }
+
   const handleTabChange = (tab: string) => {
     if (tab === 'users') { loadUsers(); loadCompanies(); loadRbacData(); loadUserRbacAssignments() }
     if (tab === 'roles') loadRbacData()
     if (tab === 'companies') loadCompanies()
+    if (tab === 'canales') loadChannels()
     if (tab === 'params') loadParams()
     if (tab === 'warehouses') loadWarehouses()
     if (tab === 'audit') loadAudit()
@@ -978,6 +1047,14 @@ export default function AdminPage() {
   }
 
   useEffect(() => { loadUsers(); loadCompanies(); loadRbacData(); loadUserRbacAssignments() }, [loadUsers, loadCompanies, loadRbacData, loadUserRbacAssignments])
+
+  // Carga de canales apenas resuelven los permisos: cubre el deep-link /admin?tab=canales
+  // (el onChange de Tabs solo dispara al clickear)
+  useEffect(() => { if (canManageChannels) void loadChannels() }, [canManageChannels, loadChannels])
+
+  // La tab Canales solo existe para quien tiene manage_channels (spec §4);
+  // Tabs valida ?tab= contra esta lista, así el deep-link sin permiso cae en 'users'
+  const visibleTabs = canManageChannels ? tabs : tabs.filter(t => t.id !== 'canales')
 
   const openEditCompany = (c: Row) => {
     setEditCompany(c)
@@ -1058,7 +1135,7 @@ export default function AdminPage() {
       </div>
 
       <Suspense fallback={<div className="flex justify-center py-10"><Loader2 className="animate-spin text-[#FF6600]" size={32} /></div>}>
-      <Tabs tabs={tabs} defaultTab="users" onChange={handleTabChange}>
+      <Tabs tabs={visibleTabs} defaultTab="users" onChange={handleTabChange}>
         {(activeTab) => (
           <>
             {/* ═══ USERS ═══ */}
@@ -1273,6 +1350,82 @@ export default function AdminPage() {
                         if (res.ok) loadCompanies()
                       }}
                     />
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* ═══ CANALES (spec §4) ═══ */}
+            {activeTab === 'canales' && canManageChannels && (
+              <Card>
+                <CardHeader>
+                  <div>
+                    <CardTitle>Canales de venta por empresa</CardTitle>
+                    <p className="text-[11px] text-[#6B7280] mt-1">
+                      Habilitar un canal lo activa en el módulo Canales y en el filtro del dashboard de esa empresa.
+                      Las credenciales de marketplaces NUNCA se cargan acá: van a Vault/env del backend en la fase de sync.
+                    </p>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {loadingChannels ? (
+                    <div className="flex justify-center py-10"><Loader2 className="animate-spin text-[#FF6600]" size={28} /></div>
+                  ) : adminChannels.length === 0 ? (
+                    <p className="text-sm text-[#6B7280] text-center py-10">
+                      No hay canales cargados. El seed de tt_channels (4 canales × empresa) viene de la migración v91.
+                    </p>
+                  ) : (
+                    <div className="space-y-5">
+                      {Array.from(new Set(adminChannels.map(adminChannelCompanyName))).map(companyName => (
+                        <div key={companyName}>
+                          <h3 className="text-xs font-bold uppercase tracking-wider text-[#9CA3AF] mb-2">{companyName}</h3>
+                          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">
+                            {adminChannels.filter(ch => adminChannelCompanyName(ch) === companyName).map(ch => {
+                              const visual = CHANNEL_VISUAL[ch.code] ?? { initials: ch.label.slice(0, 2).toUpperCase(), bg: '#2A3040', fg: '#F0F2F5' }
+                              return (
+                                <div key={ch.id} className="flex items-center gap-2.5 rounded-lg bg-[#0F1218] border border-[#1E2330] px-3 py-2.5">
+                                  <span
+                                    className="w-6 h-6 rounded grid place-items-center text-[10px] font-extrabold shrink-0"
+                                    style={{ background: visual.bg, color: visual.fg }}
+                                    aria-hidden="true"
+                                  >
+                                    {visual.initials}
+                                  </span>
+                                  <div className="min-w-0">
+                                    <div className="text-[12.5px] font-semibold truncate">{ch.label}</div>
+                                    <Badge variant={ch.enabled ? (CHANNEL_STATUS_BADGE[ch.status] ?? 'default') : 'default'} size="sm">
+                                      {ch.enabled ? (CHANNEL_STATUS_LABELS[ch.status] ?? ch.status) : 'Deshabilitado'}
+                                    </Badge>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    role="switch"
+                                    aria-checked={ch.enabled}
+                                    aria-label={`${ch.enabled ? 'Deshabilitar' : 'Habilitar'} ${ch.label} en ${companyName}`}
+                                    disabled={togglingChannelId !== null}
+                                    onClick={() => void toggleChannel(ch)}
+                                    className={cn(
+                                      'relative ml-auto w-9 h-5 rounded-full shrink-0 transition-colors',
+                                      'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF6600]',
+                                      'disabled:opacity-50',
+                                      ch.enabled ? 'bg-[#FF6600]' : 'bg-[#2A3040]',
+                                    )}
+                                  >
+                                    <span
+                                      className={cn(
+                                        'absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform',
+                                        ch.enabled ? 'translate-x-[18px]' : 'translate-x-0.5',
+                                      )}
+                                      aria-hidden="true"
+                                    />
+                                  </button>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </CardContent>
               </Card>
