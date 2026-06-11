@@ -71,6 +71,7 @@ const navItems: NavItem[] = [
   // Gating §1 de SPEC-dashboard-canales: acá la condición A (RBAC); la condición B
   // (≥1 canal habilitado en la empresa activa) la resuelve la página con useChannelsGate.
   { label: 'Canales', href: '/canales', icon: ArrowLeftRight, requiredPermissions: ['view_channels'] },
+  { label: 'Comex y Logística', href: '/comex', icon: Globe, requiredPermissions: ['view_comex'] },
   { label: 'Proveedores', href: '/compras?tab=proveedores', icon: Building2, requiredPermissions: ['view_suppliers'] },
   { label: 'Clientes', href: '/clientes', icon: Users, requiredPermissions: ['view_clients'] },
   { label: 'Catalogo', href: '/catalogo', icon: Package, requiredPermissions: ['view_catalog'] },
