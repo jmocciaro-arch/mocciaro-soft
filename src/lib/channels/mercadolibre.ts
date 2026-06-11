@@ -268,3 +268,126 @@ export async function getValidAccessToken(admin: SupabaseClient, channelId: stri
   await persistRefreshedTokens(admin, channelId, stored, refreshed)
   return refreshed.access_token
 }
+
+// ─── Publicaciones (Fase 3) ───
+
+/** Detalle de un ítem de ML, ya normalizado a lo que persistimos. */
+export interface MlListing {
+  external_id: string
+  title: string | null
+  price: number | null
+  currency: string | null
+  stock_published: number | null
+  status: string // dominio de tt_channel_listings (CHECK v91)
+  sku: string | null
+}
+
+/** ML item.status → dominio de tt_channel_listings (draft|pending|active|paused|rejected|closed). */
+function mapMlStatus(mlStatus: string | undefined): string {
+  switch (mlStatus) {
+    case 'active': return 'active'
+    case 'paused': return 'paused'
+    case 'closed': return 'closed'
+    case 'under_review': return 'pending'
+    case 'inactive': return 'paused'
+    default: return 'pending'
+  }
+}
+
+interface MlRawItem {
+  id: string
+  title?: string
+  price?: number
+  currency_id?: string
+  available_quantity?: number
+  status?: string
+  seller_custom_field?: string | null
+  attributes?: Array<{ id?: string; value_name?: string | null }>
+}
+
+/** El SKU en ML vive en seller_custom_field (legacy) o en el atributo SELLER_SKU. */
+function extractSku(item: MlRawItem): string | null {
+  if (item.seller_custom_field) return item.seller_custom_field
+  const attr = item.attributes?.find(a => a.id === 'SELLER_SKU')
+  return attr?.value_name ?? null
+}
+
+async function mlGet(accessToken: string, path: string): Promise<Response> {
+  return fetch(`${ML_API_BASE}${path}`, { headers: { authorization: `Bearer ${accessToken}` } })
+}
+
+/** Máximo de IDs por multiget de ML. */
+export const ML_MULTIGET_CHUNK = 20
+
+/**
+ * Trae todos los IDs de publicaciones del seller paginando con search_type=scan
+ * (soporta >1000 ítems). Separado del detalle para que el caller pueda resolver
+ * y persistir por tandas (sync incremental: un corte a mitad no pierde lo previo).
+ */
+export async function fetchAllMlItemIds(accessToken: string, mlUserId: number): Promise<string[]> {
+  const ids: string[] = []
+  let scrollId: string | null = null
+  // Cota de seguridad: 500 páginas × 100 = 50k ítems máx, evita loops infinitos.
+  for (let page = 0; page < 500; page++) {
+    const qs = new URLSearchParams({ search_type: 'scan', limit: '100' })
+    if (scrollId) qs.set('scroll_id', scrollId)
+    const res = await mlGet(accessToken, `/users/${mlUserId}/items/search?${qs.toString()}`)
+    if (!res.ok) throw new Error(`ML items/search ${res.status}: ${await res.text()}`)
+    const json = (await res.json()) as { results?: string[]; scroll_id?: string }
+    const batch = json.results ?? []
+    if (batch.length === 0) break
+    ids.push(...batch)
+    scrollId = json.scroll_id ?? null
+    if (!scrollId) break
+  }
+  return ids
+}
+
+/** Resuelve el detalle de hasta ML_MULTIGET_CHUNK IDs en un multiget. */
+export async function fetchMlItemsByIds(accessToken: string, ids: string[]): Promise<MlListing[]> {
+  if (ids.length === 0) return []
+  const ATTRS = 'id,title,price,currency_id,available_quantity,status,seller_custom_field,attributes'
+  const res = await mlGet(accessToken, `/items?ids=${ids.join(',')}&attributes=${ATTRS}`)
+  if (!res.ok) throw new Error(`ML multiget ${res.status}: ${await res.text()}`)
+  const rows = (await res.json()) as Array<{ code: number; body: MlRawItem }>
+  const out: MlListing[] = []
+  for (const row of rows) {
+    if (row.code !== 200 || !row.body?.id) continue
+    const it = row.body
+    out.push({
+      external_id: it.id,
+      title: it.title ?? null,
+      price: it.price ?? null,
+      currency: it.currency_id ?? null,
+      stock_published: it.available_quantity ?? null,
+      status: mapMlStatus(it.status),
+      sku: extractSku(it),
+    })
+  }
+  return out
+}
+
+/** Campos editables que empujamos a ML vía PUT /items/{id}. */
+export interface MlItemEdit {
+  price?: number
+  available_quantity?: number
+  status?: 'active' | 'paused'
+  title?: string
+}
+
+/**
+ * Escribe cambios en una publicación de ML. NOTA: available_quantity directo
+ * solo aplica a ítems sin variaciones; con variaciones ML rechaza y el error
+ * se propaga (queda en sync_error). v1 no maneja variaciones.
+ */
+export async function updateMlItem(accessToken: string, itemId: string, edit: MlItemEdit): Promise<void> {
+  const res = await fetch(`${ML_API_BASE}/items/${itemId}`, {
+    method: 'PUT',
+    headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify(edit),
+  })
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string; error?: string }
+    throw new Error(`ML PUT /items/${itemId} ${res.status}: ${body.message ?? body.error ?? ''}`.trim())
+  }
+}

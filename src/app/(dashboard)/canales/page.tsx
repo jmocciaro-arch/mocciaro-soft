@@ -14,7 +14,8 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { SkeletonCardGrid } from '@/components/ui/skeleton'
 import { ChannelCard } from '@/components/channels/channel-card'
 import { NewListingModal } from '@/components/channels/new-listing-modal'
-import { ArrowLeftRight, Inbox, PackageOpen } from 'lucide-react'
+import { EditListingModal, type EditableListing } from '@/components/channels/edit-listing-modal'
+import { ArrowLeftRight, Inbox, PackageOpen, RefreshCw, Pencil } from 'lucide-react'
 import { formatRelative } from '@/lib/utils'
 import { buyerName, estadoBucketFor, CHANNEL_ORDER_STATUS_LABELS } from '@/lib/dashboard/executive-kpis'
 import { LISTING_STATUS_LABELS, LISTING_STATUS_BADGE } from '@/lib/channels/constants'
@@ -42,6 +43,7 @@ function docCodeOf(document: OrderRow['document']): string | null {
 interface ListingRow extends Record<string, unknown> {
   id: string
   channel_id: string
+  external_id: string | null
   title: string | null
   price: number | null
   currency: string | null
@@ -68,8 +70,11 @@ export default function CanalesPage() {
   const [loadingData, setLoadingData] = useState(true)
   const [creatingId, setCreatingId] = useState<string | null>(null)
   const [showNewListing, setShowNewListing] = useState(false)
+  const [editing, setEditing] = useState<EditableListing | null>(null)
+  const [syncing, setSyncing] = useState(false)
 
   const canManageOrders = can('manage_channel_orders')
+  const canManageChannels = can('manage_channels')
   const canPublish = can('publish_listings')
   const companyCurrency = (activeCompany as { currency?: string } | null)?.currency || 'EUR'
 
@@ -140,6 +145,39 @@ export default function CanalesPage() {
     }
   }, [addToast, loadData])
 
+  // Sincroniza publicaciones de TODOS los canales MercadoLibre habilitados y
+  // conectados. Un canal sin conexión devuelve 409 y se reporta sin frenar al resto.
+  const syncListings = useCallback(async () => {
+    const mlChannels = gate.enabledChannels.filter(c => c.code === 'mercadolibre')
+    if (mlChannels.length === 0) {
+      addToast({ type: 'info', title: 'No hay canales de MercadoLibre habilitados' })
+      return
+    }
+    setSyncing(true)
+    try {
+      let total = 0
+      const fails: string[] = []
+      for (const ch of mlChannels) {
+        const res = await fetch('/api/channels/mercadolibre/sync-listings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ channel_id: ch.id }),
+        })
+        const json = await res.json() as { synced?: number; error?: string }
+        if (!res.ok) fails.push(`${ch.label}: ${json.error ?? 'error'}`)
+        else total += json.synced ?? 0
+      }
+      if (fails.length > 0) {
+        addToast({ type: total > 0 ? 'warning' : 'error', title: `Sincronizadas ${total} publicaciones`, message: fails.join(' · ') })
+      } else {
+        addToast({ type: 'success', title: `${total} publicaciones sincronizadas desde MercadoLibre` })
+      }
+      await loadData()
+    } finally {
+      setSyncing(false)
+    }
+  }, [gate.enabledChannels, addToast, loadData])
+
   function fmtMoney(total: number | null, currency: string | null): string {
     if (total == null) return '—'
     const cur = currency ?? companyCurrency
@@ -198,7 +236,23 @@ export default function CanalesPage() {
       key: 'sync_error', label: 'Error',
       render: v => (v ? <span className="text-red-400 text-xs truncate block max-w-[180px]" title={String(v)}>{String(v)}</span> : <span className="text-[#6B7280] text-xs">—</span>),
     },
-  ], [channelLabels]) // eslint-disable-line react-hooks/exhaustive-deps
+    {
+      key: 'id', label: '', width: '90px',
+      render: (_v, row) => {
+        const r = row as ListingRow
+        // Solo se editan en ML las publicaciones con external_id (las traídas por sync).
+        if (!canManageChannels || !r.external_id) return null
+        return (
+          <Button size="sm" variant="secondary" onClick={() => setEditing({
+            id: r.id, title: r.title, price: r.price, currency: r.currency,
+            stock_published: r.stock_published, status: r.status,
+          })}>
+            <Pencil size={13} /> Editar
+          </Button>
+        )
+      },
+    },
+  ], [channelLabels, canManageChannels]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- Gating §1 ----
   if (gate.loading) {
@@ -269,14 +323,24 @@ export default function CanalesPage() {
 
       {/* Publicaciones (§3.3) */}
       <section aria-label="Publicaciones">
-        <h2 className="text-sm font-bold mb-2">Publicaciones</h2>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-sm font-bold">Publicaciones</h2>
+          {canManageChannels && gate.enabledChannels.some(c => c.code === 'mercadolibre') && (
+            <Button size="sm" variant="secondary" onClick={() => void syncListings()} disabled={syncing}>
+              <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
+              {syncing ? 'Sincronizando…' : 'Sincronizar publicaciones'}
+            </Button>
+          )}
+        </div>
         {!loadingData && listings.length === 0 ? (
           <EmptyState
             icon={<PackageOpen size={36} />}
             title="Sin publicaciones todavía"
-            description={canPublish
-              ? 'Creá la primera publicación vinculando un producto del catálogo a un canal.'
-              : 'Necesitás el permiso publish_listings para dar de alta publicaciones.'}
+            description={canManageChannels
+              ? 'Sincronizá desde MercadoLibre para traer todas tus publicaciones, o creá una manual vinculando un producto del catálogo.'
+              : canPublish
+                ? 'Creá la primera publicación vinculando un producto del catálogo a un canal.'
+                : 'Necesitás el permiso publish_listings para dar de alta publicaciones.'}
             action={canPublish ? <Button onClick={() => setShowNewListing(true)}>+ Nueva publicación</Button> : undefined}
           />
         ) : (
@@ -300,6 +364,12 @@ export default function CanalesPage() {
         companyId={defaultCompanyId}
         defaultCurrency={companyCurrency}
         onCreated={() => void loadData()}
+      />
+
+      <EditListingModal
+        listing={editing}
+        onClose={() => setEditing(null)}
+        onSaved={() => void loadData()}
       />
     </div>
   )
