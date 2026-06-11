@@ -29,9 +29,31 @@ export interface ExecutiveKpisRaw {
   events: ActivityEventRow[]
 }
 
-const CHANNEL_ORDER_COLS = 'id, channel_id, external_order_id, total, currency, status, received_at, document_id, buyer'
-const INVOICE_COLS = 'id, total, status, invoice_date, created_at'
+// tt_documents de producción no tiene invoice_date: se trabaja con created_at
+const INVOICE_COLS = 'id, total, status, created_at'
 const PO_CLOSED = '("recibida","received","cerrada","closed","cancelada","cancelled")'
+
+/**
+ * Órdenes de canal vía GET /api/channels: la RLS de tt_channel_orders es
+ * company-scoped por la empresa DEFAULT del usuario (current_company_id()),
+ * así que desde el browser no respetaría la empresa activa del selector.
+ * Sin permiso view_channels (403) los KPIs de canal quedan en cero, igual
+ * que el gating §1.
+ */
+async function fetchChannelOrders(companyIds: string[], sinceISO: string): Promise<{
+  orders: ChannelOrderLite[]
+  unsettled: ChannelOrderLite[]
+}> {
+  if (companyIds.length === 0) return { orders: [], unsettled: [] }
+  try {
+    const res = await fetch(`/api/channels?company_id=${companyIds.join(',')}&include=orders,unsettled&since=${encodeURIComponent(sinceISO)}`)
+    if (!res.ok) return { orders: [], unsettled: [] }
+    const json = await res.json() as { orders?: ChannelOrderLite[]; unsettled?: ChannelOrderLite[] }
+    return { orders: json.orders ?? [], unsettled: json.unsettled ?? [] }
+  } catch {
+    return { orders: [], unsettled: [] }
+  }
+}
 
 /**
  * Datos crudos del dashboard ejecutivo. Se refetchea al cambiar período o
@@ -39,7 +61,7 @@ const PO_CLOSED = '("recibida","received","cerrada","closed","cancelada","cancel
  * estos datos (ver @/lib/dashboard/executive-kpis).
  */
 export function useExecutiveKpis(period: PeriodKey) {
-  const { filterByCompany, companyKey } = useCompanyFilter()
+  const { filterByCompany, companyIds, companyKey } = useCompanyFilter()
   const [raw, setRaw] = useState<ExecutiveKpisRaw | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -48,10 +70,10 @@ export function useExecutiveKpis(period: PeriodKey) {
     const sb = createClient()
     const sparkISO = periodWindow(period).sparkFrom.toISOString()
 
-    const [invRes, unpaidRes, quotesRes, ordersRes, unsettledRes, poRes, whRes, eventsRes] = await Promise.all([
+    const [invRes, unpaidRes, quotesRes, channelData, poRes, whRes, eventsRes] = await Promise.all([
       filterByCompany(
         sb.from('tt_documents').select(INVOICE_COLS)
-          .eq('doc_type', 'factura').in('status', ISSUED_INVOICE_STATUSES).gte('invoice_date', sparkISO),
+          .eq('doc_type', 'factura').in('status', ISSUED_INVOICE_STATUSES).gte('created_at', sparkISO),
       ),
       filterByCompany(
         sb.from('tt_documents').select(INVOICE_COLS)
@@ -61,22 +83,14 @@ export function useExecutiveKpis(period: PeriodKey) {
         sb.from('tt_documents').select('id, total')
           .eq('doc_type', 'cotizacion').in('status', OPEN_QUOTE_STATUSES),
       ),
-      filterByCompany(
-        sb.from('tt_channel_orders').select(CHANNEL_ORDER_COLS)
-          .gte('received_at', sparkISO).order('received_at', { ascending: false }),
-      ),
-      // Sin liquidar: no cancelada y sin documento nativo (dominio v91 sin estado de liquidación)
-      filterByCompany(
-        sb.from('tt_channel_orders').select(CHANNEL_ORDER_COLS)
-          .neq('status', 'cancelled').is('document_id', null),
-      ),
+      fetchChannelOrders(companyIds, sparkISO),
       filterByCompany(
         sb.from('tt_purchase_orders').select('id, total').not('status', 'in', PO_CLOSED),
       ),
       filterByCompany(sb.from('tt_warehouses').select('id').eq('active', true)),
       filterByCompany(
         sb.from('tt_document_events')
-          .select('id, event_type, created_at, to_status, document:tt_documents(doc_code, counterparty_name, total, currency, status, doc_type)')
+          .select('id, event_type, created_at, to_status, document:tt_documents(system_code, total, currency, status, doc_type, client:tt_clients(name))')
           .order('created_at', { ascending: false }).limit(30),
       ),
     ])
@@ -95,8 +109,8 @@ export function useExecutiveKpis(period: PeriodKey) {
       invoices: (invRes.data ?? []) as InvoiceLite[],
       unpaidInvoices: (unpaidRes.data ?? []) as InvoiceLite[],
       openQuotes: (quotesRes.data ?? []) as QuoteLite[],
-      channelOrders: (ordersRes.data ?? []) as ChannelOrderLite[],
-      unsettledOrders: (unsettledRes.data ?? []) as ChannelOrderLite[],
+      channelOrders: channelData.orders,
+      unsettledOrders: channelData.unsettled,
       purchaseOrders: (poRes.data ?? []) as { total: number | null }[],
       stock,
       events: (eventsRes.data ?? []) as unknown as ActivityEventRow[],

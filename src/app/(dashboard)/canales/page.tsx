@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase/client'
 import { useCompanyContext } from '@/lib/company-context'
 import { useCompanyFilter } from '@/hooks/use-company-filter'
 import { usePermissions } from '@/hooks/use-permissions'
@@ -30,7 +29,14 @@ interface OrderRow extends Record<string, unknown> {
   status: string
   received_at: string
   document_id: string | null
-  document: { doc_code: string | null } | null
+  /** El embed many-to-one puede llegar como objeto o array según el client. */
+  document: { system_code: string | null } | { system_code: string | null }[] | null
+}
+
+function docCodeOf(document: OrderRow['document']): string | null {
+  if (!document) return null
+  const d = Array.isArray(document) ? document[0] : document
+  return d?.system_code ?? null
 }
 
 interface ListingRow extends Record<string, unknown> {
@@ -53,7 +59,7 @@ const ESTADO_BADGE: Record<'cobrado' | 'abierto' | 'atencion', 'success' | 'info
 export default function CanalesPage() {
   const gate = useChannelsGate()
   const { can } = usePermissions()
-  const { filterByCompany, companyKey, defaultCompanyId } = useCompanyFilter()
+  const { companyIds, companyKey, defaultCompanyId } = useCompanyFilter()
   const { activeCompany } = useCompanyContext()
   const { addToast } = useToast()
 
@@ -68,26 +74,24 @@ export default function CanalesPage() {
   const companyCurrency = (activeCompany as { currency?: string } | null)?.currency || 'EUR'
 
   const loadData = useCallback(async () => {
+    if (companyIds.length === 0) return
     setLoadingData(true)
-    const sb = createClient()
-    const [ordersRes, listingsRes] = await Promise.all([
-      filterByCompany(
-        sb.from('tt_channel_orders')
-          .select('id, channel_id, external_order_id, buyer, total, currency, status, received_at, document_id, document:tt_documents(doc_code)')
-          .order('received_at', { ascending: false })
-          .limit(100),
-      ),
-      filterByCompany(
-        sb.from('tt_channel_listings')
-          .select('id, channel_id, title, price, currency, stock_published, status, last_sync_at, sync_error, product:tt_products(sku)')
-          .order('updated_at', { ascending: false })
-          .limit(200),
-      ),
-    ])
-    setOrders(((ordersRes.data ?? []) as unknown as OrderRow[]))
-    setListings(((listingsRes.data ?? []) as unknown as ListingRow[]))
-    setLoadingData(false)
-    // filterByCompany cambia de identidad por render; companyKey es la dep estable (mismo patrón que calendario)
+    try {
+      // Vía GET /api/channels: la RLS de tt_channel_* es company-scoped por la
+      // empresa DEFAULT del usuario, no por la empresa activa del selector
+      const res = await fetch(`/api/channels?company_id=${companyIds.join(',')}&include=orders,listings`)
+      if (!res.ok) {
+        setOrders([])
+        setListings([])
+        return
+      }
+      const json = await res.json() as { orders?: OrderRow[]; listings?: ListingRow[] }
+      setOrders(json.orders ?? [])
+      setListings(json.listings ?? [])
+    } finally {
+      setLoadingData(false)
+    }
+    // companyIds cambia de identidad por render; companyKey es la dep estable (mismo patrón que calendario)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyKey])
 
@@ -160,7 +164,7 @@ export default function CanalesPage() {
       key: 'document_id', label: 'Documento',
       render: (v, row) => {
         const r = row as OrderRow
-        if (v) return <span className="font-mono text-[12px]">{r.document?.doc_code ?? 'Vinculado'}</span>
+        if (v) return <span className="font-mono text-[12px]">{docCodeOf(r.document) ?? 'Vinculado'}</span>
         if (!canManageOrders) return <span className="text-[#6B7280] text-xs">—</span>
         return (
           <Button
