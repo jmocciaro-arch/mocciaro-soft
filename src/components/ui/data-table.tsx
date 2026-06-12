@@ -343,7 +343,7 @@ export function DataTable({
           {onNewClick && (
             <button
               onClick={onNewClick}
-              className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-[#FF6600] rounded-lg hover:bg-[#E55C00] transition-colors"
+              className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-primary rounded-lg hover:bg-primary-hover transition-colors"
             >
               <Plus size={16} /> {newLabel}
             </button>
@@ -352,7 +352,7 @@ export function DataTable({
             <button
               key={i}
               onClick={a.onClick}
-              className="flex items-center gap-1.5 px-3 py-2 text-sm text-[#9CA3AF] bg-[#141820] border border-[#2A3040] rounded-lg hover:text-[#F0F2F5] hover:border-[#3A4050] transition-colors"
+              className="flex items-center gap-1.5 px-3 py-2 text-sm text-muted-light bg-card border border-border-hover rounded-lg hover:text-foreground hover:border-border-strong transition-colors"
             >
               {a.icon}
               {a.label}
@@ -365,7 +365,7 @@ export function DataTable({
           <select
             value={period}
             onChange={(e) => setPeriod(e.target.value)}
-            className="px-3 py-2 text-xs bg-[#141820] border border-[#2A3040] rounded-lg text-[#9CA3AF] focus:outline-none focus:border-[#FF6600] transition-colors"
+            className="px-3 py-2 text-xs bg-card border border-border-hover rounded-lg text-muted-light focus:outline-none focus:border-primary transition-colors"
           >
             {PERIOD_OPTIONS.map(o => (
               <option key={o.value} value={o.value}>{o.label}</option>
@@ -389,29 +389,29 @@ export function DataTable({
               className={cn(
                 'flex items-center gap-1.5 px-3 py-2 text-xs border rounded-lg transition-colors',
                 showColMenu
-                  ? 'bg-[#1C2230] border-[#FF6600] text-[#FF6600]'
-                  : 'bg-[#141820] border-[#2A3040] text-[#9CA3AF] hover:text-[#F0F2F5] hover:border-[#3A4050]'
+                  ? 'bg-card border-primary text-primary'
+                  : 'bg-card border-border-hover text-muted-light hover:text-foreground hover:border-border-strong'
               )}
             >
               <Settings2 size={14} />
               Columnas
             </button>
             {showColMenu && (
-              <div className="absolute right-0 top-full mt-1 z-50 bg-[#1C2230] border border-[#2A3040] rounded-lg shadow-2xl w-56 max-h-80 overflow-y-auto py-1">
-                <div className="px-3 py-2 border-b border-[#2A3040]">
-                  <p className="text-[10px] font-bold text-[#6B7280] uppercase tracking-wider">Columnas visibles</p>
+              <div className="absolute right-0 top-full mt-1 z-50 bg-card border border-border-hover rounded-lg shadow-2xl w-56 max-h-80 overflow-y-auto py-1">
+                <div className="px-3 py-2 border-b border-border-hover">
+                  <p className="text-[10px] font-bold text-muted uppercase tracking-wider">Columnas visibles</p>
                 </div>
                 {columns.map(c => (
                   <button
                     key={c.key}
                     onClick={() => toggleCol(c.key)}
-                    className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-[#D1D5DB] hover:bg-[#2A3040] transition-colors"
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-foreground-soft hover:bg-border-hover transition-colors"
                   >
                     <div className={cn(
                       'w-4 h-4 rounded border flex items-center justify-center transition-colors',
                       visibleCols.has(c.key)
-                        ? 'bg-[#FF6600] border-[#FF6600]'
-                        : 'border-[#4B5563]'
+                        ? 'bg-primary border-primary'
+                        : 'border-hint'
                     )}>
                       {visibleCols.has(c.key) && <Check size={10} className="text-white" />}
                     </div>
@@ -425,19 +425,19 @@ export function DataTable({
       </div>
 
       {/* Table */}
-      <div className="rounded-xl border border-[#1E2330] overflow-hidden">
+      <div className="rounded-xl border border-border overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             {/* Header */}
             <thead>
-              <tr className="bg-[#1C2230]">
+              <tr className="bg-card">
                 {/* Checkbox col */}
                 <th className="w-10 px-3 py-3">
                   <div
                     onClick={toggleSelectAll}
                     className={cn(
                       'w-4 h-4 rounded border cursor-pointer flex items-center justify-center transition-colors',
-                      isAllSelected ? 'bg-[#FF6600] border-[#FF6600]' : 'border-[#4B5563] hover:border-[#6B7280]'
+                      isAllSelected ? 'bg-primary border-primary' : 'border-hint hover:border-muted'
                     )}
                   >
                     {isAllSelected && <Check size={10} className="text-white" />}
@@ -447,20 +447,20 @@ export function DataTable({
                   <th
                     key={col.key}
                     className={cn(
-                      'px-3 py-3 text-left text-[10px] font-bold text-[#6B7280] uppercase tracking-wider select-none',
-                      col.sortable && 'cursor-pointer hover:text-[#FF6600] transition-colors'
+                      'px-3 py-3 text-left text-[10px] font-bold text-muted uppercase tracking-wider select-none',
+                      col.sortable && 'cursor-pointer hover:text-primary transition-colors'
                     )}
                     style={{ width: col.width }}
                     onClick={() => col.sortable && toggleSort(col.key)}
                   >
                     <div className="flex items-center gap-1">
-                      <span className={cn(sortKey === col.key && 'text-[#FF6600]')}>{col.label}</span>
+                      <span className={cn(sortKey === col.key && 'text-primary')}>{col.label}</span>
                       {col.sortable && (
                         <span className="inline-flex flex-col">
                           {sortKey === col.key ? (
-                            sortDir === 'asc' ? <ChevronUp size={12} className="text-[#FF6600]" /> : <ChevronDown size={12} className="text-[#FF6600]" />
+                            sortDir === 'asc' ? <ChevronUp size={12} className="text-primary" /> : <ChevronDown size={12} className="text-primary" />
                           ) : (
-                            <ChevronsUpDown size={12} className="text-[#4B5563]" />
+                            <ChevronsUpDown size={12} className="text-hint" />
                           )}
                         </span>
                       )}
@@ -469,24 +469,24 @@ export function DataTable({
                 ))}
               </tr>
               {/* Search row */}
-              <tr className="bg-[#141820] border-b border-[#1E2330]">
+              <tr className="bg-card border-b border-border">
                 <td className="px-3 py-1" />
                 {activeColumns.map(col => (
                   <td key={col.key} className="px-3 py-1">
                     {col.searchable ? (
                       <div className="relative">
-                        <Search size={10} className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[#4B5563]" />
+                        <Search size={10} className="absolute left-1.5 top-1/2 -translate-y-1/2 text-hint" />
                         <input
                           type="text"
                           value={colSearches[col.key] || ''}
                           onChange={(e) => setColSearches(prev => ({ ...prev, [col.key]: e.target.value }))}
                           placeholder=""
-                          className="w-full pl-5 pr-1 py-1 text-[10px] bg-transparent border-b border-[#1E2330] text-[#D1D5DB] placeholder-[#4B5563] focus:outline-none focus:border-[#FF6600] transition-colors"
+                          className="w-full pl-5 pr-1 py-1 text-[10px] bg-transparent border-b border-border text-foreground-soft placeholder-hint focus:outline-none focus:border-primary transition-colors"
                         />
                         {colSearches[col.key] && (
                           <button
                             onClick={() => setColSearches(prev => ({ ...prev, [col.key]: '' }))}
-                            className="absolute right-0.5 top-1/2 -translate-y-1/2 text-[#4B5563] hover:text-[#9CA3AF]"
+                            className="absolute right-0.5 top-1/2 -translate-y-1/2 text-hint hover:text-muted-light"
                           >
                             <X size={8} />
                           </button>
@@ -501,16 +501,16 @@ export function DataTable({
             </thead>
 
             {/* Body */}
-            <tbody className="divide-y divide-[#1E2330]">
+            <tbody className="divide-y divide-border">
               {loading ? (
                 <tr>
                   <td colSpan={activeColumns.length + 1} className="py-20 text-center">
-                    <Loader2 className="animate-spin text-[#FF6600] mx-auto" size={28} />
+                    <Loader2 className="animate-spin text-primary mx-auto" size={28} />
                   </td>
                 </tr>
               ) : pageData.length === 0 ? (
                 <tr>
-                  <td colSpan={activeColumns.length + 1} className="py-16 text-center text-[#6B7280] text-sm">
+                  <td colSpan={activeColumns.length + 1} className="py-16 text-center text-muted text-sm">
                     No hay {totalLabel}
                   </td>
                 </tr>
@@ -523,7 +523,7 @@ export function DataTable({
                       key={rowId}
                       className={cn(
                         'transition-colors',
-                        isSelected ? 'bg-[#FF6600]/5' : 'hover:bg-[#1A1F2E]',
+                        isSelected ? 'bg-primary/5' : 'hover:bg-card-hover',
                         onRowClick && 'cursor-pointer'
                       )}
                       onClick={() => onRowClick?.(row)}
@@ -534,7 +534,7 @@ export function DataTable({
                           onClick={() => toggleSelect(rowId)}
                           className={cn(
                             'w-4 h-4 rounded border cursor-pointer flex items-center justify-center transition-colors',
-                            isSelected ? 'bg-[#FF6600] border-[#FF6600]' : 'border-[#4B5563] hover:border-[#6B7280]'
+                            isSelected ? 'bg-primary border-primary' : 'border-hint hover:border-muted'
                           )}
                         >
                           {isSelected && <Check size={10} className="text-white" />}
@@ -548,7 +548,7 @@ export function DataTable({
                             className={cn(
                               'px-3 py-2.5',
                               (col.type === 'currency' || col.type === 'number') && 'text-right font-mono',
-                              col.type === 'currency' && 'text-[#FF6600] font-semibold'
+                              col.type === 'currency' && 'text-primary font-semibold'
                             )}
                           >
                             {col.render ? (
@@ -556,7 +556,7 @@ export function DataTable({
                             ) : col.type === 'status' ? (
                               <StatusBadge label={String(val ?? '')} />
                             ) : (
-                              <span className="text-[#D1D5DB] text-xs">
+                              <span className="text-foreground-soft text-xs">
                                 {formatCellValue(val, col.type)}
                               </span>
                             )}
@@ -572,14 +572,14 @@ export function DataTable({
             {/* Totals row */}
             {showTotals && totals && !loading && pageData.length > 0 && (
               <tfoot>
-                <tr className="bg-[#0F1218] border-t-2 border-[#2A3040]">
+                <tr className="bg-surface border-t-2 border-border-hover">
                   <td className="px-3 py-3" />
                   {activeColumns.map((col, i) => (
                     <td
                       key={col.key}
                       className={cn(
                         'px-3 py-3 text-xs font-bold',
-                        (col.type === 'currency' || col.type === 'number') ? 'text-right font-mono text-[#FF6600]' : 'text-[#6B7280]'
+                        (col.type === 'currency' || col.type === 'number') ? 'text-right font-mono text-primary' : 'text-muted'
                       )}
                     >
                       {i === 0 && !(col.type === 'currency' || col.type === 'number') && (
@@ -598,14 +598,14 @@ export function DataTable({
       {/* Pagination */}
       {!loading && sorted.length > 0 && (
         <div className="flex items-center justify-between mt-3 px-1">
-          <span className="text-xs text-[#6B7280]">
+          <span className="text-xs text-muted">
             Mostrando {currentPage * pageSize + 1} a {Math.min((currentPage + 1) * pageSize, sorted.length)} de {sorted.length} {totalLabel}
           </span>
           <div className="flex items-center gap-1">
             <button
               onClick={() => setCurrentPage(0)}
               disabled={currentPage === 0}
-              className="p-1.5 rounded text-[#6B7280] hover:text-[#F0F2F5] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              className="p-1.5 rounded text-muted hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
               title="Primera"
             >
               <ChevronsLeft size={14} />
@@ -613,7 +613,7 @@ export function DataTable({
             <button
               onClick={() => setCurrentPage(p => Math.max(0, p - 1))}
               disabled={currentPage === 0}
-              className="p-1.5 rounded text-[#6B7280] hover:text-[#F0F2F5] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              className="p-1.5 rounded text-muted hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
               title="Anterior"
             >
               <ChevronLeft size={14} />
@@ -637,8 +637,8 @@ export function DataTable({
                   className={cn(
                     'w-7 h-7 rounded text-xs font-medium transition-colors',
                     pg === currentPage
-                      ? 'bg-[#FF6600] text-white'
-                      : 'text-[#6B7280] hover:text-[#F0F2F5] hover:bg-[#1C2230]'
+                      ? 'bg-primary text-white'
+                      : 'text-muted hover:text-foreground hover:bg-card'
                   )}
                 >
                   {pg + 1}
@@ -648,7 +648,7 @@ export function DataTable({
             <button
               onClick={() => setCurrentPage(p => Math.min(totalPages - 1, p + 1))}
               disabled={currentPage >= totalPages - 1}
-              className="p-1.5 rounded text-[#6B7280] hover:text-[#F0F2F5] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              className="p-1.5 rounded text-muted hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
               title="Siguiente"
             >
               <ChevronRight size={14} />
@@ -656,7 +656,7 @@ export function DataTable({
             <button
               onClick={() => setCurrentPage(totalPages - 1)}
               disabled={currentPage >= totalPages - 1}
-              className="p-1.5 rounded text-[#6B7280] hover:text-[#F0F2F5] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              className="p-1.5 rounded text-muted hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
               title="Ultima"
             >
               <ChevronsRight size={14} />

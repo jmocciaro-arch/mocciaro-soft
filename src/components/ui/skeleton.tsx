@@ -11,7 +11,7 @@ export function Skeleton({ className, ...props }: React.HTMLAttributes<HTMLDivEl
   return (
     <div
       className={cn(
-        'animate-pulse rounded-md bg-[#1E2330]',
+        'animate-pulse rounded-md bg-border',
         className
       )}
       {...props}
@@ -26,7 +26,7 @@ export function SkeletonTableRows({ rows = 8, cols = 5 }: { rows?: number; cols?
   return (
     <div className="w-full space-y-2">
       {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} className="flex gap-4 px-4 py-3 border-b border-[#1E2330]">
+        <div key={i} className="flex gap-4 px-4 py-3 border-b border-border">
           {Array.from({ length: cols }).map((_, j) => (
             <Skeleton
               key={j}
@@ -51,7 +51,7 @@ export function SkeletonCardGrid({ cards = 6 }: { cards?: number }) {
       {Array.from({ length: cards }).map((_, i) => (
         <div
           key={i}
-          className="p-4 rounded-lg border border-[#1E2330] bg-[#141820] space-y-3"
+          className="p-4 rounded-lg border border-border bg-card space-y-3"
         >
           <Skeleton className="h-5 w-3/4" />
           <Skeleton className="h-3 w-1/2" />
@@ -74,7 +74,7 @@ export function SkeletonPage() {
       {/* KPIs row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="p-4 rounded-lg border border-[#1E2330] bg-[#141820]">
+          <div key={i} className="p-4 rounded-lg border border-border bg-card">
             <Skeleton className="h-3 w-20 mb-2" />
             <Skeleton className="h-8 w-24" />
           </div>

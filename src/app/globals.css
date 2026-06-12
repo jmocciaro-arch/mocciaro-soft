@@ -1,17 +1,92 @@
 @import "tailwindcss";
 
-@theme inline {
+/* @theme (sin inline): las utilities emiten var(--color-*) y los tokens se
+   pueden redefinir por data-theme en runtime. Con inline quedaban clavados al
+   hex de build y los temas dependían 100% del mapa de overrides !important. */
+@theme {
   --color-background: #0B0E13;
+  --color-surface: #0F1218;
   --color-foreground: #F0F2F5;
+  --color-foreground-soft: #D1D5DB;
   --color-card: #141820;
   --color-card-hover: #1A1F2E;
   --color-border: #1E2330;
   --color-border-hover: #2A3040;
+  --color-border-strong: #3A4050;
   --color-muted: #6B7280;
   --color-muted-light: #9CA3AF;
+  --color-hint: #4B5563;
   --color-primary: #FF6600;
   --color-primary-hover: #E55A00;
   --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   TOKENS POR TEMA — los valores calcan el mapa de overrides existente.
+   Los componentes migrados a tokens (components/ui) se adaptan solos;
+   el mapa de overrides sigue cubriendo las clases hex legacy.
+   ════════════════════════════════════════════════════════════════════ */
+html[data-theme="light"],
+html[data-theme="bright"] {
+  --color-background: #F2F2F2;
+  --color-surface: #FFFFFF;
+  --color-foreground: #1F2937;
+  --color-foreground-soft: #374151;
+  --color-card: #FFFFFF;
+  --color-card-hover: #F8F8F8;
+  --color-border: #E5E5E5;
+  --color-border-hover: #D1D5DB;
+  --color-border-strong: #C4C7CD;
+  --color-muted: #9CA3AF;
+  --color-muted-light: #6B7280;
+  --color-hint: #9CA3AF;
+}
+
+html[data-theme="gray"] {
+  --color-background: #2E3138;
+  --color-surface: #34373E;
+  --color-foreground: #F5F6F8;
+  --color-card: #3C3F46;
+  --color-card-hover: #444751;
+  --color-border: #4F525A;
+  --color-border-hover: #5C5F67;
+  --color-border-strong: #6C6F77;
+}
+
+html[data-theme="custom"] {
+  --color-background: var(--theme-bg, #0B0E13);
+  --color-surface: var(--theme-surface, #141820);
+  --color-foreground: var(--theme-text, #F0F2F5);
+  --color-foreground-soft: var(--theme-text, #F0F2F5);
+  --color-card: var(--theme-surface, #141820);
+  --color-card-hover: var(--theme-surface, #141820);
+  --color-border: var(--theme-border, #2A3040);
+  --color-border-hover: var(--theme-border, #2A3040);
+  --color-border-strong: var(--theme-border, #2A3040);
+  --color-muted: var(--theme-text-secondary, #9CA3AF);
+  --color-muted-light: var(--theme-text-secondary, #9CA3AF);
+  --color-primary: var(--theme-accent, #FF6600);
+  --color-primary-hover: var(--theme-accent, #FF6600);
+}
+
+/* En light y custom el header/sidebar/mobile-nav permanecen oscuros
+   (data-theme-scope="dark"): re-pineamos los tokens a la paleta dark para
+   que los componentes tokenizados dentro de esas zonas no se aclaren.
+   bright y gray aplican a toda la UI, sin excepción de zonas. */
+html[data-theme="light"] [data-theme-scope="dark"],
+html[data-theme="custom"] [data-theme-scope="dark"] {
+  --color-background: #0B0E13;
+  --color-surface: #0F1218;
+  --color-foreground: #F0F2F5;
+  --color-foreground-soft: #D1D5DB;
+  --color-card: #141820;
+  --color-card-hover: #1A1F2E;
+  --color-border: #1E2330;
+  --color-border-hover: #2A3040;
+  --color-border-strong: #3A4050;
+  --color-muted: #6B7280;
+  --color-muted-light: #9CA3AF;
+  --color-hint: #4B5563;
 }
 
 /* Base styles */

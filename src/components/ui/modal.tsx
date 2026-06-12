@@ -47,17 +47,17 @@ export function Modal({ isOpen, onClose, title, children, size = 'md', className
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
       <div
         className={cn(
-          'relative w-full bg-[#141820] border border-[#1E2330] rounded-xl sm:rounded-2xl shadow-2xl max-h-[95vh] sm:max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200',
+          'relative w-full bg-card border border-border rounded-xl sm:rounded-2xl shadow-2xl max-h-[95vh] sm:max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200',
           sizes[size],
           className
         )}
       >
         {title && (
-          <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-[#1E2330]">
-            <h2 className="text-base sm:text-lg font-semibold text-[#F0F2F5] truncate pr-2">{title}</h2>
+          <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-border">
+            <h2 className="text-base sm:text-lg font-semibold text-foreground truncate pr-2">{title}</h2>
             <button
               onClick={onClose}
-              className="p-2 rounded-lg hover:bg-[#1E2330] text-[#6B7280] hover:text-[#F0F2F5] transition-colors shrink-0"
+              className="p-2 rounded-lg hover:bg-border text-muted hover:text-foreground transition-colors shrink-0"
               aria-label="Cerrar"
             >
               <X size={18} />
