@@ -72,16 +72,16 @@ function ToastItem({ toast, onRemove }: { toast: Toast; onRemove: (id: string) =
   return (
     <div
       className={cn(
-        'flex items-start gap-3 p-4 rounded-lg bg-[#141820] border border-[#1E2330] border-l-4 shadow-xl animate-in slide-in-from-right duration-300',
+        'flex items-start gap-3 p-4 rounded-lg bg-card border border-border border-l-4 shadow-xl animate-in slide-in-from-right duration-300',
         borders[toast.type]
       )}
     >
       {icons[toast.type]}
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-[#F0F2F5]">{toast.title}</p>
-        {toast.message && <p className="text-xs text-[#6B7280] mt-0.5">{toast.message}</p>}
+        <p className="text-sm font-medium text-foreground">{toast.title}</p>
+        {toast.message && <p className="text-xs text-muted mt-0.5">{toast.message}</p>}
       </div>
-      <button onClick={() => onRemove(toast.id)} className="text-[#6B7280] hover:text-[#9CA3AF]">
+      <button onClick={() => onRemove(toast.id)} className="text-muted hover:text-muted-light">
         <X size={14} />
       </button>
     </div>

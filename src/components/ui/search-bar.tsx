@@ -48,7 +48,7 @@ export function SearchBar({
 
   return (
     <div className={cn('relative', className)}>
-      <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280]" />
+      <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
       <input
         type="text"
         value={value}
@@ -56,12 +56,12 @@ export function SearchBar({
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
         autoFocus={autoFocus}
-        className="w-full h-10 rounded-lg bg-[#1E2330] border border-[#2A3040] pl-10 pr-10 text-sm text-[#F0F2F5] placeholder:text-[#4B5563] focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 transition-all"
+        className="w-full h-10 rounded-lg bg-border border border-border-hover pl-10 pr-10 text-sm text-foreground placeholder:text-hint focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 transition-all"
       />
       {value && (
         <button
           onClick={handleClear}
-          className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6B7280] hover:text-[#9CA3AF]"
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-muted-light"
         >
           <X size={16} />
         </button>

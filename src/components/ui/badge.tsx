@@ -18,7 +18,7 @@ const variants = {
   warning: 'status-warning',
   danger:  'status-danger',
   info:    'status-info',
-  orange:  'bg-[#FF6600]/10 text-[#FF6600] border-[#FF6600]/30',
+  orange:  'bg-primary/10 text-primary border-primary/30',
 }
 
 export function Badge({ children, variant = 'default', size = 'sm', className }: BadgeProps) {

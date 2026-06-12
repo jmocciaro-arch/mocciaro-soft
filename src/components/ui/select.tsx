@@ -18,7 +18,7 @@ const Select = forwardRef<HTMLSelectElement, SelectProps>(
     return (
       <div className="w-full">
         {label && (
-          <label htmlFor={selectId} className="block text-sm font-medium text-[#9CA3AF] mb-1.5">
+          <label htmlFor={selectId} className="block text-sm font-medium text-muted-light mb-1.5">
             {label}
           </label>
         )}
@@ -27,7 +27,7 @@ const Select = forwardRef<HTMLSelectElement, SelectProps>(
             ref={ref}
             id={selectId}
             className={cn(
-              'w-full h-10 rounded-lg bg-[#1E2330] border border-[#2A3040] px-3 pr-10 text-sm text-[#F0F2F5] appearance-none',
+              'w-full h-10 rounded-lg bg-border border border-border-hover px-3 pr-10 text-sm text-foreground appearance-none',
               'focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50',
               'transition-all duration-200',
               error && 'border-red-500',
@@ -36,19 +36,19 @@ const Select = forwardRef<HTMLSelectElement, SelectProps>(
             {...props}
           >
             {placeholder && (
-              <option value="" className="text-[#4B5563]">
+              <option value="" className="text-hint">
                 {placeholder}
               </option>
             )}
             {options.map((opt) => (
-              <option key={opt.value} value={opt.value} className="bg-[#1E2330]">
+              <option key={opt.value} value={opt.value} className="bg-border">
                 {opt.label}
               </option>
             ))}
           </select>
           <ChevronDown
             size={16}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6B7280] pointer-events-none"
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none"
           />
         </div>
         {error && <p className="mt-1 text-xs text-red-400">{error}</p>}

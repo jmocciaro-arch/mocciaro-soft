@@ -50,7 +50,7 @@ export function Tabs({ tabs, defaultTab, onChange, children, className, urlParam
 
   return (
     <div className={cn(className)}>
-      <div className="flex gap-1 p-1 bg-[#0F1218] rounded-lg border border-[#1E2330] mb-4 overflow-x-auto scrollbar-hide">
+      <div className="flex gap-1 p-1 bg-surface rounded-lg border border-border mb-4 overflow-x-auto scrollbar-hide">
         {tabs.map((tab) => (
           <button
             key={tab.id}
@@ -58,14 +58,14 @@ export function Tabs({ tabs, defaultTab, onChange, children, className, urlParam
             className={cn(
               'flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap',
               activeTab === tab.id
-                ? 'bg-[#1E2330] text-[#FF6600] shadow-sm'
-                : 'text-[#6B7280] hover:text-[#9CA3AF]'
+                ? 'bg-border text-primary shadow-sm'
+                : 'text-muted hover:text-muted-light'
             )}
           >
             {tab.icon}
             {tab.label}
             {tab.badge !== undefined && tab.badge > 0 && (
-              <span className="ml-1 px-1.5 py-0.5 text-[10px] rounded-full bg-[#FF6600] text-white">
+              <span className="ml-1 px-1.5 py-0.5 text-[10px] rounded-full bg-primary text-white">
                 {tab.badge}
               </span>
             )}
