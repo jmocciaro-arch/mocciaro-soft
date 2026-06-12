@@ -2,15 +2,21 @@
 
 import { Suspense } from 'react'
 import { Tabs } from '@/components/ui/tabs'
-import { Loader2, Truck, Box, Package } from 'lucide-react'
+import { Loader2, Truck, Box, Package, Map, Coins } from 'lucide-react'
 import { usePermissions } from '@/hooks/use-permissions'
 import { EmptyState } from '@/components/ui/empty-state'
 import { PhysicalDataTab } from '@/components/comex/physical-data-tab'
 import { PackingTab } from '@/components/comex/packing-tab'
+import { CarriersTab } from '@/components/comex/carriers-tab'
+import { ZonesTab } from '@/components/comex/zones-tab'
+import { RatesTab } from '@/components/comex/rates-tab'
 
 const TABS = [
   { id: 'fisicos', label: 'Datos físicos', icon: <Package size={16} /> },
   { id: 'packing', label: 'Packing', icon: <Box size={16} /> },
+  { id: 'couriers', label: 'Couriers', icon: <Truck size={16} /> },
+  { id: 'zonas', label: 'Zonas', icon: <Map size={16} /> },
+  { id: 'tarifas', label: 'Tarifas', icon: <Coins size={16} /> },
 ]
 
 export default function ComexPage() {
@@ -41,6 +47,9 @@ export default function ComexPage() {
             <div className="mt-4">
               {tab === 'fisicos' && <PhysicalDataTab canManage={canManage} />}
               {tab === 'packing' && <PackingTab canManage={canManage} />}
+              {tab === 'couriers' && <CarriersTab canManage={canManage} />}
+              {tab === 'zonas' && <ZonesTab canManage={canManage} />}
+              {tab === 'tarifas' && <RatesTab canManage={canManage} />}
             </div>
           )}
         </Tabs>
