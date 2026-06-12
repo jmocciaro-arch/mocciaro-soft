@@ -44,7 +44,7 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     | 'total_subtotal'
     | 'docs_count'
   const order = (searchParams.get('order') || 'desc').toLowerCase() === 'asc'
-  const search = searchParams.get('q')?.trim()
+  const search = searchParams.get('q')?.trim().replace(/[,()*%]/g, ' ').trim()
 
   let query = admin
     .from('v_client_product_history')

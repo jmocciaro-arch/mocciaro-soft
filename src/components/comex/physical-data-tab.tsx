@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/components/ui/toast'
-import { Loader2, Search, Save, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Loader2, Search, Save, ChevronLeft, ChevronRight, Download, Upload } from 'lucide-react'
 
 interface Logistics {
   net_weight_kg: number | null
@@ -49,6 +49,8 @@ export function PhysicalDataTab({ canManage }: { canManage: boolean }) {
   const [dirty, setDirty] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [savingId, setSavingId] = useState<string | null>(null)
+  const [importing, setImporting] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   const load = useCallback(async (search: string, pg: number) => {
     setLoading(true)
@@ -113,21 +115,59 @@ export function PhysicalDataTab({ canManage }: { canManage: boolean }) {
     } finally { setSavingId(null) }
   }
 
+  // Import masivo: plantilla XLSX → POST multipart → resumen + recarga.
+  async function importExcel(file: File) {
+    setImporting(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch('/api/comex/product-logistics/import', { method: 'POST', body: fd })
+      const json = await res.json().catch(() => ({})) as { error?: string; updated?: number; unknown_skus?: number; invalid_rows?: string[] }
+      if (!res.ok) { addToast({ type: 'error', title: 'No se pudo importar', message: json.error }); return }
+      const extras = [
+        json.unknown_skus ? `${json.unknown_skus} SKUs no encontrados` : null,
+        json.invalid_rows?.length ? `${json.invalid_rows.length}+ filas con valores inválidos` : null,
+      ].filter(Boolean).join(' · ')
+      addToast({ type: extras ? 'warning' : 'success', title: `${json.updated ?? 0} productos actualizados`, message: extras || undefined })
+      await load(q, page)
+    } catch (e) {
+      addToast({ type: 'error', title: 'No se pudo conectar', message: (e as Error).message })
+    } finally {
+      setImporting(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+
   const lastPage = Math.max(0, Math.ceil(total / 30) - 1)
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        <div className="relative flex-1 max-w-md">
-          <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#6B7280]" />
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="relative flex-1 max-w-md min-w-[200px]">
+          <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
           <input
-            className="w-full bg-[#0F1218] border border-[#2A3040] rounded-lg pl-8 pr-3 py-2 text-sm text-[#F0F2F5] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#FF6600]"
+            className="w-full bg-surface border border-border-hover rounded-lg pl-8 pr-3 py-2 text-sm text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
             placeholder="Buscar por SKU o nombre…" value={q}
             onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') doSearch() }}
           />
         </div>
         <Button variant="secondary" onClick={doSearch}>Buscar</Button>
-        <span className="text-[11px] text-[#6B7280] ml-auto">{total.toLocaleString('es-AR')} productos</span>
+        {canManage && (
+          <>
+            <a href="/api/comex/product-logistics/template" download>
+              <Button variant="secondary"><Download size={14} /> Plantilla Excel</Button>
+            </a>
+            <Button variant="secondary" disabled={importing} onClick={() => fileRef.current?.click()}>
+              {importing ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+              {importing ? 'Importando…' : 'Importar Excel'}
+            </Button>
+            <input
+              ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; if (f) void importExcel(f) }}
+            />
+          </>
+        )}
+        <span className="text-[11px] text-muted ml-auto">{total.toLocaleString('es-AR')} productos</span>
       </div>
 
       {loading ? (
