@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
 import { PWAInit } from '@/components/pwa/pwa-init'
+import { SWRProvider } from '@/lib/swr-provider'
 
 const inter = Inter({
   subsets: ['latin'],
@@ -68,7 +69,9 @@ export default function RootLayout({
         />
       </head>
       <body className="min-h-screen bg-[#0B0E13] text-[#F0F2F5] antialiased">
-        {children}
+        <SWRProvider>
+          {children}
+        </SWRProvider>
         {/* Registro del Service Worker y componentes PWA globales */}
         <PWAInit />
       </body>

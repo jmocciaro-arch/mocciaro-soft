@@ -188,7 +188,7 @@ export function CompanySelector() {
   // If only 1 company, show static display
   if (companies.length === 1) {
     return (
-      <div className={cn(
+      <div data-testid="company-selector" className={cn(
         'flex items-center gap-2 px-3 py-1.5 rounded-lg border',
         activeColor.bg, activeColor.border,
       )}>
@@ -213,6 +213,7 @@ export function CompanySelector() {
       {/* Trigger button — píldora con color de marca de la empresa activa */}
       <button
         ref={triggerRef}
+        data-testid="company-selector"
         onClick={() => setOpen(!open)}
         className={cn(
           'flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all',

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { scoreLead } from '@/lib/ai/score-lead'
+import { requireAuth } from '@/lib/auth/require-admin'
+import { withCompanyFilter } from '@/lib/auth/with-company-filter'
 
 export const runtime = 'nodejs'
 
@@ -12,6 +14,9 @@ export const runtime = 'nodejs'
  */
 export async function POST(req: NextRequest) {
   try {
+    const auth = await requireAuth()
+    if (!auth.ok) return auth.response
+
     const body = await req.json()
     const { leadId, input, persist = true } = body
 
@@ -28,6 +33,19 @@ export async function POST(req: NextRequest) {
         process.env.SUPABASE_SERVICE_ROLE_KEY!,
         { auth: { persistSession: false } }
       )
+
+      // Validar que el lead pertenece a una company accesible
+      const guard = await withCompanyFilter()
+      if (!guard.ok) return guard.response
+      const { data: lead } = await supabase
+        .from('tt_leads')
+        .select('company_id')
+        .eq('id', leadId)
+        .maybeSingle()
+      if (!guard.assertAccess(lead?.company_id as string | undefined)) {
+        return NextResponse.json({ error: 'Sin acceso a este lead' }, { status: 403 })
+      }
+
       await supabase
         .from('tt_leads')
         .update({

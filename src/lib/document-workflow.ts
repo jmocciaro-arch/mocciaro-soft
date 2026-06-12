@@ -2,6 +2,13 @@
  * document-workflow.ts
  * Funciones server-side para transiciones de documentos en el pipeline:
  * Cotizacion -> Pedido -> Albaran/Remito -> Factura -> Cobro
+ *
+ * REFACTOR FASE 2 (2026-05-25): migrado 100% a tt_documents + tt_document_lines.
+ * Las tablas legacy (tt_quotes, tt_sales_orders, tt_delivery_notes, tt_invoices,
+ * tt_quote_items, tt_so_items, tt_dn_items, tt_invoice_items) ya no se usan.
+ *
+ * Mantenemos los parámetros `source` y `table` por compat con callers viejos,
+ * pero las funciones siempre operan sobre tt_documents.
  */
 
 import { createClient } from '@/lib/supabase/client'
@@ -18,7 +25,7 @@ export async function generateDocNumber(prefix: string): Promise<string> {
 
   let maxNum = 0
 
-  // Buscar en tt_documents
+  // Solo tt_documents (Fase 2 — legacy eliminado)
   const { data: docData } = await supabase
     .from('tt_documents')
     .select('system_code')
@@ -31,62 +38,6 @@ export async function generateDocNumber(prefix: string): Promise<string> {
     if (match) maxNum = parseInt(match[1])
   }
 
-  // Para COT, tambien chequear tt_quotes
-  if (prefix === 'COT') {
-    const { data: localQ } = await supabase
-      .from('tt_quotes')
-      .select('number')
-      .like('number', pattern)
-      .order('number', { ascending: false })
-      .limit(1)
-    if (localQ?.[0]) {
-      const m = (localQ[0].number as string).match(/(\d+)$/)
-      if (m) maxNum = Math.max(maxNum, parseInt(m[1]))
-    }
-  }
-
-  // Para PED, tambien chequear tt_sales_orders
-  if (prefix === 'PED') {
-    const { data: localSO } = await supabase
-      .from('tt_sales_orders')
-      .select('number')
-      .like('number', pattern)
-      .order('number', { ascending: false })
-      .limit(1)
-    if (localSO?.[0]) {
-      const m = (localSO[0].number as string).match(/(\d+)$/)
-      if (m) maxNum = Math.max(maxNum, parseInt(m[1]))
-    }
-  }
-
-  // Para REM, tambien chequear tt_delivery_notes
-  if (prefix === 'REM') {
-    const { data: localDN } = await supabase
-      .from('tt_delivery_notes')
-      .select('number')
-      .like('number', pattern)
-      .order('number', { ascending: false })
-      .limit(1)
-    if (localDN?.[0]) {
-      const m = (localDN[0].number as string).match(/(\d+)$/)
-      if (m) maxNum = Math.max(maxNum, parseInt(m[1]))
-    }
-  }
-
-  // Para FAC, tambien chequear tt_invoices
-  if (prefix === 'FAC') {
-    const { data: localInv } = await supabase
-      .from('tt_invoices')
-      .select('number')
-      .like('number', pattern)
-      .order('number', { ascending: false })
-      .limit(1)
-    if (localInv?.[0]) {
-      const m = (localInv[0].number as string).match(/(\d+)$/)
-      if (m) maxNum = Math.max(maxNum, parseInt(m[1]))
-    }
-  }
-
   return `${prefix}-${year}-${String(maxNum + 1).padStart(4, '0')}`
 }
 
@@ -96,14 +47,16 @@ export async function generateDocNumber(prefix: string): Promise<string> {
 export async function updateDocumentStatus(
   docId: string,
   newStatus: string,
-  table: 'tt_quotes' | 'tt_documents' | 'tt_sales_orders' | 'tt_delivery_notes' | 'tt_invoices'
+  // Param `table` mantenido por compat — ignorado. Siempre escribe a tt_documents.
+  _table?: 'tt_quotes' | 'tt_documents' | 'tt_sales_orders' | 'tt_delivery_notes' | 'tt_invoices'
 ): Promise<void> {
+  void _table
   const supabase = createClient()
   const updateData: Row = { status: newStatus }
   if (newStatus === 'closed' || newStatus === 'rejected') {
     updateData.closed_at = new Date().toISOString()
   }
-  const { error } = await supabase.from(table).update(updateData).eq('id', docId)
+  const { error } = await supabase.from('tt_documents').update(updateData).eq('id', docId)
   if (error) throw error
 
   await supabase.from('tt_activity_log').insert({
@@ -119,46 +72,43 @@ export async function updateDocumentStatus(
 // ---------------------------------------------------------------
 export async function quoteToOrder(
   quoteId: string,
-  source: 'local' | 'tt_documents',
-  // Cliente Supabase opcional. Para llamadas desde API routes pasar el server client
-  // (con cookies del user) para respetar RLS. Si no se pasa, usa el client del browser.
+  // Param `source` mantenido por compat — ignorado.
+  _source?: 'local' | 'tt_documents',
   supabaseClient?: ReturnType<typeof createClient>
 ): Promise<{ orderId: string; orderNumber: string }> {
+  void _source
   const supabase = supabaseClient ?? createClient()
 
-  // Idempotencia: si ya existe un pedido con este quote_id, devolvemos ese
-  // en lugar de crear un duplicado. Esto previene que doble-click o
-  // re-clicks accidentales generen pedidos PED-XXX duplicados.
+  // Idempotencia: si ya existe un pedido con metadata.quote_id = quoteId,
+  // devolverlo en lugar de crear duplicado.
   const { data: existingOrder } = await supabase
-    .from('tt_sales_orders')
-    .select('id, number')
-    .eq('quote_id', quoteId)
+    .from('tt_documents')
+    .select('id, system_code, display_ref')
+    .eq('doc_type', 'pedido')
+    .contains('metadata', { quote_id: quoteId })
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
   if (existingOrder?.id) {
     return {
       orderId: existingOrder.id as string,
-      orderNumber: (existingOrder.number as string) || '',
+      orderNumber: ((existingOrder.display_ref || existingOrder.system_code) as string) || '',
     }
   }
 
   const orderNumber = await generateDocNumber('PED')
 
-  let quoteData: Row | null = null
-  let quoteItems: Row[] = []
-
-  if (source === 'local') {
-    const { data: q } = await supabase.from('tt_quotes').select('*').eq('id', quoteId).single()
-    const { data: items } = await supabase.from('tt_quote_items').select('*').eq('quote_id', quoteId).order('sort_order')
-    quoteData = q
-    quoteItems = items || []
-  } else {
-    const { data: q } = await supabase.from('tt_documents').select('*').eq('id', quoteId).single()
-    const { data: items } = await supabase.from('tt_document_lines').select('*').eq('document_id', quoteId).order('sort_order')
-    quoteData = q
-    quoteItems = items || []
-  }
+  const { data: quoteData } = await supabase
+    .from('tt_documents')
+    .select('*')
+    .eq('id', quoteId)
+    .single()
+  const { data: items } = await supabase
+    .from('tt_document_lines')
+    .select('*')
+    .eq('document_id', quoteId)
+    .order('sort_order')
+  const quoteItems: Row[] = items || []
 
   if (!quoteData) throw new Error('Cotizacion no encontrada')
 
@@ -184,55 +134,61 @@ export async function quoteToOrder(
     throw new Error('Cotización sin company_id. No se puede generar pedido — cargá la cotización con empresa explícita.')
   }
 
-  // Crear pedido en tt_sales_orders (tabla local)
+  // Crear pedido en tt_documents
   const { data: order, error } = await supabase
-    .from('tt_sales_orders')
+    .from('tt_documents')
     .insert({
+      doc_type: 'pedido',
+      system_code: orderNumber,
+      display_ref: orderNumber,
       company_id: companyId,
       client_id: quoteData.client_id || null,
-      quote_id: source === 'local' ? quoteId : null,
-      number: orderNumber,
       currency: (quoteData.currency as string) || 'EUR',
       status: 'confirmado',
       subtotal: (quoteData.subtotal as number) || 0,
       tax_amount: (quoteData.tax_amount as number) || 0,
       total: (quoteData.total as number) || 0,
       notes: (quoteData.notes as string) || '',
+      metadata: { quote_id: quoteId },
     })
     .select()
     .single()
 
   if (error || !order) throw error || new Error('Error creando pedido')
 
-  // Copiar items
-  const soItems = quoteItems.map((item, idx) => ({
-    sales_order_id: order.id,
+  // Copiar items a tt_document_lines
+  const docLines = quoteItems.map((item, idx) => ({
+    document_id: order.id,
     product_id: item.product_id || null,
     description: (item.description as string) || '',
     sku: (item.sku as string) || '',
-    qty_ordered: (item.quantity as number) || (item.units as number) || 0,
-    unit_price: (item.unit_price as number) || (item.item_base_price as number) || 0,
-    discount_pct: (item.discount_pct as number) || (item.discount_percent as number) || 0,
-    subtotal: (item.subtotal as number) || (item.line_total as number) || 0,
+    quantity: (item.quantity as number) || 0,
+    unit_price: (item.unit_price as number) || 0,
+    discount_pct: (item.discount_pct as number) || 0,
+    subtotal: (item.subtotal as number) || 0,
     sort_order: idx,
   }))
 
-  let insertedSoItems: Row[] = []
-  if (soItems.length > 0) {
+  let insertedLines: Row[] = []
+  if (docLines.length > 0) {
     const { data: ins, error: insErr } = await supabase
-      .from('tt_so_items')
-      .insert(soItems)
+      .from('tt_document_lines')
+      .insert(docLines)
       .select()
     if (insErr) throw insErr
-    insertedSoItems = ins || []
+    insertedLines = ins || []
   }
+
+  // Vincular pedido ↔ cotización
+  await supabase.from('tt_document_relations').insert({
+    parent_id: quoteId, child_id: order.id, relation_type: 'quote_to_order',
+  })
 
   // ---------------------------------------------------------------
   // Reserva de stock: para cada item con product_id, registrar movimiento
   // 'reserve' y aumentar tt_stock.reserved.
   // ---------------------------------------------------------------
-  if (insertedSoItems.length > 0 && companyId) {
-    // Buscar warehouse primario de la company (primer activo)
+  if (insertedLines.length > 0 && companyId) {
     const { data: whs } = await supabase
       .from('tt_warehouses')
       .select('id')
@@ -243,12 +199,11 @@ export async function quoteToOrder(
     const primaryWarehouseId = (whs?.[0]?.id as string) || null
 
     if (primaryWarehouseId) {
-      for (const it of insertedSoItems) {
+      for (const it of insertedLines) {
         const productId = it.product_id as string | null
-        const qty = (it.qty_ordered as number) || 0
+        const qty = (it.quantity as number) || 0
         if (!productId || qty <= 0) continue
 
-        // Insertar movimiento de reserva
         await supabase.from('tt_stock_movements').insert({
           product_id: productId,
           warehouse_id: primaryWarehouseId,
@@ -259,7 +214,6 @@ export async function quoteToOrder(
           reference: `Reserva por pedido ${orderNumber}`,
         })
 
-        // Actualizar tt_stock.reserved (crear fila si no existe)
         const { data: stockRow } = await supabase
           .from('tt_stock')
           .select('id, reserved, quantity')
@@ -284,13 +238,8 @@ export async function quoteToOrder(
   }
 
   // Cerrar la cotizacion
-  if (source === 'local') {
-    await supabase.from('tt_quotes').update({ status: 'accepted' }).eq('id', quoteId)
-  } else {
-    await supabase.from('tt_documents').update({ status: 'closed' }).eq('id', quoteId)
-  }
+  await supabase.from('tt_documents').update({ status: 'closed' }).eq('id', quoteId)
 
-  // Log
   await supabase.from('tt_activity_log').insert({
     entity_type: 'document',
     entity_id: order.id as string,
@@ -315,31 +264,25 @@ export interface DeliveryItem {
 export async function orderToDeliveryNote(
   orderId: string,
   items: DeliveryItem[],
-  source: 'local' | 'tt_documents'
+  _source?: 'local' | 'tt_documents'
 ): Promise<{ deliveryNoteId: string; deliveryNoteNumber: string }> {
+  void _source
   const supabase = createClient()
   const dnNumber = await generateDocNumber('REM')
 
-  // Cargar datos del pedido
-  let orderData: Row | null = null
-  if (source === 'local') {
-    const { data } = await supabase.from('tt_sales_orders').select('*').eq('id', orderId).single()
-    orderData = data
-  } else {
-    const { data } = await supabase.from('tt_documents').select('*').eq('id', orderId).single()
-    orderData = data
-  }
+  const { data: orderData } = await supabase
+    .from('tt_documents')
+    .select('*')
+    .eq('id', orderId)
+    .single()
 
   if (!orderData) throw new Error('Pedido no encontrado')
 
-  // Calcular total del remito
   const totalDelivered = items.reduce((sum, it) => sum + it.toDeliver, 0)
   if (totalDelivered === 0) throw new Error('Selecciona al menos un item para entregar')
 
   // ---------------------------------------------------------------
-  // Pre-validacion de stock: para cada item con product_id, verificar
-  // que (quantity - reserved + reservado_por_este_pedido) >= toDeliver.
-  // El stock reservado por ESTE pedido cuenta como disponible para entregar.
+  // Pre-validacion de stock + lookup de product_ids
   // ---------------------------------------------------------------
   const companyId = orderData.company_id as string | null
   let primaryWarehouseId: string | null = null
@@ -354,18 +297,17 @@ export async function orderToDeliveryNote(
     primaryWarehouseId = (whs?.[0]?.id as string) || null
   }
 
-  // Cargar info de los so_items que se van a entregar para conocer product_id
-  const soItemIds = items.filter((it) => it.toDeliver > 0).map((it) => it.id)
-  const soItemsInfo = new Map<string, { product_id: string | null; qty_ordered: number; qty_delivered: number }>()
-  if (soItemIds.length > 0) {
-    const { data: soRows } = await supabase
-      .from('tt_so_items')
-      .select('id, product_id, qty_ordered, qty_delivered')
-      .in('id', soItemIds)
-    for (const r of (soRows || []) as Row[]) {
-      soItemsInfo.set(r.id as string, {
+  const lineIds = items.filter((it) => it.toDeliver > 0).map((it) => it.id)
+  const lineInfo = new Map<string, { product_id: string | null; quantity: number; qty_delivered: number }>()
+  if (lineIds.length > 0) {
+    const { data: linesRows } = await supabase
+      .from('tt_document_lines')
+      .select('id, product_id, quantity, qty_delivered')
+      .in('id', lineIds)
+    for (const r of (linesRows || []) as Row[]) {
+      lineInfo.set(r.id as string, {
         product_id: (r.product_id as string) || null,
-        qty_ordered: (r.qty_ordered as number) || 0,
+        quantity: (r.quantity as number) || 0,
         qty_delivered: (r.qty_delivered as number) || 0,
       })
     }
@@ -374,7 +316,7 @@ export async function orderToDeliveryNote(
   if (primaryWarehouseId) {
     for (const item of items) {
       if (item.toDeliver <= 0) continue
-      const info = soItemsInfo.get(item.id)
+      const info = lineInfo.get(item.id)
       const productId = info?.product_id || null
       if (!productId) continue
       const { data: stockRow } = await supabase
@@ -385,9 +327,7 @@ export async function orderToDeliveryNote(
         .maybeSingle()
       const onHand = (stockRow?.quantity as number) || 0
       const reserved = (stockRow?.reserved as number) || 0
-      // El stock reservado por este mismo pedido (qty_ordered - qty_delivered)
-      // ya esta contado en `reserved`. Lo agregamos como disponible para entregar.
-      const reservedByThisOrder = Math.max(0, (info?.qty_ordered || 0) - (info?.qty_delivered || 0))
+      const reservedByThisOrder = Math.max(0, (info?.quantity || 0) - (info?.qty_delivered || 0))
       const available = onHand - reserved + reservedByThisOrder
       if (available < item.toDeliver) {
         throw new Error(
@@ -397,43 +337,45 @@ export async function orderToDeliveryNote(
     }
   }
 
-  // Crear remito
+  // Crear remito en tt_documents
   const { data: dn, error } = await supabase
-    .from('tt_delivery_notes')
+    .from('tt_documents')
     .insert({
+      doc_type: 'albaran',
+      system_code: dnNumber,
+      display_ref: dnNumber,
       company_id: orderData.company_id || null,
       client_id: orderData.client_id,
-      sales_order_id: orderId,
-      number: dnNumber,
       status: 'pending',
       total: (orderData.total as number) || 0,
+      metadata: { sales_order_id: orderId },
     })
     .select()
     .single()
 
   if (error || !dn) throw error || new Error('Error creando remito')
 
-  // Crear items del remito y actualizar cantidades entregadas
+  // Crear líneas del remito + actualizar qty_delivered en líneas del pedido
   for (const item of items) {
     if (item.toDeliver > 0) {
-      const { data: dnItem } = await supabase
-        .from('tt_dn_items')
+      const { data: dnLine } = await supabase
+        .from('tt_document_lines')
         .insert({
-          delivery_note_id: dn.id,
-          so_item_id: item.id,
-          quantity: item.toDeliver,
+          document_id: dn.id,
           description: item.description,
+          quantity: item.toDeliver,
+          qty_delivered: item.toDeliver,
+          metadata: { source_line_id: item.id },
         })
         .select()
         .single()
-      // Actualizar qty_delivered en so_items
       await supabase
-        .from('tt_so_items')
+        .from('tt_document_lines')
         .update({ qty_delivered: item.delivered + item.toDeliver })
         .eq('id', item.id)
 
       // Movimiento de egress + descuento de stock + liberacion de reserva
-      const info = soItemsInfo.get(item.id)
+      const info = lineInfo.get(item.id)
       const productId = info?.product_id || null
       if (primaryWarehouseId && productId) {
         await supabase.from('tt_stock_movements').insert({
@@ -442,7 +384,7 @@ export async function orderToDeliveryNote(
           movement_type: 'egress',
           quantity: item.toDeliver,
           document_id: dn.id as string,
-          document_item_id: (dnItem?.id as string) || null,
+          document_item_id: (dnLine?.id as string) || null,
           reference: `Egreso por remito ${dnNumber}`,
         })
 
@@ -464,32 +406,26 @@ export async function orderToDeliveryNote(
     }
   }
 
-  // Verificar si todo fue entregado
-  const { data: soItemsCheck } = await supabase
-    .from('tt_so_items')
-    .select('qty_ordered, quantity, qty_delivered')
-    .eq('sales_order_id', orderId)
+  // Vincular albarán ↔ pedido
+  await supabase.from('tt_document_relations').insert({
+    parent_id: orderId, child_id: dn.id, relation_type: 'order_to_delivery',
+  })
 
-  const allDelivered = (soItemsCheck || []).every(
-    (it: Row) =>
-      ((it.qty_delivered as number) || 0) >=
-      ((it.qty_ordered as number) || (it.quantity as number) || 0)
+  // Verificar si todo fue entregado
+  const { data: linesCheck } = await supabase
+    .from('tt_document_lines')
+    .select('quantity, qty_delivered')
+    .eq('document_id', orderId)
+
+  const allDelivered = (linesCheck || []).every(
+    (it: Row) => ((it.qty_delivered as number) || 0) >= ((it.quantity as number) || 0)
   )
 
-  // Actualizar status del pedido
-  if (source === 'local') {
-    await supabase
-      .from('tt_sales_orders')
-      .update({ status: allDelivered ? 'fully_delivered' : 'partially_delivered' })
-      .eq('id', orderId)
-  } else {
-    await supabase
-      .from('tt_documents')
-      .update({ status: allDelivered ? 'fully_delivered' : 'partially_delivered' })
-      .eq('id', orderId)
-  }
+  await supabase
+    .from('tt_documents')
+    .update({ status: allDelivered ? 'fully_delivered' : 'partially_delivered' })
+    .eq('id', orderId)
 
-  // Log
   await supabase.from('tt_activity_log').insert({
     entity_type: 'document',
     entity_id: dn.id as string,
@@ -505,23 +441,21 @@ export async function orderToDeliveryNote(
 // ---------------------------------------------------------------
 export async function deliveryNoteToInvoice(
   deliveryNoteId: string,
-  source: 'local' | 'tt_documents'
+  _source?: 'local' | 'tt_documents'
 ): Promise<{ invoiceId: string; invoiceNumber: string }> {
+  void _source
   const supabase = createClient()
   const invNumber = await generateDocNumber('FAC')
 
-  let dnData: Row | null = null
-  if (source === 'local') {
-    const { data } = await supabase.from('tt_delivery_notes').select('*').eq('id', deliveryNoteId).single()
-    dnData = data
-  } else {
-    const { data } = await supabase.from('tt_documents').select('*').eq('id', deliveryNoteId).single()
-    dnData = data
-  }
+  const { data: dnData } = await supabase
+    .from('tt_documents')
+    .select('*')
+    .eq('id', deliveryNoteId)
+    .single()
 
   if (!dnData) throw new Error('Albaran no encontrado')
 
-  // Validar condiciones comerciales del cliente (payment_terms_days + payment_method)
+  // Validar condiciones comerciales del cliente
   const clientIdForCheck = dnData.client_id as string | null
   if (clientIdForCheck) {
     const { data: clientCheck } = await supabase
@@ -537,11 +471,12 @@ export async function deliveryNoteToInvoice(
     }
   }
 
-  // Buscar el pedido original para obtener montos
+  // Buscar el pedido original via tt_document_relations o metadata.sales_order_id
   let orderData: Row | null = null
-  const soId = dnData.sales_order_id as string | null
+  const metadata = (dnData.metadata as Row) || {}
+  const soId = (metadata.sales_order_id as string | null) || null
   if (soId) {
-    const { data } = await supabase.from('tt_sales_orders').select('*').eq('id', soId).single()
+    const { data } = await supabase.from('tt_documents').select('*').eq('id', soId).single()
     orderData = data
   }
 
@@ -549,35 +484,35 @@ export async function deliveryNoteToInvoice(
   const subtotal = (orderData?.subtotal as number) || total
   const taxAmount = (orderData?.tax_amount as number) || 0
 
-  // Crear factura
+  // Crear factura en tt_documents
   const { data: inv, error } = await supabase
-    .from('tt_invoices')
+    .from('tt_documents')
     .insert({
+      doc_type: 'factura',
+      system_code: invNumber,
+      display_ref: invNumber,
       company_id: dnData.company_id || null,
       client_id: dnData.client_id,
-      sales_order_id: soId,
-      delivery_note_id: deliveryNoteId,
-      number: invNumber,
-      type: 'sale',
       status: 'draft',
       currency: (orderData?.currency as string) || 'EUR',
       subtotal,
       tax_amount: taxAmount,
       total,
+      metadata: { sales_order_id: soId, delivery_note_id: deliveryNoteId },
     })
     .select()
     .single()
 
   if (error || !inv) throw error || new Error('Error creando factura')
 
-  // Cerrar albaran
-  if (source === 'local') {
-    await supabase.from('tt_delivery_notes').update({ status: 'closed' }).eq('id', deliveryNoteId)
-  } else {
-    await supabase.from('tt_documents').update({ status: 'closed' }).eq('id', deliveryNoteId)
-  }
+  // Vincular factura ↔ albarán
+  await supabase.from('tt_document_relations').insert({
+    parent_id: deliveryNoteId, child_id: inv.id, relation_type: 'delivery_to_invoice',
+  })
 
-  // Log
+  // Cerrar albaran
+  await supabase.from('tt_documents').update({ status: 'closed' }).eq('id', deliveryNoteId)
+
   await supabase.from('tt_activity_log').insert({
     entity_type: 'document',
     entity_id: inv.id as string,
@@ -593,47 +528,46 @@ export async function deliveryNoteToInvoice(
 // ---------------------------------------------------------------
 export async function orderToInvoice(
   orderId: string,
-  source: 'local' | 'tt_documents'
+  _source?: 'local' | 'tt_documents'
 ): Promise<{ invoiceId: string; invoiceNumber: string }> {
+  void _source
   const supabase = createClient()
   const invNumber = await generateDocNumber('FAC')
 
-  let orderData: Row | null = null
-  if (source === 'local') {
-    const { data } = await supabase.from('tt_sales_orders').select('*').eq('id', orderId).single()
-    orderData = data
-  } else {
-    const { data } = await supabase.from('tt_documents').select('*').eq('id', orderId).single()
-    orderData = data
-  }
+  const { data: orderData } = await supabase
+    .from('tt_documents')
+    .select('*')
+    .eq('id', orderId)
+    .single()
 
   if (!orderData) throw new Error('Pedido no encontrado')
 
   const { data: inv, error } = await supabase
-    .from('tt_invoices')
+    .from('tt_documents')
     .insert({
+      doc_type: 'factura',
+      system_code: invNumber,
+      display_ref: invNumber,
       company_id: orderData.company_id || null,
       client_id: orderData.client_id,
-      sales_order_id: orderId,
-      number: invNumber,
-      type: 'sale',
       status: 'draft',
       currency: (orderData.currency as string) || 'EUR',
       subtotal: (orderData.subtotal as number) || 0,
       tax_amount: (orderData.tax_amount as number) || 0,
       total: (orderData.total as number) || 0,
+      metadata: { sales_order_id: orderId },
     })
     .select()
     .single()
 
   if (error || !inv) throw error || new Error('Error creando factura')
 
-  // Actualizar status del pedido
-  if (source === 'local') {
-    await supabase.from('tt_sales_orders').update({ status: 'fully_invoiced' }).eq('id', orderId)
-  } else {
-    await supabase.from('tt_documents').update({ status: 'fully_invoiced' }).eq('id', orderId)
-  }
+  // Vincular factura ↔ pedido
+  await supabase.from('tt_document_relations').insert({
+    parent_id: orderId, child_id: inv.id, relation_type: 'order_to_invoice',
+  })
+
+  await supabase.from('tt_documents').update({ status: 'fully_invoiced' }).eq('id', orderId)
 
   await supabase.from('tt_activity_log').insert({
     entity_type: 'document',
@@ -646,7 +580,7 @@ export async function orderToInvoice(
 }
 
 // ---------------------------------------------------------------
-// Registrar cobro/pago
+// Registrar cobro/pago — siempre contra tt_documents (factura)
 // ---------------------------------------------------------------
 export async function registerPayment(
   invoiceId: string,
@@ -657,8 +591,11 @@ export async function registerPayment(
 ): Promise<{ paymentId: string }> {
   const supabase = createClient()
 
-  // Obtener datos de la factura
-  const { data: inv } = await supabase.from('tt_invoices').select('total, status').eq('id', invoiceId).single()
+  const { data: inv } = await supabase
+    .from('tt_documents')
+    .select('total, status')
+    .eq('id', invoiceId)
+    .single()
   if (!inv) throw new Error('Factura no encontrada')
 
   const { data: payment, error } = await supabase
@@ -666,10 +603,9 @@ export async function registerPayment(
     .insert({
       invoice_id: invoiceId,
       amount,
-      method,
-      reference: reference || null,
+      payment_method: method,
+      bank_reference: reference || null,
       payment_date: paymentDate || new Date().toISOString().split('T')[0],
-      status: 'completed',
     })
     .select()
     .single()
@@ -681,15 +617,18 @@ export async function registerPayment(
     .from('tt_payments')
     .select('amount')
     .eq('invoice_id', invoiceId)
-    .eq('status', 'completed')
 
   const totalPaid = (payments || []).reduce((sum: number, p: Row) => sum + ((p.amount as number) || 0), 0)
   const invTotal = (inv.total as number) || 0
-  const fullyPaid = totalPaid >= invTotal
+  const fullyPaid = totalPaid >= invTotal - 0.01
 
   await supabase
-    .from('tt_invoices')
-    .update({ status: fullyPaid ? 'paid' : 'partial' })
+    .from('tt_documents')
+    .update({
+      status: fullyPaid ? 'paid' : 'partial',
+      paid_amount: totalPaid,
+      payment_count: payments?.length || 0,
+    })
     .eq('id', invoiceId)
 
   await supabase.from('tt_activity_log').insert({

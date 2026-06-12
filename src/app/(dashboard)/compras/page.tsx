@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo, useRef, Suspense, type ReactNode } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -22,7 +23,14 @@ import { DocumentItemsTree, type DocumentItem } from '@/components/workflow/docu
 import { DocumentListCard } from '@/components/workflow/document-list-card'
 import { DocumentForm } from '@/components/workflow/document-form'
 import { documentToTableRow, localPOToRow, purchaseInvoiceToRow, mapStatus, extractClientName, extractDocRef } from '@/lib/document-helpers'
+import { generateDocNumber } from '@/lib/doc-numbering'
 import type { Supplier, SupplierContact, SupplierInteraction, PurchaseInvoice, PurchasePayment, PurchaseCreditNote, PurchaseCreditNoteItem } from '@/types'
+import { RecepcionesTab } from './_tabs/RecepcionesTab'
+import { PagosTab } from './_tabs/PagosTab'
+import { CalendarioPagosTab } from './_tabs/CalendarioPagosTab'
+import { PedidosCompraTab } from './_tabs/PedidosCompraTab'
+import { FacturasCompraTab } from './_tabs/FacturasCompraTab'
+import { AbonosTab } from './_tabs/AbonosTab'
 import { useCompanyFilter } from '@/hooks/use-company-filter'
 import {
   ShoppingCart, Plus, Package, Truck, CheckCircle, Clock,
@@ -156,12 +164,8 @@ function getDueDateColor(dueDate: string | null): string {
   return '#22C55E'                      // >7d - green
 }
 
-function generateInvoiceNumber(): string {
-  const now = new Date()
-  const y = now.getFullYear().toString().slice(-2)
-  const m = (now.getMonth() + 1).toString().padStart(2, '0')
-  const r = Math.floor(Math.random() * 9999).toString().padStart(4, '0')
-  return `FC-${y}${m}-${r}`
+async function generateInvoiceNumber(companyId?: string | null): Promise<string> {
+  return generateDocNumber('FC', companyId ?? null)
 }
 
 // Helper: build workflow steps for a purchase order
@@ -214,6 +218,43 @@ function buildPOWorkflow(po: Row): WorkflowStep[] {
 
 const countryFlags: Record<string, string> = { ES: '\u{1F1EA}\u{1F1F8}', AR: '\u{1F1E6}\u{1F1F7}', US: '\u{1F1FA}\u{1F1F8}', CL: '\u{1F1E8}\u{1F1F1}', UY: '\u{1F1FA}\u{1F1FE}', BR: '\u{1F1E7}\u{1F1F7}', MX: '\u{1F1F2}\u{1F1FD}', CO: '\u{1F1E8}\u{1F1F4}', DE: '\u{1F1E9}\u{1F1EA}', FR: '\u{1F1EB}\u{1F1F7}', IT: '\u{1F1EE}\u{1F1F9}', GB: '\u{1F1EC}\u{1F1E7}', CN: '\u{1F1E8}\u{1F1F3}', JP: '\u{1F1EF}\u{1F1F5}', TW: '\u{1F1F9}\u{1F1FC}', KR: '\u{1F1F0}\u{1F1F7}', PT: '\u{1F1F5}\u{1F1F9}' }
 const countryNames: Record<string, string> = { ES: 'Espana', AR: 'Argentina', US: 'Estados Unidos', CL: 'Chile', UY: 'Uruguay', BR: 'Brasil', MX: 'Mexico', CO: 'Colombia', DE: 'Alemania', FR: 'Francia', IT: 'Italia', GB: 'Reino Unido', CN: 'China', JP: 'Japon', TW: 'Taiwan', KR: 'Corea del Sur', PT: 'Portugal' }
+
+// Estados miembros de la UE distintos de ES (operaciones intracomunitarias).
+const EU_INTRACOM_COUNTRIES = new Set([
+  'DE', 'FR', 'IT', 'PT', 'NL', 'BE', 'AT', 'IE', 'FI', 'SE', 'DK',
+  'PL', 'CZ', 'GR', 'HU', 'LU', 'RO', 'SK', 'SI', 'BG', 'HR', 'CY',
+  'EE', 'LT', 'LV', 'MT',
+])
+
+// Normaliza el country del proveedor (puede venir como 'ES', 'Espana', 'Spain', etc.)
+function normalizeCountryToCode(country: string | null | undefined): string | null {
+  if (!country) return null
+  const trimmed = country.trim()
+  if (!trimmed) return null
+  // Si ya es codigo ISO de 2 letras
+  if (trimmed.length === 2) return trimmed.toUpperCase()
+  // Buscar en countryNames por nombre
+  const upper = trimmed.toUpperCase()
+  for (const [code, name] of Object.entries(countryNames)) {
+    if (name.toUpperCase() === upper) return code
+  }
+  // Heuristicas adicionales para nombres en ingles
+  const en: Record<string, string> = {
+    'SPAIN': 'ES', 'GERMANY': 'DE', 'FRANCE': 'FR', 'ITALY': 'IT', 'PORTUGAL': 'PT',
+    'NETHERLANDS': 'NL', 'BELGIUM': 'BE', 'AUSTRIA': 'AT', 'IRELAND': 'IE',
+    'FINLAND': 'FI', 'SWEDEN': 'SE', 'DENMARK': 'DK', 'POLAND': 'PL',
+    'CZECH REPUBLIC': 'CZ', 'GREECE': 'GR', 'HUNGARY': 'HU', 'LUXEMBOURG': 'LU',
+    'ROMANIA': 'RO', 'SLOVAKIA': 'SK', 'SLOVENIA': 'SI', 'BULGARIA': 'BG',
+    'CROATIA': 'HR', 'CYPRUS': 'CY', 'ESTONIA': 'EE', 'LITHUANIA': 'LT',
+    'LATVIA': 'LV', 'MALTA': 'MT',
+  }
+  return en[upper] || null
+}
+
+function isEUIntracomCountry(country: string | null | undefined): boolean {
+  const code = normalizeCountryToCode(country)
+  return !!code && EU_INTRACOM_COUNTRIES.has(code)
+}
 
 // ===============================================================
 // PAYMENT ALERTS CHECKER
@@ -318,6 +359,7 @@ function SupplierDetail({ supplier: supplierProp, onClose, onUpdate }: {
 }) {
   const { addToast } = useToast()
   const supabase = createClient()
+  const router = useRouter()
   const [supplier, setSupplier] = useState<Supplier>(supplierProp)
   const [activeDetailTab, setActiveDetailTab] = useState('datos')
   const [editing, setEditing] = useState(false)
@@ -915,11 +957,11 @@ function SupplierDetail({ supplier: supplierProp, onClose, onUpdate }: {
                       <DocumentListCard
                         key={po.id as string} type="pap"
                         systemCode={`PAP-${(po.id as string).slice(0, 8).toUpperCase()}`}
-                        clientName={(po.supplier_name as string) || 'Sin proveedor'}
+                        clientName={getSupplierName(po as Row)}
                         date={po.created_at ? formatDate(po.created_at as string) : '-'}
                         total={(po.total as number) || 0} currency="EUR"
                         status={st} statusLabel={PO_STATUS[st]?.label || st}
-                        onClick={() => {}}
+                        onClick={() => router.push(`/documentos/${po.id as string}`)}
                       />
                     )
                   })}
@@ -1428,6 +1470,7 @@ function SupplierInfoField({ label, value, mono }: { label: string; value: strin
 function ProveedoresTab() {
   const supabase = createClient()
   const { addToast } = useToast()
+  const { filterByCompany, companyKey } = useCompanyFilter()
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -1444,18 +1487,32 @@ function ProveedoresTab() {
     po_count: number; po_open: number; po_pending_delivery: number; invoices_count: number
     payments_count: number; oldest_unpaid: string | null; receipts_count: number
   }>>({})
+  const [withContactsCount, setWithContactsCount] = useState(0)
 
   const load = useCallback(async () => {
     setLoading(true)
     const sb = createClient()
-    const { data } = await sb.from('tt_suppliers').select('*').eq('active', true).order('name')
+    // tt_suppliers tiene company_id (migración v52). Filtramos por las
+    // companies activas del usuario para no mezclar proveedores entre orgs.
+    let q = sb.from('tt_suppliers').select('*').eq('active', true).order('name')
+    q = filterByCompany(q)
+    const { data } = await q
     const list = (data || []) as Supplier[]
     setSuppliers(list)
     const uniqueCountries = [...new Set(list.map(s => s.country).filter(Boolean) as string[])]
     uniqueCountries.sort()
     setCountries(uniqueCountries)
+    // KPI: proveedores con al menos un contacto (solo de los proveedores visibles)
+    const visibleSupplierIds = list.map(s => s.id)
+    if (visibleSupplierIds.length > 0) {
+      const { data: contactsData } = await sb.from('tt_supplier_contacts').select('supplier_id').in('supplier_id', visibleSupplierIds)
+      const uniqueSupplierIds = new Set((contactsData || []).map(c => c.supplier_id as string).filter(Boolean))
+      setWithContactsCount(uniqueSupplierIds.size)
+    } else {
+      setWithContactsCount(0)
+    }
     setLoading(false)
-  }, [])
+  }, [companyKey])
 
   useEffect(() => { load() }, [load])
 
@@ -1622,7 +1679,7 @@ function ProveedoresTab() {
         <KPICard label="Proveedores" value={filtered.length} icon={<Building2 size={22} />} />
         <KPICard label="Paises" value={countries.length} icon={<Globe size={22} />} />
         <KPICard label="Fabricantes" value={suppliers.filter(s => s.category === 'fabricante').length} icon={<Package size={22} />} color="#10B981" />
-        <KPICard label="Con contactos" value={0} icon={<Contact size={22} />} />
+        <KPICard label="Con contactos" value={withContactsCount} icon={<Contact size={22} />} />
       </div>
       <div className="flex justify-end gap-2">
         {/* View mode toggle */}
@@ -1777,1045 +1834,22 @@ function ProveedoresTab() {
 // ===============================================================
 // PEDIDOS COMPRA TAB
 // ===============================================================
-function PedidosCompraTab() {
-  const { filterByCompany, companyKey } = useCompanyFilter()
-  const supabase = createClient()
-  const { addToast } = useToast()
-  const [orders, setOrders] = useState<Row[]>([])
-  const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState('')
-  const [showCreate, setShowCreate] = useState(false)
-  const [showReceive, setShowReceive] = useState(false)
-  const [selectedPO, setSelectedPO] = useState<Row | null>(null)
-  const [poItems, setPOItems] = useState<Row[]>([])
-  const [supplier, setSupplier] = useState('')
-  const [notesText, setNotesText] = useState('')
-  const [lines, setLines] = useState<Array<{ product_id: string; name: string; quantity: number; unit_cost: number }>>([])
-  const [products, setProducts] = useState<Array<Row>>([])
-  const [saving, setSaving] = useState(false)
-  const [rcvLines, setRcvLines] = useState<Array<{ id: string; desc: string; ordered: number; received: number; toReceive: number }>>([])
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    const sb = createClient()
-    // Load from tt_documents (StelOrder historical PAPs)
-    let qDoc = sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name)')
-      .eq('doc_type', 'pap')
-      .order('created_at', { ascending: false })
-      .range(0, 99)
-    qDoc = filterByCompany(qDoc)
-    if (statusFilter) qDoc = qDoc.eq('status', statusFilter)
-    if (search) qDoc = qDoc.or(`display_ref.ilike.%${search}%,system_code.ilike.%${search}%`)
-    const { data: docData } = await qDoc
-
-    // Also load from tt_purchase_orders (locally created). JOIN a tt_suppliers
-    // para mostrar el nombre real cuando supplier_id está vinculado.
-    let qLocal = sb.from('tt_purchase_orders')
-      .select('*, supplier:tt_suppliers(id, name, legal_name)')
-      .order('created_at', { ascending: false })
-    qLocal = filterByCompany(qLocal)
-    if (statusFilter) qLocal = qLocal.eq('status', statusFilter)
-    if (search) qLocal = qLocal.ilike('supplier_name', `%${search}%`)
-    const { data: localData } = await qLocal
-
-    const localMapped = (localData || []).map((o: Row) => ({
-      ...o, _source: 'local' as const,
-      supplier_name: getSupplierName(o),
-    }))
-    const docMapped = (docData || []).map((d: Row) => ({
-      ...d, _source: 'tt_documents' as const,
-      supplier_name: getClientName(d),
-    }))
-    setOrders([...localMapped, ...docMapped])
-    setLoading(false)
-  }, [statusFilter, search, companyKey])
-
-  useEffect(() => { load() }, [load])
-
-  const loadProducts = async () => {
-    const { data } = await supabase.from('tt_products').select('id, sku, name, cost_eur').order('name').limit(500)
-    setProducts(data || [])
-  }
-
-  const handleCreate = async () => {
-    if (!supplier.trim() || lines.length === 0) { addToast({ type: 'warning', title: 'Completa los datos' }); return }
-    setSaving(true)
-    const total = lines.reduce((s, l) => s + l.quantity * l.unit_cost, 0)
-    const { data: po, error } = await supabase.from('tt_purchase_orders').insert({ supplier_name: supplier, status: 'draft', total, notes: notesText }).select().single()
-    if (error || !po) { addToast({ type: 'error', title: 'Error', message: error?.message }); setSaving(false); return }
-    const items = lines.map((l, i) => ({ purchase_order_id: po.id, product_id: l.product_id || null, description: l.name, quantity: l.quantity, unit_cost: l.unit_cost, qty_received: 0, line_total: l.quantity * l.unit_cost, sort_order: i }))
-    await supabase.from('tt_po_items').insert(items)
-    addToast({ type: 'success', title: 'OC creada' })
-    setShowCreate(false); setSupplier(''); setNotesText(''); setLines([]); load(); setSaving(false)
-  }
-
-  const openDetail = async (po: Row) => {
-    setSelectedPO(po)
-    if ((po as Row & { _source?: string })._source === 'tt_documents') {
-      const { data } = await supabase.from('tt_document_lines').select('*').eq('document_id', po.id).order('sort_order')
-      setPOItems(data || [])
-    } else {
-      const { data } = await supabase.from('tt_po_items').select('*').eq('purchase_order_id', po.id).order('sort_order')
-      setPOItems(data || [])
-    }
-  }
-
-  const openReceive = async (po: Row) => {
-    setSelectedPO(po)
-    const { data } = await supabase.from('tt_po_items').select('*').eq('purchase_order_id', po.id).order('sort_order')
-    setRcvLines((data || []).map((it: Row) => ({ id: it.id as string, desc: (it.description || '') as string, ordered: (it.quantity || 0) as number, received: (it.qty_received || 0) as number, toReceive: 0 })))
-    setShowReceive(true)
-  }
-
-  const handleReceive = async () => {
-    if (!selectedPO) return
-    for (const l of rcvLines) { if (l.toReceive > 0) { await supabase.from('tt_po_items').update({ qty_received: l.received + l.toReceive }).eq('id', l.id) } }
-    const { data: items } = await supabase.from('tt_po_items').select('quantity, qty_received').eq('purchase_order_id', selectedPO.id)
-    const allDone = (items || []).every((i: Row) => (i.qty_received as number) >= (i.quantity as number))
-    const someDone = (items || []).some((i: Row) => (i.qty_received as number) > 0)
-    const st = allDone ? 'received' : someDone ? 'partial' : (selectedPO.status as string)
-    await supabase.from('tt_purchase_orders').update({ status: st }).eq('id', selectedPO.id)
-    addToast({ type: 'success', title: 'Recepcion registrada' })
-    setShowReceive(false); setSelectedPO(null); load()
-  }
-
-  const changeStatus = async (id: string, st: string) => {
-    await supabase.from('tt_purchase_orders').update({ status: st }).eq('id', id)
-    addToast({ type: 'success', title: 'Estado actualizado' })
-    setSelectedPO(null); load()
-  }
-
-  // Build DataTable rows (must be before any conditional return — hooks rule)
-  const tableRows = useMemo(() => {
-    return orders.map((po) => {
-      const isDoc = (po as Row & { _source?: string })._source === 'tt_documents'
-      if (isDoc) {
-        const r = documentToTableRow(po)
-        r.proveedor = r.cliente
-        r._raw = po
-        return r
-      }
-      return localPOToRow(po)
-    })
-  }, [orders])
-
-  const PO_TABLE_COLS: DataTableColumn[] = [
-    { key: 'referencia', label: 'Referencia', sortable: true, searchable: true, width: '140px' },
-    { key: 'proveedor', label: 'Proveedor', sortable: true, searchable: true },
-    { key: 'titulo', label: 'Titulo', searchable: true },
-    { key: 'estado', label: 'Estado', sortable: true, type: 'status', width: '120px' },
-    { key: 'fecha', label: 'Fecha', sortable: true, type: 'date', width: '110px' },
-    { key: 'importe', label: 'Importe', sortable: true, type: 'currency', width: '120px' },
-  ]
-
-  const handleRowClick = (row: Record<string, unknown>) => {
-    const po = row._raw as Row
-    openDetail(po)
-  }
-
-  // Conditional detail view (after all hooks to avoid "fewer hooks" error)
-  if (selectedPO && !showReceive) {
-    const src = (selectedPO as Row & { _source?: string })._source === 'tt_documents' ? 'tt_documents' : 'local' as const
-    const allIds = orders.map(o => o.id as string)
-    return (
-      <DocumentForm
-        documentId={selectedPO.id as string}
-        documentType="pap"
-        source={src}
-        onBack={() => { setSelectedPO(null); load() }}
-        onUpdate={load}
-        siblingIds={allIds}
-      />
-    )
-  }
-
-  return (
-    <div className="space-y-4">
-      <DataTable
-        data={tableRows}
-        columns={PO_TABLE_COLS}
-        loading={loading}
-        totalLabel="ordenes de compra"
-        showTotals
-        onRowClick={handleRowClick}
-        onNewClick={() => { setShowCreate(true); loadProducts() }}
-        newLabel="Nueva OC"
-        exportFilename="ordenes_compra_torquetools"
-        pageSize={25}
-      />
-      <Modal isOpen={showCreate} onClose={() => setShowCreate(false)} title="Nueva Orden de Compra" size="xl">
-        <div className="space-y-4">
-          <Input label="Proveedor" value={supplier} onChange={(e) => setSupplier(e.target.value)} placeholder="Nombre del proveedor" />
-          <div>
-            <div className="flex items-center justify-between mb-2"><span className="text-sm font-medium text-[#9CA3AF]">Productos</span><Button variant="ghost" size="sm" onClick={() => setLines([...lines, { product_id: '', name: '', quantity: 1, unit_cost: 0 }])}><Plus size={14} /> Agregar</Button></div>
-            {lines.map((l, i) => (
-              <div key={i} className="flex gap-2 mb-2 items-end">
-                <div className="flex-1"><Select options={products.map(p => ({ value: p.id as string, label: `${p.sku || ''} - ${p.name}` }))} value={l.product_id} onChange={(e) => { const u = [...lines]; const p = products.find(pr => pr.id === e.target.value); if (p) { u[i] = { ...u[i], product_id: p.id as string, name: (p.name || '') as string, unit_cost: (p.cost_eur || 0) as number } }; setLines(u) }} placeholder="Producto" /></div>
-                <Input type="number" value={l.quantity} onChange={(e) => { const u = [...lines]; u[i].quantity = Number(e.target.value); setLines(u) }} className="w-20" />
-                <Input type="number" value={l.unit_cost} onChange={(e) => { const u = [...lines]; u[i].unit_cost = Number(e.target.value); setLines(u) }} className="w-28" />
-                <Button variant="ghost" size="sm" onClick={() => setLines(lines.filter((_, idx) => idx !== i))}><X size={14} /></Button>
-              </div>
-            ))}
-          </div>
-          <Input label="Notas" value={notesText} onChange={(e) => setNotesText(e.target.value)} placeholder="Observaciones..." />
-          <div className="flex justify-end gap-3 pt-4 border-t border-[#1E2330]"><Button variant="secondary" onClick={() => setShowCreate(false)}>Cancelar</Button><Button onClick={handleCreate} loading={saving}>Crear OC</Button></div>
-        </div>
-      </Modal>
-      <Modal isOpen={showReceive} onClose={() => setShowReceive(false)} title="Recepcion de Mercaderia" size="lg">
-        <div className="space-y-4">
-          <p className="text-sm text-[#6B7280]">Ingresa las cantidades recibidas para cada producto</p>
-          {rcvLines.map((l, i) => (
-            <div key={l.id} className="flex items-center gap-3 p-3 rounded-lg bg-[#0F1218]">
-              <div className="flex-1"><p className="text-sm text-[#F0F2F5]">{l.desc}</p><p className="text-xs text-[#6B7280]">Pedido: {l.ordered} | Recibido: {l.received} | Pend: {l.ordered - l.received}</p></div>
-              <Input type="number" value={l.toReceive} onChange={(e) => { const u = [...rcvLines]; u[i].toReceive = Math.max(0, Math.min(Number(e.target.value), l.ordered - l.received)); setRcvLines(u) }} className="w-24" />
-            </div>
-          ))}
-          <div className="flex justify-end gap-3 pt-4 border-t border-[#1E2330]"><Button variant="secondary" onClick={() => setShowReceive(false)}>Cancelar</Button><Button onClick={handleReceive}><CheckCircle size={16} /> Confirmar</Button></div>
-        </div>
-      </Modal>
-    </div>
-  )
-}
 
 // ===============================================================
 // RECEPCIONES TAB
 // ===============================================================
-function RecepcionesTab() {
-  const supabase = createClient()
-  const [rows, setRows] = useState<Record<string, unknown>[]>([])
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    (async () => {
-      setLoading(true)
-      const [{ data: docData }, { data: localData }] = await Promise.all([
-        supabase.from('tt_documents').select('*, client:tt_clients(id, name, legal_name)').eq('doc_type', 'recepcion').order('created_at', { ascending: false }).range(0, 499),
-        supabase.from('tt_purchase_orders').select('*').in('status', ['partial', 'received']).order('updated_at', { ascending: false }),
-      ])
-
-      const localRows = (localData || []).map((r: Row) => ({
-        id: r.id,
-        referencia: `REC-${(r.id as string).slice(0, 8).toUpperCase()}`,
-        proveedor: (r.supplier_name as string) || 'Sin proveedor',
-        estado: mapStatus(r.status as string),
-        fecha: r.updated_at || r.created_at,
-        importe: (r.total as number) || 0,
-        _raw: r,
-        _source: 'local',
-      }))
-      const docRows = (docData || []).map((d: Row) => {
-        const r = documentToTableRow(d)
-        r.proveedor = r.cliente
-        return r
-      })
-      setRows([...localRows, ...docRows])
-      setLoading(false)
-    })()
-  }, [])
-
-  const REC_COLS: DataTableColumn[] = [
-    { key: 'referencia', label: 'Referencia', sortable: true, searchable: true, width: '140px' },
-    { key: 'proveedor', label: 'Proveedor', sortable: true, searchable: true },
-    { key: 'estado', label: 'Estado', sortable: true, type: 'status', width: '120px' },
-    { key: 'fecha', label: 'Fecha', sortable: true, type: 'date', width: '110px' },
-    { key: 'importe', label: 'Importe', sortable: true, type: 'currency', width: '120px' },
-  ]
-
-  return (
-    <DataTable
-      data={rows}
-      columns={REC_COLS}
-      loading={loading}
-      totalLabel="recepciones"
-      showTotals
-      exportFilename="recepciones_torquetools"
-      pageSize={25}
-    />
-  )
-}
 
 // ===============================================================
 // FACTURAS COMPRA TAB (ENHANCED)
 // ===============================================================
-function FacturasCompraTab() {
-  const supabase = createClient()
-  const { addToast } = useToast()
-  const [invoices, setInvoices] = useState<PurchaseInvoice[]>([])
-  const [suppliers, setSuppliers] = useState<Supplier[]>([])
-  const [purchaseOrders, setPurchaseOrders] = useState<Row[]>([])
-  const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState('')
-  const [showCreate, setShowCreate] = useState(false)
-  const [showPayment, setShowPayment] = useState(false)
-  const [selectedInvoice, setSelectedInvoice] = useState<PurchaseInvoice | null>(null)
-  const [saving, setSaving] = useState(false)
-  const [newInv, setNewInv] = useState({ supplier_id: '', purchase_order_id: '', supplier_invoice_number: '', supplier_invoice_date: '', subtotal: 0, tax_rate: 21, due_date: '', notes: '' })
-  const [newPay, setNewPay] = useState({ amount: 0, payment_date: new Date().toISOString().split('T')[0], payment_method: 'transferencia', bank_reference: '', bank_account: '', notes: '' })
-  const [invoicePayments, setInvoicePayments] = useState<PurchasePayment[]>([])
-
-  // Historical purchase invoices from tt_documents
-  const [histDocs, setHistDocs] = useState<Row[]>([])
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    const sb = createClient()
-    const { data } = await sb
-      .from('tt_purchase_invoices')
-      .select('*, supplier:tt_suppliers(id, name, legal_name)')
-      .order('created_at', { ascending: false })
-    setInvoices((data || []) as PurchaseInvoice[])
-
-    // Also load historical from tt_documents
-    const { data: docData } = await sb.from('tt_documents').select('*, client:tt_clients(id, name, legal_name)')
-      .eq('doc_type', 'factura_compra')
-      .order('created_at', { ascending: false })
-      .range(0, 99)
-    setHistDocs(docData || [])
-
-    setLoading(false)
-  }, [])
-
-  useEffect(() => { load(); checkPaymentAlerts() }, [load])
-
-  const loadSuppliers = async () => {
-    const { data } = await supabase.from('tt_suppliers').select('id, name, legal_name').eq('active', true).order('name')
-    setSuppliers((data || []) as Supplier[])
-  }
-
-  const loadPOs = async () => {
-    // JOIN a tt_suppliers para que el dropdown "OC vinculada" muestre el
-    // nombre correcto en lugar de "Sin proveedor".
-    const { data } = await supabase.from('tt_purchase_orders')
-      .select('id, supplier_name, total, status, supplier:tt_suppliers(id, name, legal_name)')
-      .order('created_at', { ascending: false })
-      .limit(50)
-    setPurchaseOrders((data || []).map((po) => ({
-      ...po,
-      supplier_name: getSupplierName(po as Row),
-    })))
-  }
-
-  const filtered = useMemo(() => {
-    let result = invoices
-    if (statusFilter) {
-      result = result.filter(inv => {
-        const ds = getInvoiceDisplayStatus(inv)
-        return ds === statusFilter
-      })
-    }
-    if (search.trim()) {
-      const tokens = search.trim().toLowerCase().split(/\s+/)
-      result = result.filter(inv => {
-        const sName = (inv.supplier as Supplier | undefined)?.name || ''
-        const searchable = [inv.number, sName, inv.supplier_invoice_number, inv.notes].filter(Boolean).join(' ').toLowerCase()
-        return tokens.every(t => searchable.includes(t))
-      })
-    }
-    return result
-  }, [invoices, search, statusFilter])
-
-  const totalPending = filtered.filter(i => i.status !== 'paid').reduce((s, i) => s + i.total, 0)
-  const dueThisWeek = filtered.filter(i => {
-    if (i.status === 'paid' || !i.due_date) return false
-    const due = new Date(i.due_date)
-    const now = new Date()
-    const in7 = new Date(Date.now() + 7 * 86400000)
-    return due >= now && due <= in7
-  }).length
-  const overdueAmount = filtered.filter(i => {
-    if (i.status === 'paid' || !i.due_date) return false
-    return new Date(i.due_date) < new Date()
-  }).reduce((s, i) => s + i.total, 0)
-
-  async function handleCreateInvoice() {
-    if (!newInv.supplier_id) { addToast({ type: 'error', title: 'Selecciona un proveedor' }); return }
-    setSaving(true)
-    const taxAmount = newInv.subtotal * newInv.tax_rate / 100
-    const total = newInv.subtotal + taxAmount
-    const { error } = await supabase.from('tt_purchase_invoices').insert({
-      number: generateInvoiceNumber(),
-      supplier_id: newInv.supplier_id,
-      purchase_order_id: newInv.purchase_order_id || null,
-      supplier_invoice_number: newInv.supplier_invoice_number || null,
-      supplier_invoice_date: newInv.supplier_invoice_date || null,
-      subtotal: newInv.subtotal,
-      tax_rate: newInv.tax_rate,
-      tax_amount: taxAmount,
-      total,
-      due_date: newInv.due_date || null,
-      notes: newInv.notes || null,
-      status: 'pending',
-    })
-    if (!error) {
-      addToast({ type: 'success', title: 'Factura registrada' })
-      setShowCreate(false)
-      setNewInv({ supplier_id: '', purchase_order_id: '', supplier_invoice_number: '', supplier_invoice_date: '', subtotal: 0, tax_rate: 21, due_date: '', notes: '' })
-      load()
-    } else { addToast({ type: 'error', title: 'Error', message: error.message }) }
-    setSaving(false)
-  }
-
-  async function openInvoiceDetail(inv: PurchaseInvoice) {
-    setSelectedInvoice(inv)
-    const { data } = await supabase
-      .from('tt_purchase_payments')
-      .select('*')
-      .eq('purchase_invoice_id', inv.id)
-      .order('payment_date', { ascending: false })
-    setInvoicePayments((data || []) as PurchasePayment[])
-  }
-
-  async function handleRegisterPayment() {
-    if (!selectedInvoice || newPay.amount <= 0) { addToast({ type: 'error', title: 'Monto invalido' }); return }
-    setSaving(true)
-    const { error } = await supabase.from('tt_purchase_payments').insert({
-      purchase_invoice_id: selectedInvoice.id,
-      supplier_id: selectedInvoice.supplier_id,
-      purchase_order_id: selectedInvoice.purchase_order_id,
-      amount: newPay.amount,
-      payment_date: newPay.payment_date,
-      payment_method: newPay.payment_method,
-      bank_reference: newPay.bank_reference || null,
-      bank_account: newPay.bank_account || null,
-      notes: newPay.notes || null,
-      is_advance: false,
-      status: 'completed',
-    })
-    if (error) { addToast({ type: 'error', title: 'Error', message: error.message }); setSaving(false); return }
-
-    // Update invoice status
-    const totalPaid = invoicePayments.reduce((s, p) => s + p.amount, 0) + newPay.amount
-    const newStatus = totalPaid >= selectedInvoice.total ? 'paid' : 'partial'
-    await supabase.from('tt_purchase_invoices').update({
-      status: newStatus,
-      paid_at: newStatus === 'paid' ? new Date().toISOString() : null,
-    }).eq('id', selectedInvoice.id)
-
-    // Resolve related alerts
-    if (newStatus === 'paid') {
-      await supabase.from('tt_alerts')
-        .update({ status: 'resolved' })
-        .eq('document_id', selectedInvoice.id)
-        .in('type', ['payment_due_soon', 'payment_overdue'])
-    }
-
-    addToast({ type: 'success', title: 'Pago registrado' })
-    setShowPayment(false)
-    setNewPay({ amount: 0, payment_date: new Date().toISOString().split('T')[0], payment_method: 'transferencia', bank_reference: '', bank_account: '', notes: '' })
-    load()
-    openInvoiceDetail({ ...selectedInvoice, status: newStatus })
-    setSaving(false)
-  }
-
-  // Build combined DataTable rows from local invoices + historical docs
-  // (declarado antes del early return para no violar rules-of-hooks)
-  const tableRows = useMemo(() => {
-    const localRows = filtered.map((inv) => {
-      const ds = getInvoiceDisplayStatus(inv)
-      const sName = (inv.supplier as Supplier | undefined)?.name || 'Proveedor'
-      return {
-        id: inv.id,
-        referencia: inv.number || '-',
-        proveedor: sName,
-        ref_proveedor: inv.supplier_invoice_number || '',
-        estado: INVOICE_STATUS[ds]?.label || ds,
-        fecha: inv.created_at,
-        importe: inv.total || 0,
-        moneda: inv.currency || 'EUR',
-        fecha_vencimiento: inv.due_date,
-        _raw: inv,
-        _source: 'local',
-      }
-    })
-    const docRows = histDocs.map((d) => {
-      const r = documentToTableRow(d)
-      r.proveedor = r.cliente
-      return r
-    })
-    return [...localRows, ...docRows]
-  }, [filtered, histDocs])
-
-  // Invoice detail view
-  if (selectedInvoice) {
-    const ds = getInvoiceDisplayStatus(selectedInvoice)
-    const totalPaid = invoicePayments.reduce((s, p) => s + p.amount, 0)
-    const remaining = selectedInvoice.total - totalPaid
-    const sName = (selectedInvoice.supplier as Supplier | undefined)?.name || 'Proveedor'
-
-    return (
-      <div className="space-y-4 animate-in fade-in">
-        <button onClick={() => setSelectedInvoice(null)} className="flex items-center gap-2 text-[#9CA3AF] hover:text-[#F0F2F5] transition-colors text-sm">
-          <ArrowLeft size={16} /> Volver a facturas
-        </button>
-
-        <div className="flex items-start justify-between">
-          <div>
-            <h2 className="text-xl font-bold text-[#F0F2F5]">{selectedInvoice.number}</h2>
-            <p className="text-sm text-[#6B7280]">{sName} {selectedInvoice.supplier_invoice_number ? `| Factura proveedor: ${selectedInvoice.supplier_invoice_number}` : ''}</p>
-          </div>
-          <Badge variant={INVOICE_STATUS[ds]?.variant || 'default'} size="md">{INVOICE_STATUS[ds]?.label || ds}</Badge>
-        </div>
-
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className="p-4 rounded-xl bg-[#141820] border border-[#1E2330]">
-            <p className="text-xs text-[#6B7280]">Subtotal</p>
-            <p className="text-lg font-bold text-[#F0F2F5]">{formatCurrency(selectedInvoice.subtotal)}</p>
-          </div>
-          <div className="p-4 rounded-xl bg-[#141820] border border-[#1E2330]">
-            <p className="text-xs text-[#6B7280]">IVA ({selectedInvoice.tax_rate}%)</p>
-            <p className="text-lg font-bold text-[#F0F2F5]">{formatCurrency(selectedInvoice.tax_amount)}</p>
-          </div>
-          <div className="p-4 rounded-xl bg-[#141820] border border-[#1E2330]">
-            <p className="text-xs text-[#6B7280]">Total</p>
-            <p className="text-lg font-bold text-[#FF6600]">{formatCurrency(selectedInvoice.total)}</p>
-          </div>
-          <div className="p-4 rounded-xl bg-[#141820] border border-[#1E2330]">
-            <p className="text-xs text-[#6B7280]">Pendiente</p>
-            <p className={`text-lg font-bold ${remaining > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>{formatCurrency(remaining)}</p>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Card>
-            <h3 className="text-sm font-semibold text-[#F0F2F5] mb-3">Datos de la factura</h3>
-            <div className="space-y-2 text-xs">
-              <div className="flex justify-between"><span className="text-[#6B7280]">Fecha factura proveedor</span><span className="text-[#F0F2F5]">{selectedInvoice.supplier_invoice_date ? formatDate(selectedInvoice.supplier_invoice_date) : '-'}</span></div>
-              <div className="flex justify-between"><span className="text-[#6B7280]">Fecha vencimiento</span><span className="text-[#F0F2F5]" style={{ color: getDueDateColor(selectedInvoice.due_date) }}>{selectedInvoice.due_date ? formatDate(selectedInvoice.due_date) : '-'}</span></div>
-              <div className="flex justify-between"><span className="text-[#6B7280]">Moneda</span><span className="text-[#F0F2F5]">{selectedInvoice.currency}</span></div>
-              {selectedInvoice.notes && <div className="pt-2 border-t border-[#1E2330]"><span className="text-[#6B7280]">Notas: </span><span className="text-[#F0F2F5]">{selectedInvoice.notes}</span></div>}
-            </div>
-          </Card>
-
-          <Card>
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-[#F0F2F5]">Pagos realizados</h3>
-              {remaining > 0 && <Button variant="primary" size="sm" onClick={() => { setNewPay({ ...newPay, amount: remaining }); setShowPayment(true) }}><CreditCard size={14} /> Registrar pago</Button>}
-            </div>
-            {invoicePayments.length === 0 ? (
-              <p className="text-xs text-[#4B5563] py-4 text-center">Sin pagos registrados</p>
-            ) : (
-              <div className="space-y-2">
-                {invoicePayments.map(pay => (
-                  <div key={pay.id} className="flex items-center justify-between p-2 rounded-lg bg-[#0F1218]">
-                    <div>
-                      <p className="text-sm font-semibold text-emerald-400">{formatCurrency(pay.amount)}</p>
-                      <p className="text-xs text-[#6B7280]">{formatDate(pay.payment_date)} | {pay.payment_method}</p>
-                      {pay.bank_reference && <p className="text-xs text-[#4B5563]">Ref: {pay.bank_reference}</p>}
-                    </div>
-                    <Badge variant="success" size="sm">Pagado</Badge>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
-        </div>
-
-        {/* Payment modal */}
-        <Modal isOpen={showPayment} onClose={() => setShowPayment(false)} title="Registrar pago" size="md">
-          <div className="space-y-4">
-            <Input label="Monto *" type="number" value={newPay.amount} onChange={(e) => setNewPay({ ...newPay, amount: Number(e.target.value) })} />
-            <Input label="Fecha de pago *" type="date" value={newPay.payment_date} onChange={(e) => setNewPay({ ...newPay, payment_date: e.target.value })} />
-            <Select label="Metodo de pago" value={newPay.payment_method} onChange={(e) => setNewPay({ ...newPay, payment_method: e.target.value })} options={[
-              { value: 'transferencia', label: 'Transferencia bancaria' }, { value: 'cheque', label: 'Cheque' },
-              { value: 'efectivo', label: 'Efectivo' }, { value: 'tarjeta', label: 'Tarjeta' },
-              { value: 'paypal', label: 'PayPal' }, { value: 'otro', label: 'Otro' },
-            ]} />
-            <Input label="Referencia bancaria" value={newPay.bank_reference} onChange={(e) => setNewPay({ ...newPay, bank_reference: e.target.value })} placeholder="Nro transferencia, cheque..." />
-            <Input label="Cuenta bancaria" value={newPay.bank_account} onChange={(e) => setNewPay({ ...newPay, bank_account: e.target.value })} />
-            <Input label="Notas" value={newPay.notes} onChange={(e) => setNewPay({ ...newPay, notes: e.target.value })} />
-            <div className="flex justify-end gap-3 pt-4 border-t border-[#1E2330]">
-              <Button variant="secondary" onClick={() => setShowPayment(false)}>Cancelar</Button>
-              <Button onClick={handleRegisterPayment} loading={saving}><CreditCard size={14} /> Registrar pago</Button>
-            </div>
-          </div>
-        </Modal>
-      </div>
-    )
-  }
-
-  const FC_COLS: DataTableColumn[] = [
-    { key: 'referencia', label: 'Referencia', sortable: true, searchable: true, width: '140px' },
-    { key: 'proveedor', label: 'Proveedor', sortable: true, searchable: true },
-    { key: 'ref_proveedor', label: 'Ref. proveedor', searchable: true, defaultVisible: true },
-    { key: 'estado', label: 'Estado', sortable: true, type: 'status', width: '120px' },
-    { key: 'fecha', label: 'Fecha', sortable: true, type: 'date', width: '110px' },
-    { key: 'importe', label: 'Importe', sortable: true, type: 'currency', width: '120px' },
-    { key: 'fecha_vencimiento', label: 'Vencimiento', sortable: true, type: 'date', width: '110px' },
-  ]
-
-  const handleInvRowClick = (row: Record<string, unknown>) => {
-    if (row._source === 'local') {
-      openInvoiceDetail(row._raw as PurchaseInvoice)
-    }
-  }
-
-  return (
-    <div className="space-y-4">
-      <DataTable
-        data={tableRows}
-        columns={FC_COLS}
-        loading={loading}
-        totalLabel="facturas de compra"
-        showTotals
-        onRowClick={handleInvRowClick}
-        onNewClick={() => { setShowCreate(true); loadSuppliers(); loadPOs() }}
-        newLabel="Registrar factura"
-        exportFilename="facturas_compra"
-        pageSize={25}
-      />
-
-      {/* Create invoice modal */}
-      <Modal isOpen={showCreate} onClose={() => setShowCreate(false)} title="Registrar factura de compra" size="xl">
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <Select label="Proveedor *" value={newInv.supplier_id} onChange={(e) => setNewInv({ ...newInv, supplier_id: e.target.value })} options={[{ value: '', label: 'Seleccionar...' }, ...suppliers.map(s => ({ value: s.id, label: s.legal_name || s.name }))]} />
-            <Select label="OC vinculada" value={newInv.purchase_order_id} onChange={(e) => setNewInv({ ...newInv, purchase_order_id: e.target.value })} options={[{ value: '', label: 'Ninguna' }, ...purchaseOrders.map(po => ({ value: po.id as string, label: `${(po.supplier_name as string)} - ${formatCurrency((po.total as number) || 0)}` }))]} />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <Input label="N de factura del proveedor" value={newInv.supplier_invoice_number} onChange={(e) => setNewInv({ ...newInv, supplier_invoice_number: e.target.value })} placeholder="Ej: FA-2024-001" />
-            <Input label="Fecha factura proveedor" type="date" value={newInv.supplier_invoice_date} onChange={(e) => setNewInv({ ...newInv, supplier_invoice_date: e.target.value })} />
-          </div>
-          <div className="grid grid-cols-3 gap-4">
-            <Input label="Subtotal (sin IVA) *" type="number" value={newInv.subtotal} onChange={(e) => setNewInv({ ...newInv, subtotal: Number(e.target.value) })} />
-            <Input label="IVA %" type="number" value={newInv.tax_rate} onChange={(e) => setNewInv({ ...newInv, tax_rate: Number(e.target.value) })} />
-            <div className="p-3 rounded-lg bg-[#0F1218] border border-[#1E2330]">
-              <p className="text-xs text-[#6B7280] mb-1">Total</p>
-              <p className="text-lg font-bold text-[#FF6600]">{formatCurrency(newInv.subtotal + (newInv.subtotal * newInv.tax_rate / 100))}</p>
-            </div>
-          </div>
-          <Input label="Fecha de vencimiento" type="date" value={newInv.due_date} onChange={(e) => setNewInv({ ...newInv, due_date: e.target.value })} />
-          <Input label="Notas" value={newInv.notes} onChange={(e) => setNewInv({ ...newInv, notes: e.target.value })} />
-          <div className="flex justify-end gap-3 pt-4 border-t border-[#1E2330]">
-            <Button variant="secondary" onClick={() => setShowCreate(false)}>Cancelar</Button>
-            <Button onClick={handleCreateInvoice} loading={saving}><FileCheck size={14} /> Registrar factura</Button>
-          </div>
-        </div>
-      </Modal>
-    </div>
-  )
-}
 
 // ===============================================================
 // PAGOS TAB (NEW)
 // ===============================================================
-function PagosTab() {
-  const supabase = createClient()
-  const { addToast } = useToast()
-  const [payments, setPayments] = useState<PurchasePayment[]>([])
-  const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<'all' | 'normal' | 'advance'>('all')
-  const [showAdvance, setShowAdvance] = useState(false)
-  const [suppliers, setSuppliers] = useState<Supplier[]>([])
-  const [saving, setSaving] = useState(false)
-  const [newAdv, setNewAdv] = useState({ supplier_id: '', amount: 0, payment_date: new Date().toISOString().split('T')[0], payment_method: 'transferencia', bank_reference: '', advance_reason: '', expected_goods_date: '', notes: '' })
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    const sb = createClient()
-    const { data } = await sb
-      .from('tt_purchase_payments')
-      .select('*, supplier:tt_suppliers(id, name, legal_name)')
-      .order('payment_date', { ascending: false })
-    setPayments((data || []) as PurchasePayment[])
-    setLoading(false)
-  }, [])
-
-  useEffect(() => { load() }, [load])
-
-  const filtered = useMemo(() => {
-    if (filter === 'normal') return payments.filter(p => !p.is_advance)
-    if (filter === 'advance') return payments.filter(p => p.is_advance)
-    return payments
-  }, [payments, filter])
-
-  const totalPaidMonth = useMemo(() => {
-    const now = new Date()
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]
-    return payments.filter(p => p.payment_date >= monthStart).reduce((s, p) => s + p.amount, 0)
-  }, [payments])
-
-  const advancesPending = payments.filter(p => p.is_advance && !p.goods_received)
-  const paymentsThisWeek = useMemo(() => {
-    const now = new Date()
-    const weekStart = new Date(now)
-    weekStart.setDate(now.getDate() - now.getDay())
-    const ws = weekStart.toISOString().split('T')[0]
-    return payments.filter(p => p.payment_date >= ws).length
-  }, [payments])
-
-  async function handleCreateAdvance() {
-    if (!newAdv.supplier_id || newAdv.amount <= 0) { addToast({ type: 'error', title: 'Completa los datos obligatorios' }); return }
-    setSaving(true)
-    const reminderDate = newAdv.expected_goods_date || null
-    const { error } = await supabase.from('tt_purchase_payments').insert({
-      supplier_id: newAdv.supplier_id,
-      amount: newAdv.amount,
-      payment_date: newAdv.payment_date,
-      payment_method: newAdv.payment_method,
-      bank_reference: newAdv.bank_reference || null,
-      advance_reason: newAdv.advance_reason || null,
-      expected_goods_date: newAdv.expected_goods_date || null,
-      reminder_date: reminderDate,
-      is_advance: true,
-      goods_received: false,
-      status: 'completed',
-      notes: newAdv.notes || null,
-    })
-    if (!error) {
-      addToast({ type: 'success', title: 'Anticipo registrado' })
-      setShowAdvance(false)
-      setNewAdv({ supplier_id: '', amount: 0, payment_date: new Date().toISOString().split('T')[0], payment_method: 'transferencia', bank_reference: '', advance_reason: '', expected_goods_date: '', notes: '' })
-      load()
-    } else { addToast({ type: 'error', title: 'Error', message: error.message }) }
-    setSaving(false)
-  }
-
-  async function markGoodsReceived(paymentId: string) {
-    await supabase.from('tt_purchase_payments').update({
-      goods_received: true,
-      goods_received_date: new Date().toISOString().split('T')[0],
-    }).eq('id', paymentId)
-    // Resolve related alerts
-    await supabase.from('tt_alerts').update({ status: 'resolved' }).eq('document_id', paymentId).eq('type', 'advance_goods_pending')
-    addToast({ type: 'success', title: 'Mercaderia recibida marcada' })
-    load()
-  }
-
-  const loadSuppliers = async () => {
-    const { data } = await supabase.from('tt_suppliers').select('id, name, legal_name').eq('active', true).order('name')
-    setSuppliers((data || []) as Supplier[])
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex justify-end gap-2">
-        <Button variant="secondary" onClick={() => { setShowAdvance(true); loadSuppliers() }}><Banknote size={16} /> Registrar anticipo</Button>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <KPICard label="Pagado este mes" value={formatCurrency(totalPaidMonth)} icon={<CircleDollarSign size={22} />} color="#10B981" />
-        <KPICard label="Anticipos pendientes" value={advancesPending.length} icon={<Banknote size={22} />} color="#3B82F6" />
-        <KPICard label="Pagos esta semana" value={paymentsThisWeek} icon={<CreditCard size={22} />} />
-        <KPICard label="Total pagos" value={filtered.length} icon={<Receipt size={22} />} color="#6B7280" />
-      </div>
-
-      <div className="flex gap-2">
-        {(['all', 'normal', 'advance'] as const).map(f => (
-          <button key={f} onClick={() => setFilter(f)} className={`px-4 py-2 rounded-lg text-xs font-medium transition-all ${filter === f ? 'bg-[#FF6600] text-white' : 'bg-[#1E2330] text-[#9CA3AF] hover:bg-[#2A3040]'}`}>
-            {f === 'all' ? 'Todos' : f === 'normal' ? 'Normales' : 'Anticipos'}
-          </button>
-        ))}
-      </div>
-
-      {loading ? (
-        <div className="flex items-center justify-center py-20"><Loader2 className="animate-spin text-[#FF6600]" size={32} /></div>
-      ) : filtered.length === 0 ? (
-        <div className="text-center py-20 text-[#6B7280]"><CreditCard size={48} className="mx-auto mb-3 opacity-30" /><p>No hay pagos registrados</p></div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {filtered.map((pay) => {
-            const sName = (pay.supplier as Supplier | undefined)?.name || 'Proveedor'
-            return (
-              <Card key={pay.id}>
-                <div className="flex items-start justify-between mb-2">
-                  <div>
-                    <p className="text-sm font-bold text-[#F0F2F5]">{sName}</p>
-                    <p className="text-xs text-[#6B7280]">{formatDate(pay.payment_date)} | {pay.payment_method || '-'}</p>
-                  </div>
-                  <div className="flex gap-1">
-                    {pay.is_advance && <Badge variant="info" size="sm">ANTICIPO</Badge>}
-                    <Badge variant="success" size="sm">{pay.status}</Badge>
-                  </div>
-                </div>
-                <p className="text-xl font-bold text-emerald-400 mb-2">{formatCurrency(pay.amount)}</p>
-                {pay.bank_reference && <p className="text-xs text-[#4B5563] mb-1">Ref: {pay.bank_reference}</p>}
-                {pay.is_advance && (
-                  <div className="pt-2 border-t border-[#1E2330] mt-2">
-                    {pay.advance_reason && <p className="text-xs text-[#9CA3AF] mb-1">Motivo: {pay.advance_reason}</p>}
-                    {pay.expected_goods_date && (
-                      <div className="flex items-center justify-between">
-                        <p className="text-xs text-[#6B7280]">
-                          Mercaderia esperada: <span style={{ color: getDueDateColor(pay.expected_goods_date) }}>{formatDate(pay.expected_goods_date)}</span>
-                        </p>
-                        {pay.goods_received ? (
-                          <Badge variant="success" size="sm">Recibida</Badge>
-                        ) : (
-                          <Button variant="secondary" size="sm" onClick={() => markGoodsReceived(pay.id)}>
-                            <CheckCircle size={12} /> Recibida
-                          </Button>
-                        )}
-                      </div>
-                    )}
-                    {pay.goods_received && pay.goods_received_date && (
-                      <p className="text-xs text-emerald-400 mt-1">Recibida el {formatDate(pay.goods_received_date)}</p>
-                    )}
-                  </div>
-                )}
-              </Card>
-            )
-          })}
-        </div>
-      )}
-
-      {/* Advance payment modal */}
-      <Modal isOpen={showAdvance} onClose={() => setShowAdvance(false)} title="Registrar anticipo a proveedor" size="lg">
-        <div className="space-y-4">
-          <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-xs text-blue-400">
-            Los anticipos son pagos realizados antes de recibir la mercaderia. Se genera un recordatorio automatico para la fecha de recepcion esperada.
-          </div>
-          <Select label="Proveedor *" value={newAdv.supplier_id} onChange={(e) => setNewAdv({ ...newAdv, supplier_id: e.target.value })} options={[{ value: '', label: 'Seleccionar...' }, ...suppliers.map(s => ({ value: s.id, label: s.legal_name || s.name }))]} />
-          <div className="grid grid-cols-2 gap-4">
-            <Input label="Monto *" type="number" value={newAdv.amount} onChange={(e) => setNewAdv({ ...newAdv, amount: Number(e.target.value) })} />
-            <Input label="Fecha de pago *" type="date" value={newAdv.payment_date} onChange={(e) => setNewAdv({ ...newAdv, payment_date: e.target.value })} />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <Select label="Metodo de pago" value={newAdv.payment_method} onChange={(e) => setNewAdv({ ...newAdv, payment_method: e.target.value })} options={[
-              { value: 'transferencia', label: 'Transferencia' }, { value: 'cheque', label: 'Cheque' },
-              { value: 'efectivo', label: 'Efectivo' }, { value: 'tarjeta', label: 'Tarjeta' },
-            ]} />
-            <Input label="Referencia bancaria" value={newAdv.bank_reference} onChange={(e) => setNewAdv({ ...newAdv, bank_reference: e.target.value })} />
-          </div>
-          <Input label="Motivo del anticipo" value={newAdv.advance_reason} onChange={(e) => setNewAdv({ ...newAdv, advance_reason: e.target.value })} placeholder="Por que se paga por adelantado..." />
-          <Input label="Fecha esperada de recepcion de mercaderia" type="date" value={newAdv.expected_goods_date} onChange={(e) => setNewAdv({ ...newAdv, expected_goods_date: e.target.value })} />
-          <Input label="Notas" value={newAdv.notes} onChange={(e) => setNewAdv({ ...newAdv, notes: e.target.value })} />
-          <div className="flex justify-end gap-3 pt-4 border-t border-[#1E2330]">
-            <Button variant="secondary" onClick={() => setShowAdvance(false)}>Cancelar</Button>
-            <Button onClick={handleCreateAdvance} loading={saving}><Banknote size={14} /> Registrar anticipo</Button>
-          </div>
-        </div>
-      </Modal>
-    </div>
-  )
-}
 
 // ===============================================================
 // CALENDARIO DE PAGOS TAB (NEW)
 // ===============================================================
-function CalendarioPagosTab() {
-  const supabase = createClient()
-  const [invoices, setInvoices] = useState<PurchaseInvoice[]>([])
-  const [loading, setLoading] = useState(true)
-  const [selectedDay, setSelectedDay] = useState<string | null>(null)
-
-  useEffect(() => {
-    (async () => {
-      setLoading(true)
-      const sb = createClient()
-      const { data } = await sb
-        .from('tt_purchase_invoices')
-        .select('*, supplier:tt_suppliers(id, name, legal_name)')
-        .not('due_date', 'is', null)
-        .order('due_date', { ascending: true })
-
-      let result = (data || []) as PurchaseInvoice[]
-
-      // If no local invoices, fallback to tt_documents (StelOrder imported)
-      if (result.length === 0) {
-        const { data: docInvs } = await sb.from('tt_documents')
-          .select('id, display_ref, system_code, total, status, created_at, metadata, client:tt_clients(id, name, legal_name)')
-          .eq('doc_type', 'factura_compra')
-          .order('created_at', { ascending: false })
-          .limit(50)
-
-        result = (docInvs || []).map((d: Record<string, unknown>) => {
-          const client = d.client as Record<string, unknown> | null
-          return {
-            id: d.id as string,
-            supplier_id: null,
-            supplier_invoice_number: (d.display_ref as string) || (d.system_code as string) || '',
-            supplier_invoice_date: (d.created_at as string)?.split('T')[0] || '',
-            subtotal: (d.total as number) || 0,
-            tax_rate: 21,
-            tax_amount: 0,
-            total: (d.total as number) || 0,
-            paid_amount: d.status === 'paid' ? (d.total as number) || 0 : 0,
-            due_date: (d.created_at as string)?.split('T')[0] || null,
-            status: (d.status as string) || 'pending',
-            notes: '',
-            created_at: d.created_at as string,
-            supplier: client ? { id: client.id as string, name: (client.legal_name as string) || (client.name as string) || 'Sin proveedor', legal_name: client.legal_name as string } : null,
-          } as unknown as PurchaseInvoice
-        })
-      }
-
-      setInvoices(result)
-      setLoading(false)
-    })()
-  }, [])
-
-  // Build calendar data for next 30 days
-  const calendarData = useMemo(() => {
-    const days: Array<{ date: string; label: string; dayNum: number; weekday: string; invoices: PurchaseInvoice[]; isToday: boolean; isWeekend: boolean }> = []
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-
-    for (let i = 0; i < 30; i++) {
-      const d = new Date(today)
-      d.setDate(today.getDate() + i)
-      const dateStr = d.toISOString().split('T')[0]
-      const dayInvs = invoices.filter(inv => inv.due_date === dateStr)
-      const weekday = d.toLocaleDateString('es-ES', { weekday: 'short' })
-      days.push({
-        date: dateStr,
-        label: d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }),
-        dayNum: d.getDate(),
-        weekday,
-        invoices: dayInvs,
-        isToday: i === 0,
-        isWeekend: d.getDay() === 0 || d.getDay() === 6,
-      })
-    }
-    return days
-  }, [invoices])
-
-  // BUG6 fix: las facturas pueden estar en distintas monedas (EUR, USD, ARS).
-  // Antes se sumaban todas con reduce → resultado mezclado o 0 EUR.
-  // Ahora agrupamos por currency y formateamos como "EUR 1.234 · USD 567".
-  type ByCurrency = Record<string, number>
-  const sumByCurrency = (list: PurchaseInvoice[]): ByCurrency => {
-    const out: ByCurrency = {}
-    for (const inv of list) {
-      const c = ((inv as PurchaseInvoice & { currency?: string }).currency || 'EUR').toUpperCase()
-      out[c] = (out[c] || 0) + (inv.total || 0)
-    }
-    return out
-  }
-  const formatByCurrency = (totals: ByCurrency): string => {
-    const entries = Object.entries(totals).filter(([, v]) => v > 0)
-    if (entries.length === 0) return formatCurrency(0)
-    return entries
-      .map(([c, v]) => `${c} ${v.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
-      .join(' · ')
-  }
-
-  const totalDueThisWeek = useMemo(() => {
-    const now = new Date()
-    const weekEnd = new Date(now)
-    weekEnd.setDate(now.getDate() + 7)
-    const ws = now.toISOString().split('T')[0]
-    const we = weekEnd.toISOString().split('T')[0]
-    return sumByCurrency(invoices.filter(i => i.status !== 'paid' && i.due_date && i.due_date >= ws && i.due_date <= we))
-  }, [invoices])
-
-  const totalDueNextWeek = useMemo(() => {
-    const now = new Date()
-    const weekStart = new Date(now)
-    weekStart.setDate(now.getDate() + 7)
-    const weekEnd = new Date(now)
-    weekEnd.setDate(now.getDate() + 14)
-    const ws = weekStart.toISOString().split('T')[0]
-    const we = weekEnd.toISOString().split('T')[0]
-    return sumByCurrency(invoices.filter(i => i.status !== 'paid' && i.due_date && i.due_date >= ws && i.due_date <= we))
-  }, [invoices])
-
-  const totalDueMonth = useMemo(
-    () => sumByCurrency(invoices.filter(i => i.status !== 'paid')),
-    [invoices]
-  )
-
-  const selectedDayInvoices = selectedDay ? calendarData.find(d => d.date === selectedDay)?.invoices || [] : []
-
-  if (loading) return <div className="flex items-center justify-center py-20"><Loader2 className="animate-spin text-[#FF6600]" size={32} /></div>
-
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <KPICard label="Vence esta semana" value={formatByCurrency(totalDueThisWeek)} icon={<CalendarDays size={22} />} color="#F97316" />
-        <KPICard label="Vence proxima semana" value={formatByCurrency(totalDueNextWeek)} icon={<CalendarClock size={22} />} color="#EAB308" />
-        <KPICard label="Total pendiente (30d)" value={formatByCurrency(totalDueMonth)} icon={<DollarSign size={22} />} color="#EF4444" />
-      </div>
-
-      {/* Calendar grid */}
-      <div className="grid grid-cols-7 gap-1">
-        {/* Header */}
-        {['Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab', 'Dom'].map(d => (
-          <div key={d} className="text-center text-xs font-medium text-[#6B7280] py-2">{d}</div>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-5 sm:grid-cols-6 lg:grid-cols-10 gap-2">
-        {calendarData.map(day => {
-          const hasInvoices = day.invoices.length > 0
-          const hasPaid = day.invoices.some(i => i.status === 'paid')
-          const hasOverdue = day.invoices.some(i => i.status !== 'paid' && new Date(i.due_date!) < new Date())
-          const hasPending = day.invoices.some(i => i.status !== 'paid')
-          const totalDayByCurrency = sumByCurrency(day.invoices.filter(i => i.status !== 'paid'))
-          const totalDayAmount = Object.values(totalDayByCurrency).reduce((s, v) => s + v, 0)
-
-          let borderColor = 'border-[#1E2330]'
-          let bgColor = 'bg-[#141820]'
-          if (hasOverdue) { borderColor = 'border-red-500/40'; bgColor = 'bg-red-500/5' }
-          else if (hasPending) { borderColor = 'border-amber-500/40'; bgColor = 'bg-amber-500/5' }
-          else if (hasPaid && hasInvoices) { borderColor = 'border-emerald-500/40'; bgColor = 'bg-emerald-500/5' }
-
-          return (
-            <button
-              key={day.date}
-              onClick={() => setSelectedDay(selectedDay === day.date ? null : day.date)}
-              className={`p-2 rounded-lg border ${borderColor} ${bgColor} transition-all hover:border-[#FF6600]/50 ${selectedDay === day.date ? 'ring-2 ring-[#FF6600]/50' : ''} ${day.isToday ? 'ring-1 ring-blue-500/50' : ''}`}
-            >
-              <div className="text-center">
-                <p className="text-[10px] text-[#6B7280] uppercase">{day.weekday}</p>
-                <p className={`text-sm font-bold ${day.isToday ? 'text-blue-400' : 'text-[#F0F2F5]'}`}>{day.dayNum}</p>
-                {hasInvoices && (
-                  <>
-                    <div className="flex justify-center gap-0.5 mt-1">
-                      {day.invoices.slice(0, 3).map((inv, idx) => (
-                        <div key={idx} className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: inv.status === 'paid' ? '#22C55E' : getDueDateColor(inv.due_date) }} />
-                      ))}
-                    </div>
-                    {totalDayAmount > 0 && <p className="text-[9px] font-mono text-amber-400 mt-0.5">{formatCurrency(totalDayAmount)}</p>}
-                  </>
-                )}
-              </div>
-            </button>
-          )
-        })}
-      </div>
-
-      {/* Selected day detail */}
-      {selectedDay && (
-        <Card>
-          <h3 className="text-sm font-semibold text-[#F0F2F5] mb-3">
-            Facturas del {formatDate(selectedDay, 'dd MMMM yyyy')}
-          </h3>
-          {selectedDayInvoices.length === 0 ? (
-            <p className="text-xs text-[#4B5563] py-4 text-center">No hay facturas con vencimiento este dia</p>
-          ) : (
-            <div className="space-y-2">
-              {selectedDayInvoices.map(inv => {
-                const ds = getInvoiceDisplayStatus(inv)
-                const sName = (inv.supplier as Supplier | undefined)?.name || 'Proveedor'
-                return (
-                  <div key={inv.id} className="flex items-center justify-between p-3 rounded-lg bg-[#0F1218]">
-                    <div>
-                      <p className="text-sm font-semibold text-[#F0F2F5]">{inv.number}</p>
-                      <p className="text-xs text-[#6B7280]">{sName}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm font-bold text-[#FF6600]">{formatCurrency(inv.total)}</p>
-                      <Badge variant={INVOICE_STATUS[ds]?.variant || 'default'} size="sm">{INVOICE_STATUS[ds]?.label || ds}</Badge>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </Card>
-      )}
-
-      {/* Legend */}
-      <div className="flex flex-wrap gap-4 text-xs text-[#6B7280]">
-        <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-full bg-emerald-500" /> Pagada</div>
-        <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-full bg-amber-500" /> Pendiente</div>
-        <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-full bg-red-500" /> Vencida</div>
-        <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded border border-blue-500" /> Hoy</div>
-      </div>
-    </div>
-  )
-}
 
 // ===============================================================
 // ABONOS TAB (Purchase Credit Notes)
@@ -2826,602 +1860,16 @@ const CN_STATUS: Record<string, { label: string; variant: 'default' | 'success' 
   rejected: { label: 'Rechazado', variant: 'danger' },
 }
 
-function generateCNNumber(): string {
-  const now = new Date()
-  const y = now.getFullYear().toString().slice(-2)
-  const m = (now.getMonth() + 1).toString().padStart(2, '0')
-  const r = Math.floor(Math.random() * 9999).toString().padStart(4, '0')
-  return `AB-${y}${m}-${r}`
+async function generateCNNumber(companyId?: string | null): Promise<string> {
+  return generateDocNumber('AB', companyId ?? null)
 }
 
-function AbonosTab() {
-  const { addToast } = useToast()
-  const { filterByCompany, defaultCompanyId, companyKey } = useCompanyFilter()
-  const [creditNotes, setCreditNotes] = useState<PurchaseCreditNote[]>([])
-  const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState('')
-  const [showCreate, setShowCreate] = useState(false)
-  const [selectedCN, setSelectedCN] = useState<PurchaseCreditNote | null>(null)
-  const [cnItems, setCnItems] = useState<PurchaseCreditNoteItem[]>([])
-  const [saving, setSaving] = useState(false)
-
-  // Create form state
-  const [newCN, setNewCN] = useState({
-    supplier_id: '',
-    purchase_invoice_id: '',
-    supplier_cn_number: '',
-    supplier_cn_date: '',
-    reason: '',
-    subtotal: 0,
-    tax_rate: 21,
-    notes: '',
-    items: [{ description: '', quantity: 1, unit_price: 0, sku: '', product_id: '' }] as Array<{
-      description: string; quantity: number; unit_price: number; sku: string; product_id: string
-    }>,
-  })
-
-  // Suppliers for searchable select
-  const searchSuppliers = useCallback(async (query: string) => {
-    const sb = createClient()
-    const { data } = await sb
-      .from('tt_suppliers')
-      .select('id, name, legal_name')
-      .eq('active', true)
-      .or(`name.ilike.%${query}%,legal_name.ilike.%${query}%`)
-      .order('name')
-      .limit(20)
-    return (data || []).map(s => ({ value: s.id, label: s.legal_name || s.name }))
-  }, [])
-
-  // Invoices for the selected supplier
-  const [supplierInvoices, setSupplierInvoices] = useState<Array<{ value: string; label: string }>>([])
-  useEffect(() => {
-    if (!newCN.supplier_id) { setSupplierInvoices([]); return }
-    const loadInvoices = async () => {
-      const sb = createClient()
-      const { data } = await sb
-        .from('tt_purchase_invoices')
-        .select('id, number, supplier_invoice_number, total')
-        .eq('supplier_id', newCN.supplier_id)
-        .order('created_at', { ascending: false })
-        .limit(50)
-      setSupplierInvoices(
-        (data || []).map(i => ({
-          value: i.id,
-          label: `${i.number}${i.supplier_invoice_number ? ` (${i.supplier_invoice_number})` : ''} - ${formatCurrency(i.total)}`,
-        }))
-      )
-    }
-    loadInvoices()
-  }, [newCN.supplier_id])
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    const sb = createClient()
-    let q = sb
-      .from('tt_purchase_credit_notes')
-      .select('*, supplier:tt_suppliers(id, name, legal_name), purchase_invoice:tt_purchase_invoices(id, number)')
-      .order('created_at', { ascending: false })
-    q = filterByCompany(q)
-    const { data } = await q
-    setCreditNotes((data || []) as PurchaseCreditNote[])
-    setLoading(false)
-  }, [companyKey])
-
-  useEffect(() => { void load() }, [load])
-
-  // Filter
-  const filtered = useMemo(() => {
-    let result = creditNotes
-    if (statusFilter) {
-      result = result.filter(cn => cn.status === statusFilter)
-    }
-    if (search.trim()) {
-      const tokens = search.trim().toLowerCase().split(/\s+/)
-      result = result.filter(cn => {
-        const sName = cn.supplier?.name || cn.supplier?.legal_name || ''
-        const invRef = (cn.purchase_invoice as PurchaseInvoice | undefined)?.number || ''
-        const searchable = [cn.number, sName, cn.supplier_cn_number, cn.reason, invRef].filter(Boolean).join(' ').toLowerCase()
-        return tokens.every(t => searchable.includes(t))
-      })
-    }
-    return result
-  }, [creditNotes, search, statusFilter])
-
-  // KPIs
-  const pendingTotal = creditNotes.filter(cn => cn.status === 'pending').reduce((s, cn) => s + cn.total, 0)
-  const appliedTotal = creditNotes.filter(cn => cn.status === 'applied').reduce((s, cn) => s + cn.total, 0)
-  const pendingCount = creditNotes.filter(cn => cn.status === 'pending').length
-
-  // Computed subtotal/tax/total for create form
-  const computedSubtotal = newCN.items.reduce((s, item) => s + item.quantity * item.unit_price, 0)
-  const computedTaxAmount = computedSubtotal * newCN.tax_rate / 100
-  const computedTotal = computedSubtotal + computedTaxAmount
-
-  function addItem() {
-    setNewCN(prev => ({
-      ...prev,
-      items: [...prev.items, { description: '', quantity: 1, unit_price: 0, sku: '', product_id: '' }],
-    }))
-  }
-
-  function removeItem(idx: number) {
-    setNewCN(prev => ({
-      ...prev,
-      items: prev.items.filter((_, i) => i !== idx),
-    }))
-  }
-
-  function updateItem(idx: number, field: string, value: string | number) {
-    setNewCN(prev => ({
-      ...prev,
-      items: prev.items.map((item, i) => i === idx ? { ...item, [field]: value } : item),
-    }))
-  }
-
-  async function handleCreate() {
-    if (!newCN.supplier_id) { addToast({ type: 'error', title: 'Selecciona un proveedor' }); return }
-    if (newCN.items.length === 0 || !newCN.items.some(i => i.description.trim())) {
-      addToast({ type: 'error', title: 'Agrega al menos un item con descripcion' }); return
-    }
-    setSaving(true)
-    const sb = createClient()
-    const number = generateCNNumber()
-    const { data: cnData, error } = await sb.from('tt_purchase_credit_notes').insert({
-      number,
-      company_id: defaultCompanyId,
-      supplier_id: newCN.supplier_id,
-      purchase_invoice_id: newCN.purchase_invoice_id || null,
-      supplier_cn_number: newCN.supplier_cn_number || null,
-      supplier_cn_date: newCN.supplier_cn_date || null,
-      reason: newCN.reason || null,
-      status: 'pending',
-      currency: 'EUR',
-      subtotal: computedSubtotal,
-      tax_rate: newCN.tax_rate,
-      tax_amount: computedTaxAmount,
-      total: computedTotal,
-      notes: newCN.notes || null,
-    }).select('id').single()
-
-    if (error || !cnData) {
-      addToast({ type: 'error', title: 'Error al crear abono', message: error?.message || 'Error desconocido' })
-      setSaving(false)
-      return
-    }
-
-    // Insert items
-    const itemsToInsert = newCN.items
-      .filter(i => i.description.trim())
-      .map(i => ({
-        credit_note_id: cnData.id,
-        product_id: i.product_id || null,
-        sku: i.sku || null,
-        description: i.description,
-        quantity: i.quantity,
-        unit_price: i.unit_price,
-        subtotal: i.quantity * i.unit_price,
-      }))
-
-    if (itemsToInsert.length > 0) {
-      await sb.from('tt_purchase_credit_note_items').insert(itemsToInsert)
-    }
-
-    addToast({ type: 'success', title: 'Abono creado', message: `Numero: ${number}` })
-    setShowCreate(false)
-    setNewCN({
-      supplier_id: '', purchase_invoice_id: '', supplier_cn_number: '',
-      supplier_cn_date: '', reason: '', subtotal: 0, tax_rate: 21, notes: '',
-      items: [{ description: '', quantity: 1, unit_price: 0, sku: '', product_id: '' }],
-    })
-    load()
-    setSaving(false)
-  }
-
-  async function openDetail(cn: PurchaseCreditNote) {
-    setSelectedCN(cn)
-    const sb = createClient()
-    const { data } = await sb
-      .from('tt_purchase_credit_note_items')
-      .select('*')
-      .eq('credit_note_id', cn.id)
-      .order('id')
-    setCnItems((data || []) as PurchaseCreditNoteItem[])
-  }
-
-  async function handleApply() {
-    if (!selectedCN) return
-    setSaving(true)
-    const sb = createClient()
-    const { error } = await sb
-      .from('tt_purchase_credit_notes')
-      .update({ status: 'applied', updated_at: new Date().toISOString() })
-      .eq('id', selectedCN.id)
-    if (!error) {
-      addToast({ type: 'success', title: 'Abono aplicado' })
-      setSelectedCN(prev => prev ? { ...prev, status: 'applied' } : null)
-      load()
-    } else {
-      addToast({ type: 'error', title: 'Error', message: error.message })
-    }
-    setSaving(false)
-  }
-
-  async function handleReject() {
-    if (!selectedCN) return
-    setSaving(true)
-    const sb = createClient()
-    const { error } = await sb
-      .from('tt_purchase_credit_notes')
-      .update({ status: 'rejected', updated_at: new Date().toISOString() })
-      .eq('id', selectedCN.id)
-    if (!error) {
-      addToast({ type: 'success', title: 'Abono rechazado' })
-      setSelectedCN(prev => prev ? { ...prev, status: 'rejected' } : null)
-      load()
-    } else {
-      addToast({ type: 'error', title: 'Error', message: error.message })
-    }
-    setSaving(false)
-  }
-
-  // Detail view
-  if (selectedCN) {
-    const sName = selectedCN.supplier?.name || selectedCN.supplier?.legal_name || 'Proveedor'
-    const invRef = (selectedCN.purchase_invoice as PurchaseInvoice | undefined)?.number || null
-    const st = CN_STATUS[selectedCN.status] || CN_STATUS.pending
-
-    return (
-      <div className="space-y-4 animate-in fade-in">
-        <button onClick={() => setSelectedCN(null)} className="flex items-center gap-2 text-[#9CA3AF] hover:text-[#F0F2F5] transition-colors text-sm">
-          <ArrowLeft size={16} /> Volver a abonos
-        </button>
-
-        <div className="flex items-start justify-between">
-          <div>
-            <h2 className="text-xl font-bold text-[#F0F2F5]">{selectedCN.number}</h2>
-            <p className="text-sm text-[#6B7280]">
-              {sName}
-              {selectedCN.supplier_cn_number ? ` | N. abono proveedor: ${selectedCN.supplier_cn_number}` : ''}
-            </p>
-          </div>
-          <Badge variant={st.variant} size="md">{st.label}</Badge>
-        </div>
-
-        {/* Totals cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className="p-4 rounded-xl bg-[#141820] border border-[#1E2330]">
-            <p className="text-xs text-[#6B7280]">Subtotal</p>
-            <p className="text-lg font-bold text-[#F0F2F5]">{formatCurrency(selectedCN.subtotal)}</p>
-          </div>
-          <div className="p-4 rounded-xl bg-[#141820] border border-[#1E2330]">
-            <p className="text-xs text-[#6B7280]">IVA ({selectedCN.tax_rate}%)</p>
-            <p className="text-lg font-bold text-[#F0F2F5]">{formatCurrency(selectedCN.tax_amount)}</p>
-          </div>
-          <div className="p-4 rounded-xl bg-[#141820] border border-[#1E2330]">
-            <p className="text-xs text-[#6B7280]">Total abono</p>
-            <p className="text-lg font-bold text-[#FF6600]">{formatCurrency(selectedCN.total)}</p>
-          </div>
-          <div className="p-4 rounded-xl bg-[#141820] border border-[#1E2330]">
-            <p className="text-xs text-[#6B7280]">Fecha abono</p>
-            <p className="text-lg font-bold text-[#F0F2F5]">
-              {selectedCN.supplier_cn_date ? formatDate(selectedCN.supplier_cn_date) : '-'}
-            </p>
-          </div>
-        </div>
-
-        {/* Reason */}
-        {selectedCN.reason && (
-          <Card className="p-4">
-            <p className="text-xs text-[#6B7280] mb-1">Motivo</p>
-            <p className="text-sm text-[#F0F2F5]">{selectedCN.reason}</p>
-          </Card>
-        )}
-
-        {/* Linked invoice */}
-        {invRef && (
-          <Card className="p-4">
-            <p className="text-xs text-[#6B7280] mb-1">Factura vinculada</p>
-            <p className="text-sm text-[#F0F2F5] flex items-center gap-2">
-              <FileCheck size={14} className="text-[#FF6600]" /> {invRef}
-            </p>
-          </Card>
-        )}
-
-        {/* Items table */}
-        <Card className="p-0 overflow-hidden">
-          <div className="px-4 py-3 border-b border-[#1E2330]">
-            <h3 className="font-semibold text-sm text-[#F0F2F5]">Items del abono</h3>
-          </div>
-          {cnItems.length === 0 ? (
-            <div className="p-6 text-center text-sm text-[#6B7280]">Sin items registrados</div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-[#1E2330] text-[#6B7280]">
-                    <th className="px-4 py-2 text-left font-medium">Descripcion</th>
-                    <th className="px-4 py-2 text-left font-medium">SKU</th>
-                    <th className="px-4 py-2 text-right font-medium">Cantidad</th>
-                    <th className="px-4 py-2 text-right font-medium">Precio unit.</th>
-                    <th className="px-4 py-2 text-right font-medium">Subtotal</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {cnItems.map(item => (
-                    <tr key={item.id} className="border-b border-[#1E2330]/50 hover:bg-[#1E2330]/30">
-                      <td className="px-4 py-2 text-[#F0F2F5]">{item.description || '-'}</td>
-                      <td className="px-4 py-2 text-[#9CA3AF]">{item.sku || '-'}</td>
-                      <td className="px-4 py-2 text-right text-[#F0F2F5]">{item.quantity}</td>
-                      <td className="px-4 py-2 text-right text-[#F0F2F5]">{formatCurrency(item.unit_price)}</td>
-                      <td className="px-4 py-2 text-right text-[#FF6600] font-medium">{formatCurrency(item.subtotal)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
-
-        {/* Notes */}
-        {selectedCN.notes && (
-          <Card className="p-4">
-            <p className="text-xs text-[#6B7280] mb-1">Notas</p>
-            <p className="text-sm text-[#9CA3AF]">{selectedCN.notes}</p>
-          </Card>
-        )}
-
-        {/* Action buttons */}
-        {selectedCN.status === 'pending' && (
-          <div className="flex gap-2">
-            <Button variant="primary" onClick={handleApply} disabled={saving}>
-              {saving ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle size={16} />}
-              Aplicar abono
-            </Button>
-            <Button variant="secondary" onClick={handleReject} disabled={saving}>
-              <X size={16} /> Rechazar
-            </Button>
-          </div>
-        )}
-      </div>
-    )
-  }
-
-  // List view
-  return (
-    <div className="space-y-4 animate-in fade-in">
-      {/* KPIs */}
-      <div className="grid grid-cols-3 gap-4">
-        <KPICard
-          label="Abonos pendientes"
-          value={formatCurrency(pendingTotal)}
-          icon={<Receipt size={20} />}
-          color="#EAB308"
-        />
-        <KPICard
-          label="Abonos aplicados"
-          value={formatCurrency(appliedTotal)}
-          icon={<CheckCircle size={20} />}
-          color="#10B981"
-        />
-        <KPICard
-          label="Pendientes"
-          value={pendingCount}
-          icon={<Clock size={20} />}
-          color="#FF6600"
-        />
-      </div>
-
-      {/* Filters and actions */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex-1 min-w-[200px]">
-          <Input
-            placeholder="Buscar abonos..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            icon={<Hash size={14} />}
-          />
-        </div>
-        <Select
-          options={[
-            { value: '', label: 'Todos los estados' },
-            { value: 'pending', label: 'Pendiente' },
-            { value: 'applied', label: 'Aplicado' },
-            { value: 'rejected', label: 'Rechazado' },
-          ]}
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="w-44"
-        />
-        <Button variant="primary" onClick={() => { setShowCreate(true) }}>
-          <Plus size={16} /> Nuevo abono
-        </Button>
-      </div>
-
-      {/* Data table */}
-      <DataTable
-        data={filtered.map(cn => ({
-          id: cn.id,
-          number: cn.number,
-          supplier: cn.supplier?.name || cn.supplier?.legal_name || '-',
-          invoice_ref: (cn.purchase_invoice as PurchaseInvoice | undefined)?.number || '-',
-          date: cn.supplier_cn_date || cn.created_at,
-          total: cn.total,
-          status: cn.status,
-          reason: cn.reason || '-',
-          _raw: cn,
-        }))}
-        columns={[
-          { key: 'number', label: 'Numero', sortable: true },
-          { key: 'supplier', label: 'Proveedor', sortable: true, searchable: true },
-          { key: 'invoice_ref', label: 'Factura ref.', sortable: true },
-          {
-            key: 'date', label: 'Fecha', sortable: true, type: 'date',
-            render: (v) => v ? formatDate(v as string) : '-',
-          },
-          {
-            key: 'total', label: 'Total', sortable: true, type: 'currency',
-            render: (v) => <span className="text-[#FF6600] font-medium">{formatCurrency(v as number)}</span>,
-          },
-          {
-            key: 'status', label: 'Estado', sortable: true, type: 'status',
-            render: (v) => {
-              const st = CN_STATUS[v as string] || CN_STATUS.pending
-              return <Badge variant={st.variant}>{st.label}</Badge>
-            },
-          },
-          { key: 'reason', label: 'Motivo', searchable: true },
-        ]}
-        loading={loading}
-        onRowClick={(row) => openDetail(row._raw as PurchaseCreditNote)}
-        onNewClick={() => setShowCreate(true)}
-        newLabel="Nuevo abono"
-        exportFilename="abonos_compra"
-        totalLabel="abonos"
-      />
-
-      {/* CREATE MODAL */}
-      <Modal isOpen={showCreate} onClose={() => setShowCreate(false)} title="Nuevo abono de proveedor" size="xl">
-        <div className="space-y-4">
-          {/* Supplier */}
-          <SearchableSelect
-            label="Proveedor"
-            value={newCN.supplier_id}
-            onChange={(val) => setNewCN(prev => ({ ...prev, supplier_id: val, purchase_invoice_id: '' }))}
-            placeholder="Buscar proveedor..."
-            onSearch={searchSuppliers}
-            minSearchLength={2}
-          />
-
-          {/* Linked invoice */}
-          {newCN.supplier_id && supplierInvoices.length > 0 && (
-            <SearchableSelect
-              label="Factura vinculada (opcional)"
-              value={newCN.purchase_invoice_id}
-              onChange={(val) => setNewCN(prev => ({ ...prev, purchase_invoice_id: val }))}
-              placeholder="Seleccionar factura..."
-              options={supplierInvoices}
-            />
-          )}
-
-          <div className="grid grid-cols-2 gap-3">
-            <Input
-              label="N. abono proveedor"
-              value={newCN.supplier_cn_number}
-              onChange={(e) => setNewCN(prev => ({ ...prev, supplier_cn_number: e.target.value }))}
-              placeholder="Ej: AB-2024-001"
-            />
-            <Input
-              label="Fecha abono proveedor"
-              type="date"
-              value={newCN.supplier_cn_date}
-              onChange={(e) => setNewCN(prev => ({ ...prev, supplier_cn_date: e.target.value }))}
-            />
-          </div>
-
-          <Input
-            label="Motivo del abono"
-            value={newCN.reason}
-            onChange={(e) => setNewCN(prev => ({ ...prev, reason: e.target.value }))}
-            placeholder="Ej: Devolucion de mercaderia, diferencia de precio..."
-          />
-
-          {/* Items */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-sm font-medium text-[#9CA3AF]">Items</label>
-              <Button variant="ghost" size="sm" onClick={addItem}>
-                <Plus size={14} /> Agregar item
-              </Button>
-            </div>
-            <div className="space-y-2">
-              {newCN.items.map((item, idx) => (
-                <div key={idx} className="grid grid-cols-[1fr_80px_80px_100px_32px] gap-2 items-end">
-                  <Input
-                    placeholder="Descripcion"
-                    value={item.description}
-                    onChange={(e) => updateItem(idx, 'description', e.target.value)}
-                  />
-                  <Input
-                    placeholder="Cant."
-                    type="number"
-                    min="1"
-                    value={item.quantity}
-                    onChange={(e) => updateItem(idx, 'quantity', Number(e.target.value))}
-                  />
-                  <Input
-                    placeholder="SKU"
-                    value={item.sku}
-                    onChange={(e) => updateItem(idx, 'sku', e.target.value)}
-                  />
-                  <Input
-                    placeholder="Precio"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={item.unit_price}
-                    onChange={(e) => updateItem(idx, 'unit_price', Number(e.target.value))}
-                  />
-                  <button
-                    onClick={() => removeItem(idx)}
-                    className="h-10 w-8 flex items-center justify-center text-[#6B7280] hover:text-red-400 transition-colors"
-                    disabled={newCN.items.length <= 1}
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Tax rate */}
-          <div className="grid grid-cols-3 gap-3">
-            <Select
-              label="Tipo IVA"
-              options={[
-                { value: '0', label: '0% (Intracomunitaria)' },
-                { value: '4', label: '4% (Superreducido)' },
-                { value: '10', label: '10% (Reducido)' },
-                { value: '21', label: '21% (General)' },
-              ]}
-              value={String(newCN.tax_rate)}
-              onChange={(e) => setNewCN(prev => ({ ...prev, tax_rate: Number(e.target.value) }))}
-            />
-            <div className="p-3 rounded-xl bg-[#141820] border border-[#1E2330]">
-              <p className="text-xs text-[#6B7280] mb-1">Subtotal</p>
-              <p className="text-lg font-bold text-[#F0F2F5]">{formatCurrency(computedSubtotal)}</p>
-            </div>
-            <div className="p-3 rounded-xl bg-[#141820] border border-[#1E2330]">
-              <p className="text-xs text-[#6B7280] mb-1">Total (con IVA)</p>
-              <p className="text-lg font-bold text-[#FF6600]">{formatCurrency(computedTotal)}</p>
-            </div>
-          </div>
-
-          <Input
-            label="Notas"
-            value={newCN.notes}
-            onChange={(e) => setNewCN(prev => ({ ...prev, notes: e.target.value }))}
-            placeholder="Notas internas..."
-          />
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="secondary" onClick={() => setShowCreate(false)}>Cancelar</Button>
-            <Button variant="primary" onClick={handleCreate} disabled={saving}>
-              {saving ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
-              Crear abono
-            </Button>
-          </div>
-        </div>
-      </Modal>
-    </div>
-  )
-}
 
 // ===============================================================
 // INTERCOMPANY TAB
 // ===============================================================
 function IntercompanyTab() {
+  const router = useRouter()
   const [relations, setRelations] = useState<Row[]>([])
   const [documents, setDocuments] = useState<{ purchaseOrders: Row[]; salesOrders: Row[] }>({ purchaseOrders: [], salesOrders: [] })
   const [loading, setLoading] = useState(true)
@@ -3633,7 +2081,11 @@ function IntercompanyTab() {
           </div>
           <div className="divide-y divide-[#1E2330]">
             {documents.purchaseOrders.map((po: Row) => (
-              <div key={po.id as string} className="px-4 py-3 flex items-center gap-4 hover:bg-[#141820] transition-colors">
+              <div
+                key={po.id as string}
+                onClick={() => router.push(`/documentos/${po.id as string}`)}
+                className="px-4 py-3 flex items-center gap-4 hover:bg-[#141820] transition-colors cursor-pointer"
+              >
                 <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
                   <ShoppingCart size={14} className="text-blue-400" />
                 </div>
@@ -3644,7 +2096,7 @@ function IntercompanyTab() {
                       IC-Compra
                     </span>
                   </div>
-                  <p className="text-xs text-[#6B7280]">{po.supplier_name as string}</p>
+                  <p className="text-xs text-[#6B7280]">{getSupplierName(po as Row)}</p>
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-bold text-[#F0F2F5]">
@@ -3658,7 +2110,11 @@ function IntercompanyTab() {
               </div>
             ))}
             {documents.salesOrders.map((so: Row) => (
-              <div key={so.id as string} className="px-4 py-3 flex items-center gap-4 hover:bg-[#141820] transition-colors">
+              <div
+                key={so.id as string}
+                onClick={() => router.push(`/documentos/${so.id as string}`)}
+                className="px-4 py-3 flex items-center gap-4 hover:bg-[#141820] transition-colors cursor-pointer"
+              >
                 <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center">
                   <FileText size={14} className="text-emerald-400" />
                 </div>
@@ -3911,6 +2367,7 @@ function OfertasTab() {
   const [loading, setLoading] = useState(true)
   const [showPdfModal, setShowPdfModal] = useState(false)
   const [showExcelModal, setShowExcelModal] = useState(false)
+  const [selectedOffer, setSelectedOffer] = useState<SupplierOffer | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -4006,11 +2463,60 @@ function OfertasTab() {
         showTotals
         exportFilename="ofertas_proveedor"
         pageSize={25}
+        onRowClick={(row) => setSelectedOffer((row._raw as SupplierOffer) || null)}
       />
 
       {/* Modals */}
       <SubirOfertaPdfModal isOpen={showPdfModal} onClose={() => { setShowPdfModal(false); load() }} />
       <ActualizarPreciosExcelModal isOpen={showExcelModal} onClose={() => { setShowExcelModal(false); load() }} />
+
+      {/* Detalle de oferta (mínimo) */}
+      <Modal
+        isOpen={!!selectedOffer}
+        onClose={() => setSelectedOffer(null)}
+        title={selectedOffer ? `Oferta ${selectedOffer.number || ''}` : 'Oferta'}
+        size="md"
+      >
+        {selectedOffer && (
+          <div className="space-y-3 text-sm">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <p className="text-xs text-[#6B7280]">Proveedor</p>
+                <p className="text-[#F0F2F5]">{selectedOffer.supplier?.legal_name || selectedOffer.supplier?.name || selectedOffer.supplier_name || '-'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-[#6B7280]">Estado</p>
+                <p className="text-[#F0F2F5]">{OFFER_STATUS[selectedOffer.status]?.label || selectedOffer.status}</p>
+              </div>
+              <div>
+                <p className="text-xs text-[#6B7280]">Fecha</p>
+                <p className="text-[#F0F2F5]">{selectedOffer.offer_date ? formatDate(selectedOffer.offer_date) : '-'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-[#6B7280]">Válido hasta</p>
+                <p className="text-[#F0F2F5]">{selectedOffer.valid_until ? formatDate(selectedOffer.valid_until) : '-'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-[#6B7280]">Total</p>
+                <p className="text-[#F0F2F5]">{formatCurrency(selectedOffer.total || 0, (selectedOffer.currency || 'EUR') as 'EUR' | 'USD' | 'ARS')}</p>
+              </div>
+              <div>
+                <p className="text-xs text-[#6B7280]">Productos nuevos</p>
+                <p className="text-[#F0F2F5]">{selectedOffer.new_products_count || 0}</p>
+              </div>
+            </div>
+            {selectedOffer.notes && (
+              <div>
+                <p className="text-xs text-[#6B7280] mb-1">Notas</p>
+                <p className="text-[#D1D5DB] whitespace-pre-wrap">{selectedOffer.notes}</p>
+              </div>
+            )}
+            <div className="flex justify-end pt-2">
+              <Button variant="secondary" size="sm" onClick={() => setSelectedOffer(null)}>Cerrar</Button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

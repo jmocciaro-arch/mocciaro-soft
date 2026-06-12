@@ -52,7 +52,7 @@ export async function generateAlertsForCompany(
       for (const threshold of [7, 3, 1, 0, -7, -30]) {
         if (diffDays === threshold) {
           const dedup = `invdue-${inv.id}-${threshold}`
-          const severity: any = threshold <= 0 ? 'danger' : threshold <= 3 ? 'warning' : 'info'
+          const severity: 'danger' | 'warning' | 'info' = threshold <= 0 ? 'danger' : threshold <= 3 ? 'warning' : 'info'
           const msg = threshold === 0 ? 'vence HOY'
             : threshold > 0 ? `vence en ${threshold} día${threshold > 1 ? 's' : ''}`
             : `vencida hace ${Math.abs(threshold)} día${Math.abs(threshold) > 1 ? 's' : ''}`
@@ -224,8 +224,8 @@ export async function generateAlertsForCompany(
       .eq('company_id', companyId)
       .in('status', ['sent', 'partial', 'confirmed'])
 
-    const totalAR = (openInvoicesData || []).reduce((s: number, r: any) => s + Number(r.total || 0), 0)
-    const totalAP = (openPOData || []).reduce((s: number, r: any) => s + Number(r.total || 0), 0)
+    const totalAR = (openInvoicesData || []).reduce((s: number, r: { total?: number | null }) => s + Number(r.total || 0), 0)
+    const totalAP = (openPOData || []).reduce((s: number, r: { total?: number | null }) => s + Number(r.total || 0), 0)
 
     if (totalAP > totalAR * 1.5 && totalAP > 0) {
       await upsertAlert(supabase, {

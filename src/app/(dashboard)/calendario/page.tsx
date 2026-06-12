@@ -73,12 +73,14 @@ export default function CalendarioPage() {
   const [users, setUsers] = useState<Array<Row>>([])
   const [loading, setLoading] = useState(true)
   const [techFilter, setTechFilter] = useState('')
+  const [exportingGcal, setExportingGcal] = useState(false)
 
   // Modal state
   const [showEventModal, setShowEventModal] = useState(false)
   const [showDetailModal, setShowDetailModal] = useState(false)
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null)
   const [saving, setSaving] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
   const emptyForm = {
     title: '',
@@ -278,12 +280,15 @@ export default function CalendarioPage() {
     loadEvents()
   }
 
+  const askDeleteEvent = () => setShowDeleteConfirm(true)
+
   const deleteEvent = async () => {
     if (!selectedEvent) return
     const sb = createClient()
     const { error } = await sb.from('tt_sat_calendar_events').delete().eq('id', selectedEvent.id)
     if (error) { addToast({ type: 'error', title: 'Error', message: error.message }); return }
     addToast({ type: 'success', title: 'Evento eliminado' })
+    setShowDeleteConfirm(false)
     setShowDetailModal(false)
     setSelectedEvent(null)
     loadEvents()
@@ -312,6 +317,49 @@ export default function CalendarioPage() {
             onChange={(e) => setTechFilter(e.target.value)}
           />
           <Button variant="secondary" onClick={goToday}>Hoy</Button>
+          {/* Fix 6 — exportar eventos del mes en curso a Google Calendar */}
+          <Button
+            variant="secondary"
+            loading={exportingGcal}
+            onClick={async () => {
+              try {
+                setExportingGcal(true)
+                const from = new Date(year, month, 1).toISOString()
+                const to = new Date(year, month + 1, 0, 23, 59, 59).toISOString()
+                const res = await fetch('/api/calendar/export-to-google', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ from, to }),
+                })
+                if (res.status === 401) {
+                  const j = await res.json().catch(() => ({}))
+                  if (j?.redirect) {
+                    addToast({ type: 'warning', title: 'Conectar Google', message: 'Necesitas autorizar acceso a Calendar' })
+                    window.location.href = j.redirect
+                    return
+                  }
+                  addToast({ type: 'error', title: 'No autorizado' })
+                  return
+                }
+                const j = await res.json()
+                if (!res.ok) {
+                  addToast({ type: 'error', title: 'Error exportando', message: j?.message || j?.error || 'desconocido' })
+                  return
+                }
+                addToast({
+                  type: 'success',
+                  title: 'Eventos exportados',
+                  message: `${j.exported || 0} a Google Calendar${j.skipped ? ` (${j.skipped} omitidos)` : ''}`,
+                })
+              } catch (e) {
+                addToast({ type: 'error', title: 'Error', message: (e as Error).message })
+              } finally {
+                setExportingGcal(false)
+              }
+            }}
+          >
+            <Calendar size={14} /> Exportar a Google Calendar
+          </Button>
         </div>
       </div>
 
@@ -624,7 +672,7 @@ export default function CalendarioPage() {
               )}
 
               <div className="flex justify-between pt-4 border-t border-[#1E2330]">
-                <Button variant="danger" size="sm" onClick={deleteEvent}>
+                <Button variant="danger" size="sm" onClick={askDeleteEvent}>
                   <Trash2 size={14} /> Eliminar
                 </Button>
                 <Button onClick={editEvent}>
@@ -634,6 +682,16 @@ export default function CalendarioPage() {
             </div>
           )
         })()}
+      </Modal>
+
+      <Modal isOpen={showDeleteConfirm} onClose={() => setShowDeleteConfirm(false)} title="Eliminar evento" size="sm">
+        <div className="space-y-4">
+          <p className="text-sm text-[#D1D5DB]">¿Eliminar este evento del calendario? Esta acción no se puede deshacer.</p>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setShowDeleteConfirm(false)}>Cancelar</Button>
+            <Button variant="danger" onClick={deleteEvent}>Eliminar</Button>
+          </div>
+        </div>
       </Modal>
     </div>
   )

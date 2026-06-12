@@ -5,9 +5,11 @@ import { cn } from '@/lib/utils'
 import {
   ChevronUp, ChevronDown, ChevronsUpDown, Settings2,
   ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
-  Search, Plus, Printer, Check, Loader2, X
+  Search, Plus, Check, Loader2, X
 } from 'lucide-react'
 import { ExportButton } from './export-button'
+import { BulkActionsBar } from './bulk-actions-bar'
+import { STATUS_COLORS } from '@/lib/doc-types'
 
 // ----------------------------------------------------------------
 // Types
@@ -41,44 +43,19 @@ export interface DataTableProps {
     icon?: React.ReactNode
     onClick: () => void
   }[]
+  /** Acciones masivas — cuando se reciben, al haber filas seleccionadas
+   *  se renderiza la BulkActionsBar flotante con estas acciones. */
+  bulkActions?: {
+    label: string
+    icon?: React.ReactNode
+    onClick: (selectedRows: Record<string, unknown>[]) => void
+    variant?: 'default' | 'danger'
+  }[]
 }
 
 // ----------------------------------------------------------------
-// Status badges
+// Status badges — colores centralizados en src/lib/doc-types
 // ----------------------------------------------------------------
-const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
-  cerrado: { bg: 'rgba(16,185,129,0.15)', text: '#10B981' },
-  cerrada: { bg: 'rgba(16,185,129,0.15)', text: '#10B981' },
-  completado: { bg: 'rgba(16,185,129,0.15)', text: '#10B981' },
-  completada: { bg: 'rgba(16,185,129,0.15)', text: '#10B981' },
-  cobrada: { bg: 'rgba(16,185,129,0.15)', text: '#10B981' },
-  pagada: { bg: 'rgba(16,185,129,0.15)', text: '#10B981' },
-  pagado: { bg: 'rgba(16,185,129,0.15)', text: '#10B981' },
-  aceptada: { bg: 'rgba(16,185,129,0.15)', text: '#10B981' },
-  aceptado: { bg: 'rgba(16,185,129,0.15)', text: '#10B981' },
-  entregado: { bg: 'rgba(16,185,129,0.15)', text: '#10B981' },
-  entregada: { bg: 'rgba(16,185,129,0.15)', text: '#10B981' },
-  recibida: { bg: 'rgba(16,185,129,0.15)', text: '#10B981' },
-  completa: { bg: 'rgba(16,185,129,0.15)', text: '#10B981' },
-  pendiente: { bg: 'rgba(245,158,11,0.15)', text: '#F59E0B' },
-  abierto: { bg: 'rgba(59,130,246,0.15)', text: '#3B82F6' },
-  abierta: { bg: 'rgba(59,130,246,0.15)', text: '#3B82F6' },
-  facturado: { bg: 'rgba(99,102,241,0.15)', text: '#6366F1' },
-  facturada: { bg: 'rgba(99,102,241,0.15)', text: '#6366F1' },
-  borrador: { bg: 'rgba(107,114,128,0.15)', text: '#6B7280' },
-  enviada: { bg: 'rgba(59,130,246,0.15)', text: '#3B82F6' },
-  enviado: { bg: 'rgba(59,130,246,0.15)', text: '#3B82F6' },
-  parcial: { bg: 'rgba(249,115,22,0.15)', text: '#F97316' },
-  'pago parcial': { bg: 'rgba(249,115,22,0.15)', text: '#F97316' },
-  'entrega parcial': { bg: 'rgba(249,115,22,0.15)', text: '#F97316' },
-  'facturacion parcial': { bg: 'rgba(249,115,22,0.15)', text: '#F97316' },
-  cancelado: { bg: 'rgba(239,68,68,0.15)', text: '#EF4444' },
-  cancelada: { bg: 'rgba(239,68,68,0.15)', text: '#EF4444' },
-  rechazada: { bg: 'rgba(239,68,68,0.15)', text: '#EF4444' },
-  rechazado: { bg: 'rgba(239,68,68,0.15)', text: '#EF4444' },
-  vencida: { bg: 'rgba(239,68,68,0.15)', text: '#EF4444' },
-  'vence pronto': { bg: 'rgba(249,115,22,0.15)', text: '#F97316' },
-}
 
 function StatusBadge({ label }: { label: string }) {
   const key = label.toLowerCase().trim()
@@ -180,6 +157,7 @@ export function DataTable({
   exportFilename,
   exportTargetTable,
   actions,
+  bulkActions,
 }: DataTableProps) {
   // Column visibility
   const [visibleCols, setVisibleCols] = useState<Set<string>>(() => {
@@ -663,6 +641,30 @@ export function DataTable({
             </button>
           </div>
         </div>
+      )}
+
+      {/* Bulk actions bar — flotante cuando hay filas seleccionadas y se definieron acciones */}
+      {bulkActions && bulkActions.length > 0 && selectedIds.size > 0 && (
+        <BulkActionsBar
+          selectedCount={selectedIds.size}
+          totalCount={sorted.length}
+          onClear={() => setSelectedIds(new Set())}
+          onSelectAll={() =>
+            setSelectedIds(new Set(sorted.map(r => String(r.id ?? r.referencia ?? ''))))
+          }
+          actions={bulkActions.map((a, i) => ({
+            id: `bulk-${i}`,
+            label: a.label,
+            icon: a.icon,
+            variant: a.variant,
+            onClick: () => {
+              const selectedRows = sorted.filter(r =>
+                selectedIds.has(String(r.id ?? r.referencia ?? ''))
+              )
+              a.onClick(selectedRows)
+            },
+          }))}
+        />
       )}
     </div>
   )

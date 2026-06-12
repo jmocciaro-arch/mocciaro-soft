@@ -46,7 +46,7 @@ interface SeedContext {
 }
 
 async function main() {
-  const url = process.env.SUPABASE_URL
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY
 
   if (!url || !key) {
@@ -54,9 +54,13 @@ async function main() {
     process.exit(1)
   }
 
-  if (url.includes(PROD_URL_FRAGMENT)) {
+  if (url.includes(PROD_URL_FRAGMENT) && process.env.ALLOW_SEED_ON_PROD !== '1') {
     console.error('❌ ABORTANDO: SUPABASE_URL apunta a producción. Seed solo en staging/local.')
+    console.error('   Si la DB ya está vacía y querés correr de todos modos: ALLOW_SEED_ON_PROD=1 npm run seed:test')
     process.exit(2)
+  }
+  if (url.includes(PROD_URL_FRAGMENT)) {
+    console.warn('⚠️  ALLOW_SEED_ON_PROD=1 — seed corre sobre el proyecto productivo (vaciado el 2026-05-25).')
   }
 
   const supabase = createClient(url, key, { auth: { persistSession: false } })
@@ -99,12 +103,12 @@ async function main() {
   const whA = await upsertWarehouse(supabase, empresaA.id, { name: 'Depósito Central A', code: 'WH-TT-TEST' })
   const whB = await upsertWarehouse(supabase, empresaB.id, { name: 'Depósito Central B', code: 'WH-BT-TEST' })
 
-  // 4. Clientes (5 por empresa)
-  const clientA = await upsertClient(supabase, { company_name: 'Cliente Seed A1', tax_id: 'B-77777001', country: 'ES' })
-  const clientB = await upsertClient(supabase, { company_name: 'Cliente Seed B1', tax_id: '30-77777002-0', country: 'AR' })
+  // 4. Clientes (5 por empresa) — IMPORTANTE: pasar company_id para que RLS company-aware los deje ver
+  const clientA = await upsertClient(supabase, { company_name: 'Cliente Seed A1', tax_id: 'B-77777001', country: 'ES', company_id: empresaA.id })
+  const clientB = await upsertClient(supabase, { company_name: 'Cliente Seed B1', tax_id: '30-77777002-0', country: 'AR', company_id: empresaB.id })
   for (let i = 2; i <= 5; i++) {
-    await upsertClient(supabase, { company_name: `Cliente Seed A${i}`, tax_id: `B-7777700${i}`, country: 'ES' })
-    await upsertClient(supabase, { company_name: `Cliente Seed B${i}`, tax_id: `30-7777700${i}-0`, country: 'AR' })
+    await upsertClient(supabase, { company_name: `Cliente Seed A${i}`, tax_id: `B-7777700${i}`, country: 'ES', company_id: empresaA.id })
+    await upsertClient(supabase, { company_name: `Cliente Seed B${i}`, tax_id: `30-7777700${i}-0`, country: 'AR', company_id: empresaB.id })
   }
   console.log('✓ 10 clientes seed cargados (5 por empresa)')
 
@@ -179,7 +183,7 @@ async function upsertCompany(db: SupabaseLike, opts: CompanyInput): Promise<Comp
       tax_id: opts.tax_id,
       country: opts.country,
       currency: opts.currency,
-      is_active: true,
+      active: true,
     })
     .select('id, name, tax_id')
     .single()
@@ -208,10 +212,11 @@ async function upsertProducts(db: SupabaseLike, items: ProductInput[]): Promise<
         sku: p.sku,
         name: p.name,
         brand: p.brand,
-        price_list: p.price_list,
-        price_cost: p.price_list * 0.5,
-        price_currency: 'EUR',
-        is_active: true,
+        price_eur: p.price_list,
+        cost_eur: p.price_list * 0.5,
+        product_type: 'product',
+        gallery_urls: [],
+        active: true,
       })
       if (error) throw new Error(`upsertProducts(${p.sku}) falló: ${error.message}`)
     }
@@ -230,20 +235,20 @@ async function upsertWarehouse(db: SupabaseLike, companyId: string, opts: { name
 
   const { data, error } = await db
     .from('tt_warehouses')
-    .insert({ name: opts.name, code: opts.code, company_id: companyId, is_active: true })
+    .insert({ name: opts.name, code: opts.code, company_id: companyId, active: true })
     .select('id, name, code')
     .single()
   if (error || !data) throw new Error(`upsertWarehouse falló: ${error?.message ?? 'unknown'}`)
   return data as WarehouseRow
 }
 
-interface ClientInput { company_name: string; tax_id: string; country: string }
-interface ClientRow { id: string; company_name: string }
+interface ClientInput { company_name: string; tax_id: string; country: string; company_id?: string }
+interface ClientRow { id: string; name: string }
 
 async function upsertClient(db: SupabaseLike, opts: ClientInput): Promise<ClientRow> {
   const { data: existing } = await db
     .from('tt_clients')
-    .select('id, company_name')
+    .select('id, name')
     .eq('tax_id', opts.tax_id)
     .maybeSingle()
   if (existing) return existing as ClientRow
@@ -251,14 +256,14 @@ async function upsertClient(db: SupabaseLike, opts: ClientInput): Promise<Client
   const { data, error } = await db
     .from('tt_clients')
     .insert({
-      company_name: opts.company_name,
+      name: opts.company_name,
       legal_name: opts.company_name,
       tax_id: opts.tax_id,
       country: opts.country,
-      type: 'empresa',
-      is_active: true,
+      company_id: opts.company_id ?? null,
+      active: true,
     })
-    .select('id, company_name')
+    .select('id, name')
     .single()
   if (error || !data) throw new Error(`upsertClient falló: ${error?.message ?? 'unknown'}`)
   return data as ClientRow
@@ -289,24 +294,38 @@ async function upsertUser(db: SupabaseLike, companyId: string, opts: UserInput):
     return existing as UserRow
   }
 
-  // Crear en Supabase Auth
+  // Crear en Supabase Auth (idempotente: si ya existe, lo buscamos por email)
+  let authUserId: string | null = null
   const { data: auth, error: authErr } = await db.auth.admin.createUser({
     email: opts.email,
     password: opts.password,
     email_confirm: true,
   })
-  if (authErr || !auth.user) throw new Error(`upsertUser auth.createUser falló: ${authErr?.message}`)
+  if (auth?.user) {
+    authUserId = auth.user.id
+  } else if (authErr && /already been registered/i.test(authErr.message)) {
+    // Buscar el user existente en auth.users
+    const { data: list } = await db.auth.admin.listUsers({ page: 1, perPage: 200 })
+    const found = list?.users.find((u) => u.email === opts.email)
+    if (!found) throw new Error(`upsertUser: auth user '${opts.email}' existe pero no se encontró en listUsers`)
+    authUserId = found.id
+    // Forzar password reset al valor esperado para que los tests puedan loguear
+    await db.auth.admin.updateUserById(found.id, { password: opts.password, email_confirm: true })
+  } else {
+    throw new Error(`upsertUser auth.createUser falló: ${authErr?.message}`)
+  }
 
   // Insertar en tt_users
   const { data: ttUser, error: ttErr } = await db
     .from('tt_users')
     .insert({
-      auth_id: auth.user.id,
+      auth_id: authUserId,
+      username: opts.email.split('@')[0],
       email: opts.email,
       full_name: opts.full_name,
       role: 'admin',
-      default_company_id: companyId,
-      is_active: true,
+      company_id: companyId,
+      active: true,
     })
     .select('id, email')
     .single()
@@ -334,25 +353,25 @@ async function createDraftQuote(db: SupabaseLike, opts: DocInput): Promise<DocRo
     .from('tt_documents')
     .select('id')
     .eq('company_id', opts.company_id)
-    .eq('doc_type', 'quote')
+    .eq('doc_type', 'presupuesto')
     .eq('status', 'draft')
     .contains('metadata', { seed: 'e2e-test-2026' })
     .maybeSingle()
   if (existing) return existing as DocRow
 
+  const systemCode = `E2E-${opts.company_id.slice(0, 8)}-${Date.now()}`
+
   const { data, error } = await db
     .from('tt_documents')
     .insert({
       company_id: opts.company_id,
-      doc_type: 'quote',
-      direction: 'sales',
+      doc_type: 'presupuesto',
       status: 'draft',
-      currency_code: opts.currency_code,
-      counterparty_type: 'customer',
-      counterparty_id: opts.counterparty_id,
-      counterparty_name: opts.counterparty_name,
-      created_by: opts.created_by,
-      metadata: { seed: 'e2e-test-2026' },
+      currency: opts.currency_code,
+      system_code: systemCode,
+      client_id: opts.counterparty_id,
+      user_id: opts.created_by,
+      metadata: { seed: 'e2e-test-2026', counterparty_name: opts.counterparty_name },
     })
     .select('id')
     .single()

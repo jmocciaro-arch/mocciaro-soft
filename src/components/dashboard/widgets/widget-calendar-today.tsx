@@ -7,9 +7,10 @@ import { WidgetSkeleton, WidgetError } from '../widget-wrapper'
 
 interface Event {
   id: string
-  action: string
-  detail: string | null
-  created_at: string
+  title: string
+  status: string | null
+  start_date: string
+  all_day: boolean | null
 }
 
 export function WidgetCalendarToday() {
@@ -25,13 +26,14 @@ export function WidgetCalendarToday() {
         const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString()
         const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1).toISOString()
 
+        // tt_sat_calendar_events es la tabla real de eventos (no tiene company_id propio)
         const { data, error: e } = await supabase
-          .from('tt_activity_log')
-          .select('id, action, detail, created_at')
-          .gte('created_at', startOfDay)
-          .lt('created_at', endOfDay)
-          .order('created_at', { ascending: true })
-          .limit(15)
+          .from('tt_sat_calendar_events')
+          .select('id, title, status, start_date, all_day')
+          .gte('start_date', startOfDay)
+          .lt('start_date', endOfDay)
+          .order('start_date', { ascending: true })
+          .limit(10)
 
         if (e) throw e
         setEvents((data as Event[]) || [])
@@ -68,23 +70,25 @@ export function WidgetCalendarToday() {
       <p className="text-xs text-[#6B7280] mb-3 capitalize">{todayStr}</p>
       <div className="space-y-2">
         {events.map(ev => {
-          const time = new Date(ev.created_at).toLocaleTimeString('es-AR', {
-            hour: '2-digit',
-            minute: '2-digit',
-          })
+          const time = ev.all_day
+            ? 'Todo el día'
+            : new Date(ev.start_date).toLocaleTimeString('es-AR', {
+                hour: '2-digit',
+                minute: '2-digit',
+              })
           return (
             <div
               key={ev.id}
               className="flex items-start gap-2.5 p-2 rounded-lg hover:bg-[#1A1F2E] transition-colors"
             >
-              <div className="flex items-center gap-1 text-[10px] text-[#FF6600] font-mono shrink-0 mt-0.5 w-12">
+              <div className="flex items-center gap-1 text-[10px] text-[#FF6600] font-mono shrink-0 mt-0.5 w-14">
                 <Clock size={10} />
                 {time}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-xs text-[#F0F2F5] truncate">{ev.action}</p>
-                {ev.detail && (
-                  <p className="text-[10px] text-[#6B7280] truncate">{ev.detail}</p>
+                <p className="text-xs text-[#F0F2F5] truncate">{ev.title}</p>
+                {ev.status && (
+                  <p className="text-[10px] text-[#6B7280] truncate">{ev.status}</p>
                 )}
               </div>
             </div>

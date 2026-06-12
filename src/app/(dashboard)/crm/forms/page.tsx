@@ -63,6 +63,7 @@ export default function FormsPage() {
   const [newOpen, setNewOpen] = useState(false)
   const [embedOpen, setEmbedOpen] = useState<PublicForm | null>(null)
   const [saving, setSaving] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
   // Form builder state
   const [newName, setNewName] = useState('')
@@ -152,9 +153,15 @@ export default function FormsPage() {
     await load()
   }
 
-  async function handleDelete(id: string) {
-    if (!confirm('¿Eliminás este formulario?')) return
-    await supabase.from('tt_public_forms').delete().eq('id', id)
+  function handleDelete(id: string) {
+    setDeleteTarget(id)
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return
+    await supabase.from('tt_public_forms').delete().eq('id', deleteTarget)
+    setDeleteTarget(null)
+    addToast({ type: 'success', title: 'Formulario eliminado' })
     await load()
   }
 
@@ -455,6 +462,16 @@ export default function FormsPage() {
             </Button>
           </div>
         )}
+      </Modal>
+
+      <Modal isOpen={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="Eliminar formulario" size="sm">
+        <div className="space-y-4">
+          <p className="text-sm text-[#D1D5DB]">¿Eliminás este formulario? Esta acción no se puede deshacer.</p>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setDeleteTarget(null)}>Cancelar</Button>
+            <Button onClick={confirmDelete}>Eliminar</Button>
+          </div>
+        </div>
       </Modal>
     </div>
   )

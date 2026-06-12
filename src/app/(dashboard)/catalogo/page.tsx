@@ -7,6 +7,8 @@ import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/modal'
+import { SkeletonCardGrid } from '@/components/ui/skeleton'
+import { EmptyState } from '@/components/ui/empty-state'
 import { Select } from '@/components/ui/select'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { KPICard } from '@/components/ui/kpi-card'
@@ -286,6 +288,11 @@ function ProductosTab() {
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
 
   // ---------- Load dynamic categories from tt_products on mount ----------
+  // NOTA multi-empresa: tt_products NO tiene company_id (catálogo es global
+  // cross-company en este ERP). Por lo tanto el conteo de categorías es
+  // global. TODO: si en el futuro se asignan productos por company, hay que
+  // modificar el RPC `get_catalog_category_counts` para aceptar `p_company_ids`
+  // y filtrar en server-side. Mientras tanto se deja sin filtrar.
   const loadCategories = useCallback(async () => {
     setCategoriesLoading(true)
     const sb = createClient()
@@ -298,6 +305,7 @@ function ProductosTab() {
     setTotalProductCount(allCount || 0)
 
     // Usamos RPC para obtener conteos y subcategorías sin el límite de 1000 filas
+    // TODO multi-empresa: pasar p_company_ids cuando el RPC lo soporte.
     const { data: rpcData, error: rpcError } = await sb.rpc('get_catalog_category_counts')
 
     if (!rpcError && rpcData && Array.isArray(rpcData)) {
@@ -1237,7 +1245,6 @@ function ProductosTab() {
           size="sm"
           onClick={async () => {
             const sb = createClient()
-            const { addToast: t } = { addToast }
             addToast({ type: 'info', title: 'Descargando todos los productos...' })
             // Fetch ALL products (no limit)
             let allProds: Record<string, unknown>[] = []
@@ -1834,7 +1841,7 @@ function ProductosTab() {
                           <th
                             key={col}
                             className={`px-3 py-3 text-xs font-semibold text-[#6B7280] uppercase tracking-wider ${def.align} ${
-                              col === 'image' ? 'w-[60px]' : col === 'cotizar' ? 'w-[100px]' : ''
+                              col === 'image' ? 'w-[60px]' : col === 'cotizar' ? 'w-[100px]' : col === 'price' ? 'min-w-[110px] whitespace-nowrap' : ''
                             } ${def.sortable ? 'cursor-pointer hover:text-[#FF6600] transition-colors' : ''}`}
                             onClick={def.sortable ? () => {
                               if (col === 'name') setSortBy(sortBy === 'name_asc' ? 'name_desc' : 'name_asc')
@@ -2204,6 +2211,17 @@ function ProductosTab() {
                 }}
               >
                 <ShoppingCart size={16} /> Cotizar este producto
+              </Button>
+              {/* Fix 8 — Crear OC con este producto */}
+              <Button
+                variant="secondary"
+                className="flex-1 gap-2"
+                onClick={() => {
+                  const payload = JSON.stringify([{ sku: selectedProduct.sku, qty: 1 }])
+                  router.push(`/compras?tab=pedidos&newWithProducts=${encodeURIComponent(payload)}`)
+                }}
+              >
+                <ShoppingCart size={16} /> Crear OC con este producto
               </Button>
             </div>
           </div>
@@ -4075,19 +4093,18 @@ function TarifasTab() {
 
       {/* List loading */}
       {loading ? (
-        <div className="flex flex-col items-center justify-center py-20">
-          <Loader2 className="animate-spin text-[#FF6600] mb-3" size={32} />
-          <p className="text-sm text-[#4B5563]">Cargando tarifas...</p>
-        </div>
+        <SkeletonCardGrid cards={3} />
       ) : priceLists.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-[#4B5563]">
-          <DollarSign size={48} className="mb-4" />
-          <p className="text-lg font-medium">No hay tarifas creadas</p>
-          <p className="text-sm mt-1">Crea tu primera lista de precios</p>
-          <Button variant="primary" size="sm" className="mt-4" onClick={openCreateModal}>
-            <Plus size={14} /> Nueva tarifa
-          </Button>
-        </div>
+        <EmptyState
+          icon={<DollarSign size={48} />}
+          title="No hay tarifas creadas"
+          description="Las tarifas te permiten definir precios diferenciados por cliente, canal o segmento. Creá la primera y asignala desde la ficha del cliente."
+          action={
+            <Button variant="primary" onClick={openCreateModal}>
+              <Plus size={14} /> Crear primera tarifa
+            </Button>
+          }
+        />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {priceLists.map(pl => (

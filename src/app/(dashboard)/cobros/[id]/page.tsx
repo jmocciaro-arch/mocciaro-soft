@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { Card } from '@/components/ui/card'
@@ -8,7 +8,17 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { DocumentProcessBar } from '@/components/workflow/document-process-bar'
 import { buildSteps } from '@/lib/workflow-definitions'
-import { ArrowLeft, CheckCircle2, XCircle, ExternalLink, Search } from 'lucide-react'
+import { CheckCircle2, XCircle, Search, X as XIcon } from 'lucide-react'
+
+interface InvoiceMatch {
+  id: string
+  display_ref: string | null
+  legal_number: string | null
+  invoice_number: string | null
+  total: number | null
+  status: string | null
+  client_name?: string | null
+}
 
 interface Line {
   id: string
@@ -51,6 +61,7 @@ export default function StatementDetailPage() {
   const [lines, setLines] = useState<Line[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'all' | 'unmatched' | 'suggested' | 'confirmed'>('all')
+  const [pickerLine, setPickerLine] = useState<Line | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -74,20 +85,26 @@ export default function StatementDetailPage() {
 
   useEffect(() => { void load() }, [load])
 
-  async function confirmMatch(lineId: string, action: 'confirm' | 'reject') {
+  async function confirmMatch(lineId: string, action: 'confirm' | 'reject', documentId?: string) {
     const res = await fetch('/api/bank-statements/confirm-match', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lineId, action }),
+      body: JSON.stringify({ lineId, action, documentId }),
     })
     if (res.ok) {
       setLines((prev) => prev.map((l) => l.id === lineId ? {
         ...l, match_status: action === 'confirm' ? 'confirmed' : 'rejected',
       } : l))
     } else {
-      const j = await res.json()
+      const j = await res.json().catch(() => ({ error: 'Error desconocido' }))
       alert('Error: ' + j.error)
     }
+  }
+
+  async function handlePickerConfirm(line: Line, invoice: InvoiceMatch) {
+    await confirmMatch(line.id, 'confirm', invoice.id)
+    setPickerLine(null)
+    void load()
   }
 
   const filtered = filter === 'all' ? lines : lines.filter((l) => l.match_status === filter)
@@ -134,19 +151,6 @@ export default function StatementDetailPage() {
         onClose={() => router.back()}
       />
       <div className="px-6 space-y-4">
-      <div className="flex items-center gap-3" style={{ display: 'none' }}>
-        <Button variant="secondary" size="sm" onClick={() => router.back()}>
-          <ArrowLeft className="w-4 h-4 mr-1" /> Volver
-        </Button>
-        <h1 className="text-2xl font-bold">{statement?.bank_name || 'Extracto'}</h1>
-        {statement?.account_number && <span className="opacity-60">· {statement.account_number}</span>}
-        {statement?.original_pdf_url && (
-          <a href={statement.original_pdf_url} target="_blank" rel="noopener noreferrer" className="text-xs underline opacity-70 ml-auto">
-            <ExternalLink className="w-3 h-3 inline" /> Ver PDF original
-          </a>
-        )}
-      </div>
-
       {statement && (
         <div className="grid grid-cols-4 gap-3">
           <KPI label="Periodo" value={`${statement.period_from || '–'} → ${statement.period_to || '–'}`} />
@@ -171,11 +175,173 @@ export default function StatementDetailPage() {
         ) : (
           <div className="divide-y" style={{ borderColor: '#2A3040' }}>
             {filtered.map((l) => (
-              <LineRow key={l.id} line={l} onConfirm={() => confirmMatch(l.id, 'confirm')} onReject={() => confirmMatch(l.id, 'reject')} />
+              <LineRow
+                key={l.id}
+                line={l}
+                onConfirm={() => confirmMatch(l.id, 'confirm')}
+                onReject={() => confirmMatch(l.id, 'reject')}
+                onPick={() => setPickerLine(l)}
+              />
             ))}
           </div>
         )}
       </Card>
+      </div>
+
+      {pickerLine && (
+        <InvoicePickerModal
+          line={pickerLine}
+          onClose={() => setPickerLine(null)}
+          onPick={(inv) => handlePickerConfirm(pickerLine, inv)}
+        />
+      )}
+    </div>
+  )
+}
+
+function InvoicePickerModal({
+  line,
+  onClose,
+  onPick,
+}: {
+  line: Line
+  onClose: () => void
+  onPick: (invoice: InvoiceMatch) => void
+}) {
+  const supabase = createClient()
+  const [search, setSearch] = useState('')
+  const [results, setResults] = useState<InvoiceMatch[]>([])
+  const [loading, setLoading] = useState(false)
+  const [selected, setSelected] = useState<InvoiceMatch | null>(null)
+
+  // Rango de tolerancia ±20% sobre el monto de la línea
+  const minAmount = useMemo(() => Math.abs(line.amount) * 0.8, [line.amount])
+  const maxAmount = useMemo(() => Math.abs(line.amount) * 1.2, [line.amount])
+
+  useEffect(() => {
+    let cancelled = false
+    async function run() {
+      setLoading(true)
+      let query = supabase
+        .from('tt_documents')
+        .select(`
+          id, display_ref, legal_number, invoice_number, total, status,
+          client:tt_clients ( name, legal_name )
+        `)
+        .eq('doc_type', 'factura')
+        .in('status', ['pending', 'partial', 'open', 'sent', 'draft'])
+        .gte('total', minAmount)
+        .lte('total', maxAmount)
+        .order('created_at', { ascending: false })
+        .limit(50)
+
+      if (search.trim()) {
+        const term = `%${search.trim()}%`
+        query = query.or(
+          `display_ref.ilike.${term},legal_number.ilike.${term},invoice_number.ilike.${term}`
+        )
+      }
+
+      const { data } = await query
+      if (cancelled) return
+      const mapped: InvoiceMatch[] = (data || []).map((r: Record<string, unknown>) => {
+        const client = r.client as { name?: string; legal_name?: string } | null
+        return {
+          id: r.id as string,
+          display_ref: (r.display_ref as string) ?? null,
+          legal_number: (r.legal_number as string) ?? null,
+          invoice_number: (r.invoice_number as string) ?? null,
+          total: (r.total as number) ?? null,
+          status: (r.status as string) ?? null,
+          client_name: client?.legal_name || client?.name || null,
+        }
+      })
+      setResults(mapped)
+      setLoading(false)
+    }
+    const t = setTimeout(run, 250)
+    return () => { cancelled = true; clearTimeout(t) }
+  }, [search, minAmount, maxAmount, supabase])
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,0.6)' }}
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-2xl rounded-lg overflow-hidden flex flex-col"
+        style={{ background: '#151821', border: '1px solid #2A3040', maxHeight: '85vh' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-4 border-b flex items-center justify-between" style={{ borderColor: '#2A3040' }}>
+          <div>
+            <div className="text-sm font-semibold">Buscar factura para conciliar</div>
+            <div className="text-xs opacity-60 mt-1">
+              Movimiento: {line.date} · ${line.amount.toLocaleString('es-AR')} · {line.description}
+            </div>
+            <div className="text-xs opacity-50 mt-1">
+              Mostrando facturas pendientes con total entre ${minAmount.toLocaleString('es-AR')} y ${maxAmount.toLocaleString('es-AR')} (±20%)
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1 opacity-60 hover:opacity-100" aria-label="Cerrar">
+            <XIcon className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-3 border-b" style={{ borderColor: '#2A3040' }}>
+          <input
+            autoFocus
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Buscar por número de factura, referencia..."
+            className="w-full px-3 py-2 rounded text-sm"
+            style={{ background: '#0A0C0F', border: '1px solid #2A3040', color: 'inherit' }}
+          />
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          {loading ? (
+            <div className="p-6 text-center text-sm opacity-60">Buscando...</div>
+          ) : results.length === 0 ? (
+            <div className="p-6 text-center text-sm opacity-60">Sin facturas que matcheen el rango de monto</div>
+          ) : (
+            <div className="divide-y" style={{ borderColor: '#2A3040' }}>
+              {results.map((inv) => {
+                const isSel = selected?.id === inv.id
+                const ref = inv.display_ref || inv.legal_number || inv.invoice_number || '-'
+                return (
+                  <button
+                    key={inv.id}
+                    type="button"
+                    onClick={() => setSelected(inv)}
+                    className="w-full text-left p-3 hover:opacity-80"
+                    style={{ background: isSel ? 'rgba(249,115,22,0.1)' : 'transparent' }}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-semibold truncate">{ref}</div>
+                        <div className="text-xs opacity-70 truncate">{inv.client_name || 'Sin cliente'}</div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className="text-sm font-bold">${(inv.total || 0).toLocaleString('es-AR')}</div>
+                        <Badge variant="default">{inv.status || '-'}</Badge>
+                      </div>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="p-3 border-t flex items-center justify-end gap-2" style={{ borderColor: '#2A3040' }}>
+          <Button variant="secondary" onClick={onClose}>Cancelar</Button>
+          <Button onClick={() => selected && onPick(selected)} disabled={!selected}>
+            Confirmar match
+          </Button>
+        </div>
       </div>
     </div>
   )
@@ -207,7 +373,7 @@ function FilterBtn({ label, active, onClick }: { label: string; active: boolean;
   )
 }
 
-function LineRow({ line, onConfirm, onReject }: { line: Line; onConfirm: () => void; onReject: () => void }) {
+function LineRow({ line, onConfirm, onReject, onPick }: { line: Line; onConfirm: () => void; onReject: () => void; onPick: () => void }) {
   const bg =
     line.match_status === 'confirmed' ? 'rgba(16,185,129,0.05)'
     : line.match_status === 'suggested' ? 'rgba(249,115,22,0.05)'
@@ -257,7 +423,7 @@ function LineRow({ line, onConfirm, onReject }: { line: Line; onConfirm: () => v
           </div>
         )}
         {line.match_status === 'unmatched' && line.amount > 0 && (
-          <Button size="sm" variant="secondary" onClick={() => alert('TODO: picker manual de factura')}>
+          <Button size="sm" variant="secondary" onClick={onPick}>
             <Search className="w-3 h-3 mr-1" /> Buscar manual
           </Button>
         )}

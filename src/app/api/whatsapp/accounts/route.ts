@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { last4, buildWebhookUrl } from '@/lib/whatsapp/admin'
 import type { WhatsAppAccount, WhatsAppAccountPublic } from '@/lib/whatsapp/types'
+import { requireAdmin, userHasCompanyAccess } from '@/lib/auth/require-admin'
 
 export const runtime = 'nodejs'
 
@@ -36,8 +37,15 @@ function toPublic(row: WhatsAppAccount): WhatsAppAccountPublic {
 // GET /api/whatsapp/accounts?company_id=...
 // ----------------------------------------------------------------------------
 export async function GET(req: NextRequest) {
+  const guard = await requireAdmin()
+  if (!guard.ok) return guard.response
+
   const supabase = await createClient()
   const companyId = req.nextUrl.searchParams.get('company_id')
+
+  if (companyId && !(await userHasCompanyAccess(guard.ttUserId, guard.role, companyId))) {
+    return NextResponse.json({ error: 'Sin acceso a esta empresa' }, { status: 403 })
+  }
 
   let query = supabase.from('tt_company_whatsapp_accounts').select('*').order('created_at', { ascending: true })
   if (companyId) query = query.eq('company_id', companyId)
@@ -56,8 +64,15 @@ export async function GET(req: NextRequest) {
 //         webhook_verify_token, webhook_path, business_name?, is_default? }
 // ----------------------------------------------------------------------------
 export async function POST(req: NextRequest) {
+  const guard = await requireAdmin()
+  if (!guard.ok) return guard.response
+
   const supabase = await createClient()
   const body = await req.json()
+
+  if (body.company_id && !(await userHasCompanyAccess(guard.ttUserId, guard.role, body.company_id))) {
+    return NextResponse.json({ error: 'Sin acceso a esta empresa' }, { status: 403 })
+  }
 
   const required = [
     'company_id', 'display_name', 'phone_number', 'phone_number_id',

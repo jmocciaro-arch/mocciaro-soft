@@ -8,19 +8,23 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { buildAgingReport, getAgingAISuggestion } from '@/lib/cashflow/aging-ai'
+import { withCompanyFilter, ensureCompanyAccess } from '@/lib/auth/with-company-filter'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
 
 export async function GET(req: NextRequest) {
+  const guard = await withCompanyFilter()
+  if (!guard.ok) return guard.response
+
   const { searchParams } = new URL(req.url)
   const companyId = searchParams.get('company_id')
   const withAI = searchParams.get('with_ai') === '1'
   const clientId = searchParams.get('client_id')  // para AI de un solo cliente
 
-  if (!companyId) {
-    return NextResponse.json({ error: 'company_id requerido' }, { status: 400 })
-  }
+  const access = ensureCompanyAccess(guard, companyId)
+  if (!access.ok) return access.response
+  if (!companyId) return NextResponse.json({ error: 'company_id requerido' }, { status: 400 })
 
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

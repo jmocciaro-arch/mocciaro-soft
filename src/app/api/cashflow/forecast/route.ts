@@ -8,20 +8,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { buildForecast } from '@/lib/cashflow/forecast'
+import { withCompanyFilter, ensureCompanyAccess } from '@/lib/auth/with-company-filter'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
 export async function GET(req: NextRequest) {
+  const guard = await withCompanyFilter()
+  if (!guard.ok) return guard.response
+
   const { searchParams } = new URL(req.url)
   const companyId = searchParams.get('company_id')
   const horizonParam = searchParams.get('horizon')
   const currency = searchParams.get('currency') || 'EUR'
   const save = searchParams.get('save') === '1'
 
-  if (!companyId) {
-    return NextResponse.json({ error: 'company_id requerido' }, { status: 400 })
-  }
+  const access = ensureCompanyAccess(guard, companyId)
+  if (!access.ok) return access.response
+  if (!companyId) return NextResponse.json({ error: 'company_id requerido' }, { status: 400 })
 
   const horizon = ([30, 60, 90].includes(Number(horizonParam)) ? Number(horizonParam) : 90) as 30 | 60 | 90
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { getEnv } from '@/lib/env'
 import { sendWhatsApp } from '@/lib/whatsapp/send-whatsapp'
+import { requireAdmin, userHasCompanyAccess } from '@/lib/auth/require-admin'
 import { buildDocumentEmailHtml } from '@/lib/email/document-email-templates'
 import type {
   CompanyInfo,
@@ -10,6 +11,9 @@ import type {
   BankDetails,
   DocumentType,
 } from '@/lib/email/document-email-templates'
+import { renderDocumentHTML } from '@/lib/documents/render'
+import { htmlToPdf } from '@/lib/documents/pdf-adapter'
+import { logger } from '@/lib/observability/logger'
 
 export const runtime = 'nodejs'
 
@@ -26,12 +30,34 @@ export const runtime = 'nodejs'
  *   6. Envía via Gmail API con MIME multipart (HTML + PDF adjunto)
  */
 
+interface Recipient {
+  email: string
+  name?: string
+  type?: 'to' | 'cc' | 'bcc'
+}
+
 interface SendBody {
   channel: 'email' | 'whatsapp' | 'both'
+
+  /** LEGACY simple: 1 destinatario */
   to?: string
   phone?: string
+
+  /** NUEVO: lista detallada de destinatarios con TO/CC/BCC */
+  recipients?: Recipient[]
+
   subject?: string
   message?: string
+
+  /** Opcional: HTML body custom (override del template). Si viene, se usa este. */
+  body_html?: string
+
+  /** Adjuntos a incluir. 'pdf' = adjuntar el PDF del doc. */
+  attachments?: Array<'pdf' | 'html' | string>
+
+  /** Tracking pixel — si llega, se inyecta <img src="/api/tracking/{tracking_id}"> */
+  tracking_id?: string
+
   companyId: string
 }
 
@@ -77,19 +103,45 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const guard = await requireAdmin()
+    if (!guard.ok) return guard.response
+
     const { id } = await params
     const body = await req.json() as SendBody
-    const { channel, to, phone, subject, message, companyId } = body
+    const {
+      channel, to, phone, subject, message, companyId,
+      recipients: bodyRecipients,
+      body_html: customHtml,
+      attachments: requestedAttachments,
+      tracking_id: trackingId,
+    } = body
 
     if (!channel) {
       return NextResponse.json({ error: 'channel requerido' }, { status: 400 })
     }
-    if ((channel === 'email' || channel === 'both') && !to) {
+
+    if (companyId && !(await userHasCompanyAccess(guard.ttUserId, guard.role, companyId))) {
+      return NextResponse.json({ error: 'Sin acceso a esta empresa' }, { status: 403 })
+    }
+
+    // Normalizar destinatarios — preferimos recipients[]; fallback a `to` simple
+    const allRecipients: Recipient[] = (bodyRecipients && bodyRecipients.length > 0)
+      ? bodyRecipients
+      : (to ? [{ email: to, type: 'to' }] : [])
+
+    const toList = allRecipients.filter(r => (r.type ?? 'to') === 'to').map(r => r.email)
+    const ccList = allRecipients.filter(r => r.type === 'cc').map(r => r.email)
+    const bccList = allRecipients.filter(r => r.type === 'bcc').map(r => r.email)
+    const primaryTo = toList[0] || to || ''
+
+    if ((channel === 'email' || channel === 'both') && toList.length === 0) {
       return NextResponse.json({ error: 'to (email) requerido para canal email' }, { status: 400 })
     }
     if ((channel === 'whatsapp' || channel === 'both') && !phone) {
       return NextResponse.json({ error: 'phone requerido para canal whatsapp' }, { status: 400 })
     }
+
+    const wantsPdfAttachment = Array.isArray(requestedAttachments) && requestedAttachments.includes('pdf')
 
     const supabaseUrl = getEnv('NEXT_PUBLIC_SUPABASE_URL')!
     const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY')!
@@ -212,7 +264,7 @@ export async function POST(
           []
 
         // ── Generar HTML ──────────────────────────────────────────────────────
-        const htmlBody = buildDocumentEmailHtml(
+        let htmlBody = customHtml || buildDocumentEmailHtml(
           docType,
           company,
           docInfo,
@@ -220,10 +272,41 @@ export async function POST(
           portalUrl ?? undefined,
         )
 
+        // Inyectar tracking pixel si corresponde
+        if (trackingId) {
+          const baseUrlForPixel = baseUrl
+          const pixel = `<img src="${baseUrlForPixel}/api/tracking/${trackingId}" width="1" height="1" alt="" style="display:none;width:1px;height:1px;border:0;" />`
+          if (htmlBody.toLowerCase().includes('</body>')) {
+            htmlBody = htmlBody.replace(/<\/body>/i, `${pixel}</body>`)
+          } else {
+            htmlBody = `${htmlBody}${pixel}`
+          }
+        }
+
         const companyDisplayName = company.trade_name || company.name || 'Su proveedor'
         const subjectPrefix = DOC_TYPE_SUBJECT_PREFIX[docType] || 'Documento'
         const emailSubject =
           subject || `${subjectPrefix} ${docRef} — ${companyDisplayName}`
+
+        // ── Generar PDF real si se pidió adjuntarlo ────────────────────────────
+        let pdfBytes: Buffer | null = null
+        let pdfFilename = `${DOC_TYPE_PDF_NAME[docType] || 'documento'}-${docRef}.pdf`
+        if (wantsPdfAttachment) {
+          try {
+            const rendered = await renderDocumentHTML(id)
+            if (!('error' in rendered)) {
+              const pdfRes = await htmlToPdf(rendered.html)
+              if (!('error' in pdfRes)) {
+                pdfBytes = Buffer.from(pdfRes.pdf)
+                pdfFilename = rendered.filename || pdfFilename
+              } else {
+                logger.warn('[documents/send] PDF gen failed:', pdfRes.error)
+              }
+            }
+          } catch (pdfErr) {
+            logger.warn('[documents/send] No se pudo generar PDF adjunto:', pdfErr)
+          }
+        }
 
         // ── Enviar via Gmail API ──────────────────────────────────────────────
         try {
@@ -241,49 +324,65 @@ export async function POST(
 
             const gmail = google.gmail({ version: 'v1', auth: oauth2Client })
 
-            // Generar documento adjunto: fetch del HTML render → adjuntar como HTML imprimible
-            let attachmentBase64: string | null = null
-            let attachmentMimeType = 'text/html'
-            let attachmentExt = 'html'
-            try {
-              const internalUrl = `http://localhost:${process.env.PORT || 3000}/api/documents/${id}/render`
-              const renderRes = await fetch(internalUrl).catch(() => null)
-              if (renderRes && renderRes.ok) {
-                const htmlContent = await renderRes.text()
-                attachmentBase64 = Buffer.from(htmlContent, 'utf-8').toString('base64')
-                attachmentMimeType = 'text/html'
-                attachmentExt = 'html'
-              }
-            } catch (renderErr) {
-              console.warn('[documents/send] No se pudo generar adjunto:', renderErr)
-            }
-
-            // Fallback: si no hay render, adjuntar un resumen en texto plano
-            const pdfBase64 = attachmentBase64
-
             const companyEmail = company.email_main
-            const pdfFileName = `${DOC_TYPE_PDF_NAME[docType] || 'documento'}-${docRef}.pdf`
-            const boundary = `boundary_${Date.now()}`
 
             // RFC 2047: encode subject con UTF-8 para que Gmail muestre tildes/ñ/guiones
             const encSubject = `=?UTF-8?B?${Buffer.from(emailSubject, 'utf-8').toString('base64')}?=`
-            const finalFileName = pdfFileName.replace(/\.pdf$/, `.${attachmentExt}`).replace(/[^\x20-\x7E]/g, '_')
             // Helper: base64 con line breaks cada 76 chars (requerido por MIME)
             const toBase64Lines = (buf: Buffer | string) => {
               const b64 = typeof buf === 'string' ? Buffer.from(buf, 'utf-8').toString('base64') : buf.toString('base64')
               return b64.match(/.{1,76}/g)?.join('\r\n') || b64
             }
 
-            // Email HTML directo — mismo formato que el test que funcionó
-            const mimeMessage = [
-              `To: ${to}`,
-              `Subject: ${encSubject}`,
-              companyEmail ? `Reply-To: ${companyEmail}` : '',
-              'MIME-Version: 1.0',
-              'Content-Type: text/html; charset=UTF-8',
-              '',
-              htmlBody,
-            ].filter(l => l !== '').join('\r\n')
+            const safePdfName = pdfFilename.replace(/[^\x20-\x7E]/g, '_')
+            const toHeader = toList.join(', ')
+            const ccHeader = ccList.length > 0 ? `Cc: ${ccList.join(', ')}\r\n` : ''
+            const bccHeader = bccList.length > 0 ? `Bcc: ${bccList.join(', ')}\r\n` : ''
+
+            let mimeMessage: string
+
+            if (pdfBytes) {
+              // Multipart con PDF adjunto
+              const boundary = `boundary_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+              const parts = [
+                `To: ${toHeader}`,
+                ccHeader.trim(),
+                bccHeader.trim(),
+                `Subject: ${encSubject}`,
+                companyEmail ? `Reply-To: ${companyEmail}` : '',
+                'MIME-Version: 1.0',
+                `Content-Type: multipart/mixed; boundary="${boundary}"`,
+                '',
+                `--${boundary}`,
+                'Content-Type: text/html; charset=UTF-8',
+                'Content-Transfer-Encoding: base64',
+                '',
+                toBase64Lines(htmlBody),
+                '',
+                `--${boundary}`,
+                `Content-Type: application/pdf; name="${safePdfName}"`,
+                `Content-Disposition: attachment; filename="${safePdfName}"`,
+                'Content-Transfer-Encoding: base64',
+                '',
+                toBase64Lines(pdfBytes),
+                '',
+                `--${boundary}--`,
+              ].filter(l => l !== '')
+              mimeMessage = parts.join('\r\n')
+            } else {
+              // Solo HTML
+              mimeMessage = [
+                `To: ${toHeader}`,
+                ccHeader.trim(),
+                bccHeader.trim(),
+                `Subject: ${encSubject}`,
+                companyEmail ? `Reply-To: ${companyEmail}` : '',
+                'MIME-Version: 1.0',
+                'Content-Type: text/html; charset=UTF-8',
+                '',
+                htmlBody,
+              ].filter(l => l !== '').join('\r\n')
+            }
 
             const raw = Buffer.from(mimeMessage).toString('base64url')
             await gmail.users.messages.send({
@@ -291,19 +390,32 @@ export async function POST(
               requestBody: { raw },
             })
 
-            console.log(`[documents/send] Email (${docType}) enviado via Gmail API a`, to)
+            logger.info(`[documents/send] Email (${docType}) enviado via Gmail API a`, toHeader)
           } else {
-            console.log('[documents/send] Gmail no conectado — simulando envío a', to)
+            // No hay Gmail configurado → si tampoco hay Resend, devolver 501 claro
+            const resendKey = getEnv('RESEND_API_KEY')
+            if (!resendKey) {
+              return NextResponse.json(
+                {
+                  sent: false,
+                  error: 'No hay proveedor de email configurado. Conectá Gmail en /admin/integraciones o seteá RESEND_API_KEY.',
+                },
+                { status: 501 }
+              )
+            }
+            // TODO: implementar envío via Resend con SDK ya instalado (resend ^6.12.2)
+            logger.info('[documents/send] Gmail no conectado — TODO Resend a', toList.join(','))
           }
         } catch (gmailErr) {
-          console.warn('[documents/send] Gmail API error:', gmailErr)
+          logger.warn('[documents/send] Gmail API error:', gmailErr)
+          errors.push(`Gmail: ${(gmailErr as Error).message}`)
         }
 
-        // ── Log en tt_email_log ───────────────────────────────────────────────
+        // ── Log en tt_email_log (compat con UI antigua) ────────────────────────
         await supabase.from('tt_email_log').insert({
           company_id: companyId,
           document_id: id,
-          to_email: to,
+          to_email: primaryTo,
           subject: emailSubject,
           body: message || '',
           channel: 'email',
@@ -314,8 +426,38 @@ export async function POST(
             pdf_url: pdfUrl,
             portal_url: portalUrl,
             quote_token_id: quoteTokenId,
+            recipients: allRecipients,
+            tracking_id: trackingId,
+            pdf_attached: !!pdfBytes,
           },
         })
+
+        // ── Log nuevo en tt_document_sends (UI nueva) ──────────────────────────
+        try {
+          await supabase.from('tt_document_sends').insert({
+            document_id: id,
+            document_type: docType,
+            document_ref: docRef,
+            company_id: companyId,
+            channel: 'email',
+            format: pdfBytes ? 'pdf' : 'html',
+            recipients: allRecipients,
+            subject: emailSubject,
+            message: message || '',
+            tracking_id: trackingId ?? null,
+            delivery_status: 'sent',
+            attachments: pdfBytes
+              ? [{ name: pdfFilename, size: `${(pdfBytes.length / 1024).toFixed(0)} KB`, url: '' }]
+              : [],
+            sent_by: guard.ttUserId,
+            metadata: {
+              portal_url: portalUrl,
+              quote_token_id: quoteTokenId,
+            },
+          })
+        } catch (sendsErr) {
+          logger.warn('[documents/send] tt_document_sends log error:', sendsErr)
+        }
 
         sentChannels.push('email')
       } catch (emailErr) {
@@ -330,7 +472,7 @@ export async function POST(
         const waToken = getEnv('WHATSAPP_TOKEN') || ''
 
         if (!phoneNumberId || !waToken) {
-          console.warn('[documents/send] WhatsApp no configurado')
+          logger.warn('[documents/send] WhatsApp no configurado')
         } else {
           const subjectPrefix = DOC_TYPE_SUBJECT_PREFIX[docType] || 'Documento'
           const waText = message
@@ -376,7 +518,7 @@ export async function POST(
       errors: errors.length > 0 ? errors : undefined,
     })
   } catch (err) {
-    console.error('[documents/send] Error:', err)
+    logger.error('[documents/send] Error:', err)
     return NextResponse.json({ error: (err as Error).message }, { status: 500 })
   }
 }

@@ -3,6 +3,7 @@
 import '@/components/sat/buscatools-theme.css'
 import { useState, useEffect, useCallback, Suspense } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -61,6 +62,7 @@ const FREQUENCY_MAP: Record<string, { label: string; variant: 'default' | 'succe
 // INCIDENCIAS TAB (existing SAT tickets)
 // ═══════════════════════════════════════════════════════
 function IncidenciasTab() {
+  const router = useRouter()
   const { filterByCompany, companyKey } = useCompanyFilter()
   const supabase = createClient()
   const { addToast } = useToast()
@@ -346,6 +348,35 @@ function IncidenciasTab() {
               {['open', 'in_progress', 'waiting_parts'].includes(selectedTicket.status as string) && (
                 <Button variant="secondary" onClick={() => startWorkflow(selectedTicket)}>
                   <Play size={14} /> {hasWorkflow(selectedTicket) ? 'Continuar hoja de mantenimiento' : 'Iniciar hoja de mantenimiento'}
+                </Button>
+              )}
+              {/* Fix 3 — Cotizar reparación desde ticket SAT */}
+              {(selectedTicket.client_id as string) && (
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    const clientId = selectedTicket.client_id as string
+                    const productSku = (selectedTicket.product_sku as string) || ''
+                    const num = (selectedTicket.number as string) || ''
+                    const diag = (selectedTicket.diagnosis as string) || (selectedTicket.description as string) || ''
+                    const note = `Reparación SAT #${num}: ${diag}`.trim()
+                    router.push(`/cotizador?clientId=${clientId}&products=${encodeURIComponent(productSku)}&note=${encodeURIComponent(note)}`)
+                  }}
+                >
+                  <FileText size={14} /> Cotizar reparación
+                </Button>
+              )}
+              {/* Fix 3 — Facturar directo si está cerrado y resuelto */}
+              {(selectedTicket.status as string) === 'closed' && (selectedTicket.resolution as string) && (selectedTicket.client_id as string) && (
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    const clientId = selectedTicket.client_id as string
+                    const num = (selectedTicket.number as string) || ''
+                    router.push(`/ventas?tab=facturas&action=new&clientId=${clientId}&description=${encodeURIComponent('SAT #' + num)}`)
+                  }}
+                >
+                  <FileText size={14} /> Facturar directo
                 </Button>
               )}
               {(selectedTicket.status as string) === 'open' && <Button variant="secondary" onClick={() => changeStatus('in_progress')}>Iniciar Trabajo</Button>}

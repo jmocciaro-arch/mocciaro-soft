@@ -16,6 +16,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient as createServiceClient } from '@supabase/supabase-js'
 import * as XLSX from 'xlsx'
+import { requireAuth } from '@/lib/auth/require-admin'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -160,6 +161,9 @@ export interface ExcelRow {
 
 export async function POST(req: NextRequest) {
   try {
+    const auth = await requireAuth()
+    if (!auth.ok) return auth.response
+
     const fd = await req.formData()
     const file = fd.get('file') as File | null
     const supplierId = (fd.get('supplier_id') as string | null) || null

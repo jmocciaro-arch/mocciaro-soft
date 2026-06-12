@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { aiQuery, type AIProvider } from '@/lib/ai'
 import { searchContactsByDomain, isGmailConnected } from '@/lib/gmail'
+import { requireAdmin } from '@/lib/auth/require-admin'
+
+// Whitelist de acciones permitidas — defense in depth contra action-injection
+const ALLOWED_ACTIONS = new Set(['sync_contacts', 'query'])
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -14,11 +18,18 @@ const supabase = createClient(
 
 export async function POST(request: NextRequest) {
   try {
+    const guard = await requireAdmin()
+    if (!guard.ok) return guard.response
+
     const body = await request.json()
     const { action, params, provider = 'gemini' } = body as {
       action: string
       params: Record<string, unknown>
       provider?: AIProvider
+    }
+
+    if (!ALLOWED_ACTIONS.has(action)) {
+      return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 })
     }
 
     switch (action) {

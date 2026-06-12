@@ -6,6 +6,7 @@ import {
   matchBankLinesWithAI,
   type OpenInvoice,
 } from '@/lib/ai/parse-bank-statement'
+import { withCompanyFilter } from '@/lib/auth/with-company-filter'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -22,6 +23,9 @@ export const maxDuration = 120
  */
 export async function POST(req: NextRequest) {
   try {
+    const guard = await withCompanyFilter()
+    if (!guard.ok) return guard.response
+
     const fd = await req.formData()
     const file = fd.get('file') as File | null
     const companyId = fd.get('companyId') as string | null
@@ -30,6 +34,10 @@ export async function POST(req: NextRequest) {
 
     if (!file || !companyId) {
       return NextResponse.json({ error: 'file y companyId requeridos' }, { status: 400 })
+    }
+
+    if (!guard.assertAccess(companyId)) {
+      return NextResponse.json({ error: 'Sin acceso a esta empresa' }, { status: 403 })
     }
 
     const buf = Buffer.from(await file.arrayBuffer())
@@ -99,18 +107,32 @@ export async function POST(req: NextRequest) {
       .eq('doc_type', 'factura')
       .in('status', ['emitida', 'autorizada', 'pendiente_cobro'])
 
-    const openInvoices: OpenInvoice[] = (openInvoicesRaw || []).map((d: any) => ({
-      document_id: d.id,
-      client_id: d.client_id,
-      client_name: d.client?.name,
-      cuit: d.client?.cuit,
-      legal_number: d.legal_number,
-      invoice_number: d.invoice_number,
-      invoice_date: d.invoice_date,
-      total: Number(d.total) || 0,
-      currency: d.currency || 'ARS',
-      balance_due: Number(d.total) || 0,
-    }))
+    const openInvoices: OpenInvoice[] = (openInvoicesRaw || []).map((raw) => {
+      const d = raw as unknown as {
+        id: string
+        client_id: string | null
+        client?: { name?: string | null; cuit?: string | null } | { name?: string | null; cuit?: string | null }[] | null
+        legal_number?: string | null
+        invoice_number?: string | null
+        invoice_date?: string | null
+        total?: number | string | null
+        currency?: string | null
+      }
+      // Supabase puede tirar el join como array u objeto según el tipo de relación
+      const client = Array.isArray(d.client) ? d.client[0] : d.client
+      return {
+        document_id: d.id,
+        client_id: d.client_id,
+        client_name: client?.name ?? undefined,
+        cuit: client?.cuit ?? undefined,
+        legal_number: d.legal_number ?? undefined,
+        invoice_number: d.invoice_number ?? undefined,
+        invoice_date: d.invoice_date ?? undefined,
+        total: Number(d.total) || 0,
+        currency: d.currency || 'ARS',
+        balance_due: Number(d.total) || 0,
+      }
+    })
 
     // Matching determinístico
     const detMatches = matchBankLinesDeterministic(result.data.lines, openInvoices)

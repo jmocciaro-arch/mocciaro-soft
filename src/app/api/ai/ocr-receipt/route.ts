@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { requireAuth } from '@/lib/auth/require-admin'
+import { withCompanyFilter } from '@/lib/auth/with-company-filter'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -28,12 +30,23 @@ interface ExtractedReceipt {
 // FormData: file (image/jpeg | image/png), companyId
 export async function POST(request: NextRequest) {
   try {
+    const auth = await requireAuth()
+    if (!auth.ok) return auth.response
+
     const formData = await request.formData()
     const file = formData.get('file') as File | null
     const companyId = formData.get('companyId') as string | null
 
     if (!file) {
       return NextResponse.json({ error: 'file requerido' }, { status: 400 })
+    }
+
+    if (companyId) {
+      const guard = await withCompanyFilter()
+      if (!guard.ok) return guard.response
+      if (!guard.assertAccess(companyId)) {
+        return NextResponse.json({ error: 'Sin acceso a esta empresa' }, { status: 403 })
+      }
     }
 
     const apiKey = process.env.GEMINI_API_KEY

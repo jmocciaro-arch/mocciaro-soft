@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/modal'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/toast'
+import { useCompanyContext } from '@/lib/company-context'
 import { Send, Mail, MessageCircle, Eye, Clock, CheckCircle, Loader2, ChevronDown, ChevronUp } from 'lucide-react'
 import { formatRelative } from '@/lib/utils'
 
@@ -47,19 +48,27 @@ function generateDefaultSubject(docType: DocumentType, docRef: string): string {
   return `${label} ${docRef} — TorqueTools`
 }
 
-function generateDefaultMessage(docType: DocumentType, docRef: string, clientName?: string): string {
+function generateDefaultMessage(
+  docType: DocumentType,
+  docRef: string,
+  clientName?: string,
+  docUrl?: string,
+  companyDisplayName?: string,
+): string {
   const label = TYPE_LABELS[docType] || docType
   const greeting = clientName ? `Estimado/a ${clientName},` : 'Estimado/a,'
-  const docUrl = `[URL del documento]`
+  const companyName = companyDisplayName || 'el equipo'
+  const sign = `Saludos,\nEquipo ${companyName}`
+  const linkLine = docUrl ? `\n\nVer documento online: ${docUrl}` : ''
 
   const messages: Record<string, string> = {
-    coti: `${greeting}\n\nAdjunto encontrás nuestra ${label} ${docRef} con los productos y condiciones solicitadas.\n\nQuedamos a tu disposición para cualquier consulta.\n\nSaludos,\nEquipo TorqueTools`,
-    pedido: `${greeting}\n\nConfirmamos la recepción de tu Pedido ${docRef}.\n\nEstaremos procesando tu orden y te notificaremos cuando esté listo para envío.\n\nSaludos,\nEquipo TorqueTools`,
-    delivery_note: `${greeting}\n\nAdjunto el Albarán ${docRef} correspondiente a tu pedido.\n\nPor favor confirmá la recepción de la mercadería.\n\nSaludos,\nEquipo TorqueTools`,
-    factura: `${greeting}\n\nAdjunto la Factura ${docRef} para tu registro y pago.\n\nSi tenés alguna consulta no dudes en contactarnos.\n\nSaludos,\nEquipo TorqueTools`,
+    coti: `${greeting}\n\nAdjunto encontrás nuestra ${label} ${docRef} con los productos y condiciones solicitadas.${linkLine}\n\nQuedamos a tu disposición para cualquier consulta.\n\n${sign}`,
+    pedido: `${greeting}\n\nConfirmamos la recepción de tu Pedido ${docRef}.${linkLine}\n\nEstaremos procesando tu orden y te notificaremos cuando esté listo para envío.\n\n${sign}`,
+    delivery_note: `${greeting}\n\nAdjunto el Albarán ${docRef} correspondiente a tu pedido.${linkLine}\n\nPor favor confirmá la recepción de la mercadería.\n\n${sign}`,
+    factura: `${greeting}\n\nAdjunto la Factura ${docRef} para tu registro y pago.${linkLine}\n\nSi tenés alguna consulta no dudes en contactarnos.\n\n${sign}`,
   }
 
-  return messages[docType] || `${greeting}\n\nAdjunto el documento ${docRef}.\n\nSaludos,\nEquipo TorqueTools`
+  return messages[docType] || `${greeting}\n\nAdjunto el documento ${docRef}.${linkLine}\n\n${sign}`
 }
 
 // ===============================================================
@@ -76,6 +85,7 @@ export function SendToClientButton({
   className,
 }: SendToClientButtonProps) {
   const { addToast } = useToast()
+  const { activeCompany } = useCompanyContext()
   const supabase = createClient()
 
   const [open, setOpen] = useState(false)
@@ -87,7 +97,7 @@ export function SendToClientButton({
   const [sending, setSending] = useState(false)
   const [history, setHistory] = useState<SendHistory[]>([])
   const [showHistory, setShowHistory] = useState(false)
-  const [docRef, setDocRef] = useState('')
+  const [, setDocRef] = useState('')
   const [clientName, setClientName] = useState('')
   const [loadingAI, setLoadingAI] = useState(false)
 
@@ -107,8 +117,26 @@ export function SendToClientButton({
       if (clientData?.name) setClientName(clientData.name)
       if (!to && clientData?.email) setTo(clientData.email)
 
+      // Crear share link real para incluir en el mensaje
+      let docUrl: string | undefined
+      try {
+        const lnkRes = await fetch(`/api/documents/${documentId}/share-link`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ expires_days: 30, companyId }),
+        })
+        if (lnkRes.ok) {
+          const lnkData = await lnkRes.json()
+          docUrl = lnkData.url as string
+        }
+      } catch {
+        // Sin link es ok — el email aún se manda
+      }
+
+      const companyDisplayName = activeCompany?.name || undefined
+
       setSubject(generateDefaultSubject(documentType, ref))
-      setMessage(generateDefaultMessage(documentType, ref, clientData?.name))
+      setMessage(generateDefaultMessage(documentType, ref, clientData?.name, docUrl, companyDisplayName))
     }
 
     // Historial de envíos
@@ -136,7 +164,8 @@ export function SendToClientButton({
         status: l.status,
       })))
     }
-  }, [documentId, documentType, supabase, to])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [documentId, documentType, to, companyId, activeCompany?.name])
 
   useEffect(() => {
     if (open) {

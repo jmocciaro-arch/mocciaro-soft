@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { parseOCPDF, detectOCDiscrepancies } from '@/lib/ai/parse-oc-pdf'
+import { withCompanyFilter } from '@/lib/auth/with-company-filter'
+import { matchBatch } from '@/lib/sku-matcher'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -16,6 +18,9 @@ export const maxDuration = 60
  */
 export async function POST(req: NextRequest) {
   try {
+    const guard = await withCompanyFilter()
+    if (!guard.ok) return guard.response
+
     const fd = await req.formData()
     const file = fd.get('file') as File | null
     const quoteDocumentId = fd.get('quoteDocumentId') as string | null
@@ -25,6 +30,11 @@ export async function POST(req: NextRequest) {
 
     if (!file) return NextResponse.json({ error: 'file requerido' }, { status: 400 })
     if (file.type !== 'application/pdf') return NextResponse.json({ error: 'Solo PDF' }, { status: 400 })
+
+    // Si viene companyId, validar acceso
+    if (companyId && !guard.assertAccess(companyId)) {
+      return NextResponse.json({ error: 'Sin acceso a esta empresa' }, { status: 403 })
+    }
 
     const buf = Buffer.from(await file.arrayBuffer())
     const result = await parseOCPDF(buf)
@@ -48,6 +58,18 @@ export async function POST(req: NextRequest) {
         pdfUrl = pub.publicUrl
       }
     }
+
+    // ─── Match SKU del cliente contra el catálogo ──────────────────
+    // Para cada item extraído por la IA, intentamos resolver `codigo` (lo que
+    // viene en la OC del cliente) contra:
+    //   1. tt_sku_aliases (alias aprendido para este cliente)
+    //   2. tt_products.sku (exact + fuzzy)
+    //   3. tt_products.name (fuzzy)
+    // El frontend muestra el badge (matched / sin match) y permite vincular.
+    const matches = await matchBatch(supabase, {
+      clientId: clientId || null,
+      items: result.data.items.map((it) => ({ codigo: it.codigo, descripcion: it.descripcion })),
+    })
 
     // Discrepancias con cotización
     let discrepancies: ReturnType<typeof detectOCDiscrepancies> = []
@@ -144,6 +166,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       data: result.data,
+      matches,           // ← Match SKU cliente ↔ catálogo (nuevo)
       discrepancies,
       pdfUrl,
       ocParsedId,
