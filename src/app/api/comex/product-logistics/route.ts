@@ -36,6 +36,8 @@ export async function GET(req: NextRequest) {
     // count 'estimated': el total es solo para mostrar "N productos" y la paginación;
     // un COUNT(*) exacto sobre 18k filas en cada request/página es costo evitable.
     .select('id, sku, name, weight_kg, logistics:tt_product_logistics(net_weight_kg, gross_weight_kg, length_cm, width_cm, height_cm, volume_m3, default_packing_id, units_per_packing)', { count: 'estimated' })
+    // Los servicios (gestoría, comisiones, fletes) no se despachan: no tienen peso/volumen.
+    .neq('product_type', 'service')
     .order('sku')
     .range(from, from + PAGE_SIZE - 1)
   if (q) query = query.or(`sku.ilike.%${q}%,name.ilike.%${q}%`)

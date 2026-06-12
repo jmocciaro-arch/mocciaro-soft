@@ -15,7 +15,7 @@ import { SkeletonCardGrid } from '@/components/ui/skeleton'
 import { ChannelCard } from '@/components/channels/channel-card'
 import { NewListingModal } from '@/components/channels/new-listing-modal'
 import { EditListingModal, type EditableListing } from '@/components/channels/edit-listing-modal'
-import { ArrowLeftRight, Inbox, PackageOpen, RefreshCw, Pencil } from 'lucide-react'
+import { ArrowLeftRight, Inbox, PackageOpen, RefreshCw, Pencil, AlertTriangle } from 'lucide-react'
 import { formatRelative } from '@/lib/utils'
 import { buyerName, estadoBucketFor, CHANNEL_ORDER_STATUS_LABELS } from '@/lib/dashboard/executive-kpis'
 import { LISTING_STATUS_LABELS, LISTING_STATUS_BADGE } from '@/lib/channels/constants'
@@ -288,6 +288,29 @@ export default function CanalesPage() {
           {activeCompany?.name ?? ''} · un catálogo → N canales
         </p>
       </div>
+
+      {/* Estado que guía: canal habilitado pero sin conectar → la causa + el próximo paso a la vista */}
+      {gate.enabledChannels
+        .filter(c => c.code === 'mercadolibre' && c.status !== 'active')
+        .map(ch => (
+          <div key={ch.id} className="flex items-start gap-3 rounded-lg border border-[#FF6600]/40 bg-[#FF6600]/10 px-4 py-3">
+            <AlertTriangle size={18} className="text-[#FF6600] shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold">{ch.label} está habilitado pero sin conectar</p>
+              <p className="text-[12.5px] opacity-70 mt-0.5">
+                Por eso &ldquo;Sincronizar publicaciones&rdquo; no trae nada: falta autorizar tu cuenta. Es un solo paso.
+              </p>
+              {canManageChannels && (
+                <a
+                  href={`/api/channels/mercadolibre/connect?channel_id=${ch.id}`}
+                  className="inline-flex items-center gap-1.5 mt-2 bg-[#FF6600] hover:bg-[#E65C00] text-white text-[12.5px] font-semibold rounded-md px-3 py-1.5 transition-colors"
+                >
+                  <RefreshCw size={13} /> Conectar con MercadoLibre
+                </a>
+              )}
+            </div>
+          </div>
+        ))}
 
       {/* Tarjetas por canal habilitado (§3.1) */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
