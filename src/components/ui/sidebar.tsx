@@ -48,41 +48,63 @@ interface NavItem {
   requiredPermissions?: string[]
 }
 
-const navItems: NavItem[] = [
-  { label: 'Inicio', href: '/inicio', icon: Inbox },
-  { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-  { label: 'Dashboard ejecutivo', href: '/dashboard/ejecutivo', icon: BarChart3 },
-  { label: 'Workflows', href: '/workflows', icon: Workflow },
-  { label: 'Hub IA', href: '/ai-hub', icon: Sparkles },
-  // ── CRM (un solo bloque con tabs: Leads IA | Pipeline | Actividades | Informes) ──
-  { label: 'CRM', href: '/crm', icon: Target, requiredPermissions: ['view_crm'] },
-  // ── Ventas (flujo de venta) ──
-  { label: 'Cotizador', href: '/cotizador', icon: FileText, badgeKey: 'quotes_draft', requiredPermissions: ['create_quote', 'edit_quote', 'view_sales_reports'] },
-  { label: 'Pedidos', href: '/ventas?tab=pedidos', icon: ClipboardList, badgeKey: 'so_open', requiredPermissions: ['create_order', 'approve_order', 'view_sales_reports'] },
-  // 'Importar OC' removido — ahora se sube desde Cotizador → botón "Importar OC".
-  // La ruta /ventas/importar-oc sigue funcionando (redirect) para no romper accesos viejos.
-  { label: 'Albaranes', href: '/ventas?tab=albaranes', icon: Truck, requiredPermissions: ['create_order', 'view_sales_reports'] },
-  { label: 'Facturas', href: '/ventas?tab=facturas', icon: CreditCard, requiredPermissions: ['view_financials', 'create_invoice'] },
-  { label: 'Recurrentes', href: '/ventas/recurrentes', icon: RefreshCw, requiredPermissions: ['create_invoice'] },
-  { label: 'Cobros', href: '/cobros', icon: Banknote, requiredPermissions: ['view_financials'] },
-  { label: 'Finanzas', href: '/finanzas', icon: TrendingUp, requiredPermissions: ['view_financials'] },
-  { label: 'Compras', href: '/compras?tab=pedidos', icon: ShoppingCart, badgeKey: 'po_pending', requiredPermissions: ['create_purchase_order', 'view_suppliers'] },
-  { label: 'Stock', href: '/stock', icon: Warehouse, requiredPermissions: ['view_stock'] },
-  // Gating §1 de SPEC-dashboard-canales: acá la condición A (RBAC); la condición B
-  // (≥1 canal habilitado en la empresa activa) la resuelve la página con useChannelsGate.
-  { label: 'Canales', href: '/canales', icon: ArrowLeftRight, requiredPermissions: ['view_channels'] },
-  { label: 'Comex y Logística', href: '/comex', icon: Globe, requiredPermissions: ['view_comex'] },
-  { label: 'Proveedores', href: '/compras?tab=proveedores', icon: Building2, requiredPermissions: ['view_suppliers'] },
-  { label: 'Clientes', href: '/clientes', icon: Users, requiredPermissions: ['view_clients'] },
-  { label: 'Catalogo', href: '/catalogo', icon: Package, requiredPermissions: ['view_catalog'] },
-  { label: 'Buscador Web', href: '/buscador-clientes', icon: Globe, requiredPermissions: ['admin_users'] },
-  { label: 'SAT', href: '/sat', icon: Wrench, badgeKey: 'sat_open', requiredPermissions: ['view_sat'] },
-  { label: 'Gastos', href: '/gastos', icon: Receipt, requiredPermissions: ['view_financials'] },
-  { label: 'Agente IA', href: '/dashboard/ejecutivo', icon: Bot },
-  { label: 'Informes', href: '/informes', icon: BarChart3, requiredPermissions: ['view_sales_reports', 'view_financials'] },
-  { label: 'Admin', href: '/admin', icon: Settings, requiredPermissions: ['admin_users'] },
-  { label: 'Automatizaciones', href: '/admin/automatizaciones', icon: Zap, requiredPermissions: ['admin_users'] },
-  { label: 'WhatsApp', href: '/admin/whatsapp', icon: MessageCircle, requiredPermissions: ['admin_users'] },
+interface NavGroup {
+  id: string
+  title: string
+  icon: typeof LayoutDashboard
+  items: NavItem[]
+}
+
+// Menú agrupado: 26 ítems planos → 9 grupos colapsables. El usuario abre solo
+// lo que necesita; el grupo de la página activa se auto-expande.
+const navGroups: NavGroup[] = [
+  { id: 'principal', title: 'Principal', icon: Inbox, items: [
+    { label: 'Inicio', href: '/inicio', icon: Inbox },
+    { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+    { label: 'Dashboard ejecutivo', href: '/dashboard/ejecutivo', icon: BarChart3 },
+  ] },
+  { id: 'ventas', title: 'Ventas', icon: FileText, items: [
+    { label: 'Cotizador', href: '/cotizador', icon: FileText, badgeKey: 'quotes_draft', requiredPermissions: ['create_quote', 'edit_quote', 'view_sales_reports'] },
+    { label: 'Pedidos', href: '/ventas?tab=pedidos', icon: ClipboardList, badgeKey: 'so_open', requiredPermissions: ['create_order', 'approve_order', 'view_sales_reports'] },
+    { label: 'Albaranes', href: '/ventas?tab=albaranes', icon: Truck, requiredPermissions: ['create_order', 'view_sales_reports'] },
+    { label: 'Facturas', href: '/ventas?tab=facturas', icon: CreditCard, requiredPermissions: ['view_financials', 'create_invoice'] },
+    { label: 'Recurrentes', href: '/ventas/recurrentes', icon: RefreshCw, requiredPermissions: ['create_invoice'] },
+    { label: 'Cobros', href: '/cobros', icon: Banknote, requiredPermissions: ['view_financials'] },
+  ] },
+  { id: 'compras', title: 'Compras y stock', icon: ShoppingCart, items: [
+    { label: 'Compras', href: '/compras?tab=pedidos', icon: ShoppingCart, badgeKey: 'po_pending', requiredPermissions: ['create_purchase_order', 'view_suppliers'] },
+    { label: 'Proveedores', href: '/compras?tab=proveedores', icon: Building2, requiredPermissions: ['view_suppliers'] },
+    { label: 'Stock', href: '/stock', icon: Warehouse, requiredPermissions: ['view_stock'] },
+    { label: 'Catalogo', href: '/catalogo', icon: Package, requiredPermissions: ['view_catalog'] },
+  ] },
+  { id: 'comex', title: 'Comex y logística', icon: Globe, items: [
+    { label: 'Comex y Logística', href: '/comex', icon: Globe, requiredPermissions: ['view_comex'] },
+    // Gating §1: acá la condición A (RBAC); la B (≥1 canal habilitado) la resuelve la página.
+    { label: 'Canales', href: '/canales', icon: ArrowLeftRight, requiredPermissions: ['view_channels'] },
+  ] },
+  { id: 'clientes', title: 'Clientes', icon: Users, items: [
+    { label: 'CRM', href: '/crm', icon: Target, requiredPermissions: ['view_crm'] },
+    { label: 'Clientes', href: '/clientes', icon: Users, requiredPermissions: ['view_clients'] },
+    { label: 'Buscador Web', href: '/buscador-clientes', icon: Globe, requiredPermissions: ['admin_users'] },
+  ] },
+  { id: 'finanzas', title: 'Finanzas', icon: TrendingUp, items: [
+    { label: 'Finanzas', href: '/finanzas', icon: TrendingUp, requiredPermissions: ['view_financials'] },
+    { label: 'Gastos', href: '/gastos', icon: Receipt, requiredPermissions: ['view_financials'] },
+  ] },
+  { id: 'sat', title: 'Servicio técnico', icon: Wrench, items: [
+    { label: 'SAT', href: '/sat', icon: Wrench, badgeKey: 'sat_open', requiredPermissions: ['view_sat'] },
+  ] },
+  { id: 'ia', title: 'Automatización e IA', icon: Sparkles, items: [
+    { label: 'Workflows', href: '/workflows', icon: Workflow },
+    { label: 'Hub IA', href: '/ai-hub', icon: Sparkles },
+    { label: 'Agente IA', href: '/dashboard/ejecutivo', icon: Bot },
+  ] },
+  { id: 'admin', title: 'Administración', icon: Settings, items: [
+    { label: 'Admin', href: '/admin', icon: Settings, requiredPermissions: ['admin_users'] },
+    { label: 'Informes', href: '/informes', icon: BarChart3, requiredPermissions: ['view_sales_reports', 'view_financials'] },
+    { label: 'Automatizaciones', href: '/admin/automatizaciones', icon: Zap, requiredPermissions: ['admin_users'] },
+    { label: 'WhatsApp', href: '/admin/whatsapp', icon: MessageCircle, requiredPermissions: ['admin_users'] },
+  ] },
 ]
 
 function useBadgeCounts() {
@@ -134,6 +156,17 @@ export function Sidebar() {
   const { collapsed, setCollapsed, mobileOpen, setMobileOpen, badges } = useSidebar()
   const { canAny, isSuper, loading: permsLoading } = usePermissions()
 
+  // Lectura única de localStorage post-hydration (sincronización con sistema
+  // externo; el lazy-init causaría hydration mismatch en SSR).
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('sidebar-open-groups')
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (saved) setOpenGroups(JSON.parse(saved) as Record<string, boolean>)
+    } catch { /* ignore */ }
+  }, [])
+
   const isActive = (href: string) => {
     const basePath = href.split('?')[0]
     const hrefTab = new URLSearchParams(href.split('?')[1] || '').get('tab')
@@ -146,13 +179,84 @@ export function Sidebar() {
     return pathname === basePath || pathname.startsWith(basePath + '/')
   }
 
-  // Filter nav items based on permissions
-  const visibleItems = navItems.filter(item => {
-    if (!item.requiredPermissions) return true // Dashboard always visible
-    if (permsLoading) return true // Show all while loading
-    if (isSuper) return true // Super admin sees everything
+  const canSee = (item: NavItem) => {
+    if (!item.requiredPermissions) return true
+    if (permsLoading || isSuper) return true
     return canAny(item.requiredPermissions)
-  })
+  }
+  // Grupos con al menos un ítem visible para este usuario.
+  const visibleGroups = navGroups
+    .map(g => ({ ...g, items: g.items.filter(canSee) }))
+    .filter(g => g.items.length > 0)
+
+  // Estado de apertura calculado en render (sin effect): si el usuario tocó el
+  // grupo, manda su decisión; si no, por default abierto cuando contiene la activa.
+  const isGroupOpen = (group: NavGroup) =>
+    group.id in openGroups ? openGroups[group.id] : group.items.some(it => isActive(it.href))
+
+  const toggleGroup = (group: NavGroup) => {
+    const next = { ...openGroups, [group.id]: !isGroupOpen(group) }
+    setOpenGroups(next)
+    try { localStorage.setItem('sidebar-open-groups', JSON.stringify(next)) } catch { /* ignore */ }
+  }
+
+  // Render de un ítem (reusado en modo grupos y en modo colapsado plano).
+  const renderNavItem = (item: NavItem) => {
+    const Icon = item.icon
+    const active = isActive(item.href)
+    const satExpanded = item.href === '/sat' && !collapsed && pathname?.startsWith('/sat')
+    return (
+      <div key={`${item.href}|${item.label}`}>
+        <Link
+          href={item.href}
+          onClick={() => setMobileOpen(false)}
+          className={cn(
+            'flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group relative',
+            active ? 'bg-[#FF6600]/15 text-[#FF6600] font-semibold' : 'text-[#9CA3AF] hover:text-[#F0F2F5] hover:bg-[#141820]',
+          )}
+        >
+          {active && <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[4px] h-7 bg-[#FF6600] rounded-r-full" />}
+          <Icon size={20} className="shrink-0" />
+          {!collapsed && <span className="text-sm truncate flex-1">{item.label}</span>}
+          {!collapsed && item.badgeKey && badges[item.badgeKey] > 0 && (
+            <span className="ml-auto px-2 py-0.5 text-[11px] font-bold rounded-full bg-[#FF6600] text-white min-w-[22px] text-center">
+              {badges[item.badgeKey]}
+            </span>
+          )}
+          {collapsed && (
+            <div className="absolute left-full ml-2 px-2 py-1 bg-[#1E2330] text-[#F0F2F5] text-xs rounded-md opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all whitespace-nowrap z-50 shadow-xl border border-[#2A3040]">
+              {item.label}
+            </div>
+          )}
+        </Link>
+        {satExpanded && (
+          <div className="ml-6 mt-0.5 pl-3 border-l border-[#2A3040] space-y-0.5">
+            {[
+              { label: 'Activos', href: '/sat/activos', icon: Cpu },
+              { label: 'Hojas', href: '/sat/hojas', icon: ClipboardList },
+              { label: 'Repuestos', href: '/sat/repuestos', icon: Box },
+              { label: 'Modelos', href: '/sat/modelos', icon: Layers },
+              { label: 'Manuales', href: '/sat/manuales', icon: BookOpen },
+              { label: 'Lotes', href: '/sat/lotes', icon: Package },
+              { label: 'Pausadas', href: '/sat/pausadas', icon: Pause },
+              { label: 'Histórico', href: '/sat/historico', icon: History },
+            ].map((sub) => {
+              const SubIcon = sub.icon
+              const subActive = pathname === sub.href || pathname?.startsWith(sub.href + '/')
+              return (
+                <Link key={sub.href} href={sub.href} onClick={() => setMobileOpen(false)}
+                  className={cn('flex items-center gap-2.5 px-2.5 py-2 rounded text-xs transition-colors',
+                    subActive ? 'bg-[#FF6600]/10 text-[#FF6600] font-semibold' : 'text-[#9CA3AF] hover:text-[#F0F2F5] hover:bg-[#141820]')}>
+                  <SubIcon size={18} className="shrink-0" />
+                  <span className="truncate">{sub.label}</span>
+                </Link>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   return (
     <>
@@ -195,81 +299,38 @@ export function Sidebar() {
           </button>
         </div>
 
-        {/* Navigation */}
-        <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
-          {visibleItems.map((item) => {
-            const Icon = item.icon
-            const active = isActive(item.href)
-            const isSatItem = item.href === '/sat'
-            const satExpanded = isSatItem && !collapsed && pathname?.startsWith('/sat')
-            return (
-              <div key={item.label}>
-                <Link
-                  href={item.href}
-                  onClick={() => setMobileOpen(false)}
-                  className={cn(
-                    'flex items-center gap-3 px-3 py-3 rounded-lg transition-all duration-200 group relative',
-                    active
-                      ? 'bg-[#FF6600]/15 text-[#FF6600] font-semibold'
-                      : 'text-[#9CA3AF] hover:text-[#F0F2F5] hover:bg-[#141820]'
-                  )}
-                >
-                  {active && (
-                    <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[4px] h-7 bg-[#FF6600] rounded-r-full" />
-                  )}
-                  <Icon size={22} className="shrink-0" />
-                  {!collapsed && (
-                    <span className="text-sm truncate flex-1">{item.label}</span>
-                  )}
-                  {!collapsed && (item as { badgeKey?: string }).badgeKey && badges[(item as { badgeKey?: string }).badgeKey!] > 0 && (
-                    <span className="ml-auto px-2 py-0.5 text-[11px] font-bold rounded-full bg-[#FF6600] text-white min-w-[22px] text-center">
-                      {badges[(item as { badgeKey?: string }).badgeKey!]}
-                    </span>
-                  )}
-                  {collapsed && (
-                    <div className="absolute left-full ml-2 px-2 py-1 bg-[#1E2330] text-[#F0F2F5] text-xs rounded-md opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all whitespace-nowrap z-50 shadow-xl border border-[#2A3040]">
-                      {item.label}
-                    </div>
-                  )}
-                </Link>
-
-                {/* Subitems SAT expandidos cuando estamos en /sat/* */}
-                {satExpanded && (
-                  <div className="ml-6 mt-0.5 pl-3 border-l border-[#2A3040] space-y-0.5">
-                    {[
-                      { label: 'Activos', href: '/sat/activos', icon: Cpu },
-                      { label: 'Hojas', href: '/sat/hojas', icon: ClipboardList },
-                      { label: 'Repuestos', href: '/sat/repuestos', icon: Box },
-                      { label: 'Modelos', href: '/sat/modelos', icon: Layers },
-                      { label: 'Manuales', href: '/sat/manuales', icon: BookOpen },
-                      { label: 'Lotes', href: '/sat/lotes', icon: Package },
-                      { label: 'Pausadas', href: '/sat/pausadas', icon: Pause },
-                      { label: 'Histórico', href: '/sat/historico', icon: History },
-                    ].map((sub) => {
-                      const SubIcon = sub.icon
-                      const subActive = pathname === sub.href || pathname?.startsWith(sub.href + '/')
-                      return (
-                        <Link
-                          key={sub.href}
-                          href={sub.href}
-                          onClick={() => setMobileOpen(false)}
-                          className={cn(
-                            'flex items-center gap-2.5 px-2.5 py-2 rounded text-xs transition-colors',
-                            subActive
-                              ? 'bg-[#FF6600]/10 text-[#FF6600] font-semibold'
-                              : 'text-[#9CA3AF] hover:text-[#F0F2F5] hover:bg-[#141820]'
-                          )}
-                        >
-                          <SubIcon size={18} className="shrink-0" />
-                          <span className="truncate">{sub.label}</span>
-                        </Link>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-            )
-          })}
+        {/* Navigation — agrupada y colapsable (plana por iconos cuando está contraída) */}
+        <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-1">
+          {collapsed ? (
+            <div className="space-y-0.5">
+              {visibleGroups.flatMap(g => g.items).map(renderNavItem)}
+            </div>
+          ) : (
+            visibleGroups.map(group => {
+              const GroupIcon = group.icon
+              const open = isGroupOpen(group)
+              const hasActive = group.items.some(it => isActive(it.href))
+              return (
+                <div key={group.id}>
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup(group)}
+                    aria-expanded={open}
+                    className={cn(
+                      'flex items-center gap-2.5 w-full px-3 py-2 rounded-lg transition-colors text-[11px] font-bold uppercase tracking-wider',
+                      hasActive && !open ? 'text-[#FF6600]' : 'text-[#6B7280] hover:text-[#9CA3AF] hover:bg-[#141820]',
+                    )}
+                  >
+                    <GroupIcon size={16} className="shrink-0" />
+                    <span className="flex-1 text-left truncate">{group.title}</span>
+                    {hasActive && !open && <span className="w-1.5 h-1.5 rounded-full bg-[#FF6600] shrink-0" aria-hidden="true" />}
+                    <ChevronRight size={14} className={cn('shrink-0 transition-transform', open && 'rotate-90')} />
+                  </button>
+                  {open && <div className="mt-0.5 space-y-0.5">{group.items.map(renderNavItem)}</div>}
+                </div>
+              )
+            })
+          )}
         </nav>
 
         {/* Collapse toggle (desktop) */}
