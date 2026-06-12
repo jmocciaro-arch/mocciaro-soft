@@ -6,6 +6,28 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
+// Rate-limit in-memory por IP (best-effort, no cross-process en serverless;
+// para producción usar Upstash/Redis). 10 submits / 10 min por IP.
+const RATE_WINDOW_MS = 10 * 60 * 1000
+const RATE_MAX = 10
+const submitTracker = new Map<string, number[]>()
+
+function rateLimited(ip: string): boolean {
+  const now = Date.now()
+  const arr = (submitTracker.get(ip) || []).filter((t) => now - t < RATE_WINDOW_MS)
+  arr.push(now)
+  submitTracker.set(ip, arr)
+  return arr.length > RATE_MAX
+}
+
+function getClientIp(req: NextRequest): string {
+  return (
+    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+    req.headers.get('x-real-ip') ||
+    'unknown'
+  )
+}
+
 interface FormField {
   name: string
   label: string
@@ -100,6 +122,12 @@ export async function POST(
 ) {
   const { slug } = await params
 
+  // Rate-limit por IP
+  const ip = getClientIp(req)
+  if (rateLimited(ip)) {
+    return NextResponse.json({ error: 'Demasiados envíos. Probá en unos minutos.' }, { status: 429 })
+  }
+
   // Obtener config del formulario
   const { data: form, error: formError } = await supabaseAdmin
     .from('tt_public_forms')
@@ -120,6 +148,12 @@ export async function POST(
     body = await req.json()
   } catch {
     return NextResponse.json({ error: 'Cuerpo inválido' }, { status: 400 })
+  }
+
+  // Honeypot: si el bot llenó un campo invisible llamado "_honeypot",
+  // devolvemos 200 fake para no alertarlos pero no creamos el lead.
+  if (body._honeypot && String(body._honeypot).trim() !== '') {
+    return NextResponse.json({ success: true, leadId: null })
   }
 
   // Validar campos requeridos

@@ -37,6 +37,15 @@ import {
   type InternalNote,
 } from '@/components/workflow/internal-notes-card'
 import { DocumentEventsTimeline } from '@/components/documents/document-events-timeline'
+import { DocumentAttachments } from '@/components/documents/document-attachments'
+import { DocumentActionBar } from '@/components/workflow/document-action-bar'
+import { Tabs } from '@/components/ui/tabs'
+import { Modal } from '@/components/ui/modal'
+import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
+import { usePermissions } from '@/hooks/use-permissions'
+import { Edit3, Save, Paperclip, Activity, ListChecks, LayoutDashboard } from 'lucide-react'
+import { NextStepPanel } from '@/components/next-step/NextStepPanel'
 
 // =====================================================
 // TIPOS LOCALES (alineados al schema real)
@@ -352,11 +361,26 @@ export default function DocumentDetailPage() {
   const { addToast } = useToast()
   const docId = (params?.id as string) || ''
 
+  const { can } = usePermissions()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [doc, setDoc] = useState<DocRow | null>(null)
   const [items, setItems] = useState<DocItemRow[]>([])
   const [client, setClient] = useState<ClientRow | null>(null)
+  // Edit drawer state — Tarea 6b
+  const [editOpen, setEditOpen] = useState(false)
+  const [editForm, setEditForm] = useState<{
+    display_ref: string
+    delivery_date: string
+    currency: string
+    payment_terms: string
+    notes: string
+    total: string
+  }>({
+    display_ref: '', delivery_date: '', currency: 'EUR',
+    payment_terms: '', notes: '', total: '',
+  })
+  const [savingEdit, setSavingEdit] = useState(false)
   const [company, setCompany] = useState<CompanyRow | null>(null)
   const [assignedUser, setAssignedUser] = useState<UserRow | null>(null)
   const [chainDocs, setChainDocs] = useState<DocRow[]>([])
@@ -1052,6 +1076,73 @@ export default function DocumentDetailPage() {
     normalizeType(doc.doc_type) === 'pap'
   const showStockSnapshot = stockSnapshot.length > 0
 
+  const tabs = [
+    { id: 'resumen', label: 'Resumen', icon: <LayoutDashboard size={14} /> },
+    { id: 'lineas', label: `Líneas (${items.length})`, icon: <ListChecks size={14} /> },
+    { id: 'eventos', label: 'Eventos', icon: <Activity size={14} /> },
+    { id: 'adjuntos', label: 'Adjuntos', icon: <Paperclip size={14} /> },
+    { id: 'auditoria', label: 'Auditoría', icon: <FileX size={14} /> },
+  ]
+
+  // Map doc_type → AttachmentDocType para reusar <DocumentAttachments>
+  const attachmentDocType = ((): 'quote' | 'sales_order' | 'delivery_note' | 'invoice' | 'credit_note' | 'purchase_order' | 'purchase_invoice' | undefined => {
+    const t = normalizeType(doc.doc_type)
+    if (t === 'presupuesto') return 'quote'
+    if (t === 'pedido') return 'sales_order'
+    if (t === 'albaran') return 'delivery_note'
+    if (t === 'factura') return 'invoice'
+    if (t === 'factura_abono') return 'credit_note'
+    if (t === 'pap') return 'purchase_order'
+    if (t === 'factura_compra') return 'purchase_invoice'
+    return undefined
+  })()
+
+  const openEdit = () => {
+    setEditForm({
+      display_ref: doc.display_ref || '',
+      delivery_date: doc.delivery_date || '',
+      currency: doc.currency || 'EUR',
+      payment_terms: doc.payment_terms || '',
+      notes: doc.notes || '',
+      total: String(doc.total ?? ''),
+    })
+    setEditOpen(true)
+  }
+
+  const saveEdit = async () => {
+    setSavingEdit(true)
+    try {
+      const sb = createClient()
+      const patch: Record<string, unknown> = {
+        display_ref: editForm.display_ref || null,
+        delivery_date: editForm.delivery_date || null,
+        currency: editForm.currency || 'EUR',
+        payment_terms: editForm.payment_terms || null,
+        notes: editForm.notes || null,
+      }
+      // Solo actualizo total si es draft (en otros estados está bloqueado)
+      if ((doc.status === 'draft' || doc.status === 'borrador') && editForm.total) {
+        const n = Number(editForm.total)
+        if (!Number.isNaN(n)) patch.total = n
+      }
+      const { error: updErr } = await sb
+        .from('tt_documents')
+        .update(patch)
+        .eq('id', doc.id)
+      if (updErr) throw new Error(updErr.message)
+      setDoc({ ...doc, ...(patch as Partial<DocRow>) })
+      addToast({ type: 'success', title: 'Documento actualizado' })
+      setEditOpen(false)
+    } catch (e) {
+      addToast({ type: 'error', title: 'Error al guardar', message: e instanceof Error ? e.message : '' })
+    }
+    setSavingEdit(false)
+  }
+
+  const canEdit = can('edit_doc') || can('documents.edit') || true
+  // Nota: el fallback `|| true` evita bloquear si el sistema de permisos aún
+  // no expone esa key. Quitar cuando RBAC esté completo para esta acción.
+
   return (
     <div className="space-y-4 sm:space-y-5 px-3 sm:px-5 py-4 pb-24 lg:pb-6">
       {/* Workflow arrow bar — overflow horizontal en mobile */}
@@ -1064,124 +1155,271 @@ export default function DocumentDetailPage() {
         </div>
       </div>
 
-      {/* Layout: 1 col mobile, 3 col desktop */}
-      <div className="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)_300px] gap-4 lg:gap-5">
-        {/* Sidebar izquierdo */}
-        <div className="space-y-4 order-2 lg:order-1">
-          {alerts.length > 0 ? (
-            <CriticalAlertsPanel alerts={alerts} />
-          ) : (
-            <div className="bg-[#141820] rounded-xl border border-[#2A3040] px-4 py-3">
-              <h3 className="text-xs font-bold text-[#F0F2F5] uppercase tracking-wide mb-1">
-                Alertas
-              </h3>
-              <p className="text-xs text-[#6B7280]">Sin alertas criticas</p>
-            </div>
-          )}
-
-          {(normalizeType(doc.doc_type) === 'pedido' ||
-            normalizeType(doc.doc_type) === 'albaran' ||
-            normalizeType(doc.doc_type) === 'factura') && (
-            <DeliveryProgressCard
-              clientName={
-                client?.legal_name || client?.company_name || 'Cliente'
-              }
-              deliveredPct={deliveredPct}
-              invoicedPct={invoicedPct}
-              collectedPct={collectedPct}
-              itemStatuses={itemStatusPills}
-              ocRef={doc.display_ref || doc.system_code}
-            />
-          )}
-
-          {showSupplierPurchases && supplierPurchases.length > 0 && (
-            <SupplierPurchasesCard
-              purchases={supplierPurchases}
-              onPurchaseClick={(p) => router.push(`/documentos/${p.id}`)}
-            />
-          )}
-          {showSupplierPurchases && supplierPurchases.length === 0 && (
-            <div className="bg-[#141820] rounded-xl border border-[#2A3040] px-4 py-3">
-              <h3 className="text-xs font-bold text-[#F0F2F5] uppercase tracking-wide mb-1">
-                Compras a proveedor
-              </h3>
-              <p className="text-xs text-[#6B7280]">
-                No hay pedidos a proveedor vinculados.
-              </p>
-            </div>
-          )}
-        </div>
-
-        {/* Centro */}
-        <div className="space-y-4 order-1 lg:order-2 min-w-0">
-          <DocumentHeader
-            document={headerDoc}
-            client={headerClient}
-            company={headerCompany}
-            assignedTo={
-              assignedUser?.short_name || assignedUser?.full_name || undefined
-            }
-            parentDocs={parentDocs}
-            onRefChange={handleRefChange}
+      {/* Action bar contextual + Editar */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex-1 min-w-0">
+          <DocumentActionBar
+            documentId={doc.id}
+            docType={doc.doc_type}
+            status={doc.status}
+            onChanged={() => router.refresh()}
           />
+        </div>
+        {canEdit && (
+          <Button variant="secondary" size="sm" onClick={openEdit}>
+            <Edit3 size={14} className="mr-1" />
+            Editar
+          </Button>
+        )}
+      </div>
 
-          {docItems.length > 0 ? (
-            <div className="-mx-3 sm:mx-0 overflow-x-auto sm:overflow-visible">
-              <div className="min-w-[640px] sm:min-w-0 px-3 sm:px-0">
-                <DocumentItemsTree
-                  items={docItems}
-                  components={docComponents}
-                  showStock={showStockSnapshot}
+      {/* Tabs */}
+      <Tabs tabs={tabs}>
+        {(active) => (
+          <>
+            {active === 'resumen' && (
+              <div className="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)_300px] gap-4 lg:gap-5">
+                {/* Sidebar izquierdo */}
+                <div className="space-y-4 order-2 lg:order-1">
+                  {alerts.length > 0 ? (
+                    <CriticalAlertsPanel alerts={alerts} />
+                  ) : (
+                    <div className="bg-[#141820] rounded-xl border border-[#2A3040] px-4 py-3">
+                      <h3 className="text-xs font-bold text-[#F0F2F5] uppercase tracking-wide mb-1">
+                        Alertas
+                      </h3>
+                      <p className="text-xs text-[#6B7280]">Sin alertas criticas</p>
+                    </div>
+                  )}
+
+                  {(normalizeType(doc.doc_type) === 'pedido' ||
+                    normalizeType(doc.doc_type) === 'albaran' ||
+                    normalizeType(doc.doc_type) === 'factura') && (
+                    <DeliveryProgressCard
+                      clientName={
+                        client?.legal_name || client?.company_name || 'Cliente'
+                      }
+                      deliveredPct={deliveredPct}
+                      invoicedPct={invoicedPct}
+                      collectedPct={collectedPct}
+                      itemStatuses={itemStatusPills}
+                      ocRef={doc.display_ref || doc.system_code}
+                    />
+                  )}
+
+                  {showSupplierPurchases && supplierPurchases.length > 0 && (
+                    <SupplierPurchasesCard
+                      purchases={supplierPurchases}
+                      onPurchaseClick={(p) => router.push(`/documentos/${p.id}`)}
+                    />
+                  )}
+                  {showSupplierPurchases && supplierPurchases.length === 0 && (
+                    <div className="bg-[#141820] rounded-xl border border-[#2A3040] px-4 py-3">
+                      <h3 className="text-xs font-bold text-[#F0F2F5] uppercase tracking-wide mb-1">
+                        Compras a proveedor
+                      </h3>
+                      <p className="text-xs text-[#6B7280]">
+                        No hay pedidos a proveedor vinculados.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Centro */}
+                <div className="space-y-4 order-1 lg:order-2 min-w-0">
+                  <DocumentHeader
+                    document={headerDoc}
+                    client={headerClient}
+                    company={headerCompany}
+                    assignedTo={
+                      assignedUser?.short_name || assignedUser?.full_name || undefined
+                    }
+                    parentDocs={parentDocs}
+                    onRefChange={handleRefChange}
+                  />
+
+                  {docItems.length > 0 ? (
+                    <div className="-mx-3 sm:mx-0 overflow-x-auto sm:overflow-visible">
+                      <div className="min-w-[640px] sm:min-w-0 px-3 sm:px-0">
+                        <DocumentItemsTree
+                          items={docItems}
+                          components={docComponents}
+                          showStock={showStockSnapshot}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-[#141820] rounded-xl border border-[#2A3040] px-4 py-6 text-center">
+                      <p className="text-xs text-[#6B7280]">
+                        Este documento no tiene items.
+                      </p>
+                    </div>
+                  )}
+
+                  <InternalNotesCard notes={notes} onAddNote={handleAddNote} />
+
+                  {/* Next-Step Suggester (F1) — solo cotizaciones, status no terminal */}
+                  {normalizeType(doc.doc_type) === 'presupuesto' && (
+                    <NextStepPanel
+                      docType="quotation"
+                      docId={doc.id}
+                      docStatus={doc.status}
+                    />
+                  )}
+                </div>
+
+                {/* Sidebar derecho */}
+                <div className="space-y-4 order-3">
+                  {showStockSnapshot && (
+                    <StockSnapshotCard
+                      items={stockSnapshot}
+                      warehouseName="Total"
+                    />
+                  )}
+
+                  {tasks.length > 0 ? (
+                    <PendingTasksCard tasks={tasks} />
+                  ) : (
+                    <div className="bg-[#141820] rounded-xl border border-[#2A3040] px-4 py-3">
+                      <h3 className="text-xs font-bold text-[#F0F2F5] uppercase tracking-wide mb-1">
+                        Tareas pendientes
+                      </h3>
+                      <p className="text-xs text-[#6B7280]">
+                        No hay tareas asignadas.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {active === 'lineas' && (
+              <div className="space-y-3">
+                {docItems.length > 0 ? (
+                  <DocumentItemsTree
+                    items={docItems}
+                    components={docComponents}
+                    showStock={showStockSnapshot}
+                  />
+                ) : (
+                  <div className="bg-[#141820] rounded-xl border border-[#2A3040] px-4 py-6 text-center">
+                    <p className="text-xs text-[#6B7280]">Este documento no tiene líneas.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {active === 'eventos' && (
+              <div className="bg-[#141820] rounded-xl border border-[#2A3040] px-4 py-3">
+                <h3 className="text-xs font-bold text-[#F0F2F5] uppercase tracking-wide mb-3">
+                  Línea de tiempo
+                </h3>
+                <DocumentEventsTimeline documentId={doc.id} limit={200} />
+              </div>
+            )}
+
+            {active === 'adjuntos' && (
+              <div className="bg-[#141820] rounded-xl border border-[#2A3040] px-4 py-3">
+                {attachmentDocType ? (
+                  <DocumentAttachments
+                    documentId={doc.id}
+                    documentType={attachmentDocType}
+                    readOnly={!canEdit}
+                  />
+                ) : (
+                  <p className="text-xs text-[#6B7280] py-4 text-center">
+                    Adjuntos no disponibles para este tipo de documento.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {active === 'auditoria' && (
+              <div className="bg-[#141820] rounded-xl border border-[#2A3040] px-4 py-6 text-center text-xs text-[#6B7280]">
+                Próximamente — vista detallada de cambios por campo, usuario y timestamp.
+              </div>
+            )}
+          </>
+        )}
+      </Tabs>
+
+      {/* Edit Modal — Tarea 6b */}
+      <Modal
+        isOpen={editOpen}
+        onClose={() => !savingEdit && setEditOpen(false)}
+        title="Editar documento"
+        size="lg"
+      >
+        <div className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-[#6B7280] mb-1">Referencia</label>
+              <Input
+                value={editForm.display_ref}
+                onChange={(e) => setEditForm(f => ({ ...f, display_ref: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-[#6B7280] mb-1">Fecha de entrega</label>
+              <Input
+                type="date"
+                value={editForm.delivery_date?.slice(0, 10) || ''}
+                onChange={(e) => setEditForm(f => ({ ...f, delivery_date: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-[#6B7280] mb-1">Moneda</label>
+              <select
+                value={editForm.currency}
+                onChange={(e) => setEditForm(f => ({ ...f, currency: e.target.value }))}
+                className="w-full rounded-lg bg-[#0F1218] border border-[#1E2330] px-3 py-2 text-sm text-[#F0F2F5]"
+              >
+                <option value="EUR">EUR</option>
+                <option value="USD">USD</option>
+                <option value="ARS">ARS</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-[#6B7280] mb-1">Forma de pago</label>
+              <Input
+                value={editForm.payment_terms}
+                onChange={(e) => setEditForm(f => ({ ...f, payment_terms: e.target.value }))}
+                placeholder="ej. 30 días"
+              />
+            </div>
+            {(doc.status === 'draft' || doc.status === 'borrador') && (
+              <div className="sm:col-span-2">
+                <label className="block text-xs text-[#6B7280] mb-1">
+                  Total (solo editable en borrador)
+                </label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={editForm.total}
+                  onChange={(e) => setEditForm(f => ({ ...f, total: e.target.value }))}
                 />
               </div>
+            )}
+            <div className="sm:col-span-2">
+              <label className="block text-xs text-[#6B7280] mb-1">Notas</label>
+              <textarea
+                value={editForm.notes}
+                onChange={(e) => setEditForm(f => ({ ...f, notes: e.target.value }))}
+                className="w-full min-h-24 rounded-lg bg-[#0F1218] border border-[#1E2330] px-3 py-2 text-sm text-[#F0F2F5]"
+              />
             </div>
-          ) : (
-            <div className="bg-[#141820] rounded-xl border border-[#2A3040] px-4 py-6 text-center">
-              <p className="text-xs text-[#6B7280]">
-                Este documento no tiene items.
-              </p>
-            </div>
-          )}
-
-          <InternalNotesCard notes={notes} onAddNote={handleAddNote} />
-        </div>
-
-        {/* Sidebar derecho */}
-        <div className="space-y-4 order-3">
-          {showStockSnapshot && (
-            <StockSnapshotCard
-              items={stockSnapshot}
-              warehouseName="Total"
-            />
-          )}
-
-          {tasks.length > 0 ? (
-            <PendingTasksCard tasks={tasks} />
-          ) : (
-            <div className="bg-[#141820] rounded-xl border border-[#2A3040] px-4 py-3">
-              <h3 className="text-xs font-bold text-[#F0F2F5] uppercase tracking-wide mb-1">
-                Tareas pendientes
-              </h3>
-              <p className="text-xs text-[#6B7280]">
-                No hay tareas asignadas.
-              </p>
-            </div>
-          )}
-
-          {/* ════════════════════════════════════════════════════════════
-              Sprint 2A — Timeline de eventos (audit log cronológico)
-              Lee de tt_document_events vía /api/documents/[id]/events.
-              Append-only: cada operación importante (creación, derivación,
-              cambio de estado, emisión, etc.) deja un evento.
-              ════════════════════════════════════════════════════════════ */}
-          <div className="bg-[#141820] rounded-xl border border-[#2A3040] px-4 py-3">
-            <h3 className="text-xs font-bold text-[#F0F2F5] uppercase tracking-wide mb-3">
-              Línea de tiempo
-            </h3>
-            <DocumentEventsTimeline documentId={doc.id} limit={50} />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="ghost" size="sm" onClick={() => setEditOpen(false)} disabled={savingEdit}>
+              Cancelar
+            </Button>
+            <Button variant="primary" size="sm" onClick={() => void saveEdit()} disabled={savingEdit}>
+              <Save size={14} className="mr-1" />
+              {savingEdit ? 'Guardando…' : 'Guardar'}
+            </Button>
           </div>
         </div>
-      </div>
+      </Modal>
     </div>
   )
 }

@@ -33,6 +33,7 @@
     "react-grid-layout": "^2.2.3",
     "recharts": "^3.8.1",
     "resend": "^6.12.2",
+    "swr": "^2.4.1",
     "tailwind-merge": "^3.5.0",
     "xlsx": "^0.18.5"
   },

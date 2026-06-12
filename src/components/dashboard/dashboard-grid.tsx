@@ -67,23 +67,50 @@ WIDGET_REGISTRY.forEach(w => {
 })
 
 const LAYOUT_KEY_PREFIX = 'dashboard_layout_'
-const USER_ID = 'default_user' // Se puede cambiar cuando haya auth
+const FALLBACK_USER_ID = 'default_user' // fallback si no hay sesión
 
 interface DashboardGridProps {
   userId?: string
 }
 
-export function DashboardGrid({ userId = USER_ID }: DashboardGridProps) {
+export function DashboardGrid({ userId: userIdProp }: DashboardGridProps) {
   const { width, containerRef } = useContainerWidth({ initialWidth: 1200 })
   const [widgets, setWidgets] = useState<DashboardLayoutItem[]>([])
   const [editing, setEditing] = useState(false)
   const [showPicker, setShowPicker] = useState(false)
   const [loading, setLoading] = useState(true)
   const [hasChanges, setHasChanges] = useState(false)
+  const [userId, setUserId] = useState<string | null>(userIdProp ?? null)
+  const [userLoading, setUserLoading] = useState(!userIdProp)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Leer user real con createClient().auth.getUser()
+  useEffect(() => {
+    if (userIdProp) {
+      setUserId(userIdProp)
+      setUserLoading(false)
+      return
+    }
+    let alive = true
+    async function loadUser() {
+      try {
+        const supabase = createClient()
+        const { data } = await supabase.auth.getUser()
+        if (!alive) return
+        setUserId(data?.user?.id || FALLBACK_USER_ID)
+      } catch {
+        if (alive) setUserId(FALLBACK_USER_ID)
+      } finally {
+        if (alive) setUserLoading(false)
+      }
+    }
+    loadUser()
+    return () => { alive = false }
+  }, [userIdProp])
 
   // Cargar layout desde Supabase
   useEffect(() => {
+    if (!userId) return
     async function loadLayout() {
       try {
         const supabase = createClient()
@@ -123,6 +150,7 @@ export function DashboardGrid({ userId = USER_ID }: DashboardGridProps) {
 
   // Guardar layout en Supabase
   const saveLayout = useCallback(async (layoutItems: DashboardLayoutItem[]) => {
+    if (!userId) return
     try {
       const supabase = createClient()
       const key = `${LAYOUT_KEY_PREFIX}${userId}`
@@ -264,7 +292,7 @@ export function DashboardGrid({ userId = USER_ID }: DashboardGridProps) {
     return widgets.map(w => w.widgetType)
   }, [widgets])
 
-  if (loading) {
+  if (loading || userLoading) {
     return (
       <div className="space-y-4">
         <div className="flex items-center justify-between">

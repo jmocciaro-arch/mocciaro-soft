@@ -31,6 +31,10 @@
     {
       "path": "/api/cron/catalog-rules",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/purchase-payment-alerts",
+      "schedule": "0 8 * * *"
     }
   ]
 }

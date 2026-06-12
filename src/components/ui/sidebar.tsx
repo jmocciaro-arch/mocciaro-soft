@@ -5,11 +5,11 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
   LayoutDashboard, FileText, Package, Users, Warehouse, Target,
-  ShoppingCart, Receipt, Wrench, Calendar, Mail, Settings,
-  ChevronLeft, ChevronRight, Menu, X, LogOut, ClipboardList,
+  ShoppingCart, Receipt, Wrench, Settings,
+  ChevronLeft, ChevronRight, Menu, X, ClipboardList,
   Truck, CreditCard, Building2, BarChart3,
   Cpu, Box, Layers, BookOpen, Pause, History,
-  Banknote, Sparkles, TrendingUp, GitBranch, FormInput, Bot,
+  Banknote, Sparkles, TrendingUp,
   RefreshCw, Zap, Globe, MessageCircle, ArrowLeft, HelpCircle,
   Inbox, Workflow,
 } from 'lucide-react'
@@ -74,7 +74,7 @@ const navItems: NavItem[] = [
   { label: 'Buscador Web', href: '/buscador-clientes', icon: Globe, requiredPermissions: ['admin_users'] },
   { label: 'SAT', href: '/sat', icon: Wrench, badgeKey: 'sat_open', requiredPermissions: ['view_sat'] },
   { label: 'Gastos', href: '/gastos', icon: Receipt, requiredPermissions: ['view_financials'] },
-  { label: 'Agente IA', href: '/dashboard/ejecutivo', icon: Bot },
+  // 'Agente IA' eliminado — duplicaba el destino de 'Dashboard ejecutivo'. Acceso vía 'Hub IA' (/ai-hub).
   { label: 'Informes', href: '/informes', icon: BarChart3, requiredPermissions: ['view_sales_reports', 'view_financials'] },
   { label: 'Admin', href: '/admin', icon: Settings, requiredPermissions: ['admin_users'] },
   { label: 'Automatizaciones', href: '/admin/automatizaciones', icon: Zap, requiredPermissions: ['admin_users'] },

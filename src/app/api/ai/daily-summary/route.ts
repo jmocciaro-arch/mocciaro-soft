@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { requireAuth } from '@/lib/auth/require-admin'
+import { withCompanyFilter } from '@/lib/auth/with-company-filter'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -23,6 +25,18 @@ export async function GET(request: NextRequest) {
     const companyId = searchParams.get('companyId')
     const isCron = searchParams.get('cron') === '1'
     const forceRefresh = searchParams.get('refresh') === '1'
+
+    // Auth split: cron requiere CRON_SECRET, modo per-company requiere sesión
+    if (isCron) {
+      const authHeader = request.headers.get('authorization') ?? ''
+      const expected = `Bearer ${process.env.CRON_SECRET ?? ''}`
+      if (!process.env.CRON_SECRET || authHeader !== expected) {
+        return NextResponse.json({ error: 'cron secret inválido' }, { status: 401 })
+      }
+    } else {
+      const auth = await requireAuth()
+      if (!auth.ok) return auth.response
+    }
 
     if (!companyId && !isCron) {
       return NextResponse.json({ error: 'companyId requerido' }, { status: 400 })
@@ -51,6 +65,15 @@ export async function GET(request: NextRequest) {
 
     if (!companyId) {
       return NextResponse.json({ error: 'companyId requerido' }, { status: 400 })
+    }
+
+    // Per-company: validar acceso a la company
+    if (!isCron) {
+      const guard = await withCompanyFilter()
+      if (!guard.ok) return guard.response
+      if (!guard.assertAccess(companyId)) {
+        return NextResponse.json({ error: 'Sin acceso a esta empresa' }, { status: 403 })
+      }
     }
 
     // Check cache

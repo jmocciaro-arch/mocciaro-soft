@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { StelOrderClient } from '@/lib/migration/stelorder-client'
 import { PHASES } from '@/lib/migration/stelorder-phases'
+import { requireAdmin, userHasCompanyAccess } from '@/lib/auth/require-admin'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300  // 5 min max por fase
@@ -25,8 +26,15 @@ function admin() {
 }
 
 export async function GET(req: NextRequest) {
+  const guard = await requireAdmin()
+  if (!guard.ok) return guard.response
+
   const companyId = req.nextUrl.searchParams.get('companyId')
   if (!companyId) return NextResponse.json({ error: 'companyId requerido' }, { status: 400 })
+
+  if (!(await userHasCompanyAccess(guard.ttUserId, guard.role, companyId))) {
+    return NextResponse.json({ error: 'Sin acceso a esta empresa' }, { status: 403 })
+  }
 
   const supabase = admin()
   const { data: logs } = await supabase
@@ -53,8 +61,15 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    const guard = await requireAdmin()
+    if (!guard.ok) return guard.response
+
     const { companyId, phaseId, apiKey } = await req.json()
     if (!companyId || !phaseId) return NextResponse.json({ error: 'companyId y phaseId requeridos' }, { status: 400 })
+
+    if (!(await userHasCompanyAccess(guard.ttUserId, guard.role, companyId))) {
+      return NextResponse.json({ error: 'Sin acceso a esta empresa' }, { status: 403 })
+    }
 
     const phase = PHASES.find((p) => p.id === phaseId)
     if (!phase) return NextResponse.json({ error: `Fase no encontrada: ${phaseId}` }, { status: 404 })

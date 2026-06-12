@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback, Suspense, useMemo } from 'react'
+import { useRouter } from 'next/navigation'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { SearchBar } from '@/components/ui/search-bar'
 import { Badge } from '@/components/ui/badge'
@@ -20,10 +21,11 @@ import type { Warehouse } from '@/types'
 import { ExportButton } from '@/components/ui/export-button'
 import { ImportButton } from '@/components/ui/import-button'
 import { useCompanyContext } from '@/lib/company-context'
+import { useCompanyFilter } from '@/hooks/use-company-filter'
 import {
   Package, AlertTriangle, XCircle, CheckCircle, Loader2,
   ArrowLeftRight, Warehouse as WarehouseIcon, Activity, TrendingUp,
-  Plus, ClipboardEdit, Search, Database, Zap
+  Plus, ClipboardEdit, Search, Database, Zap, Pencil, X
 } from 'lucide-react'
 
 type Row = Record<string, unknown>
@@ -77,6 +79,7 @@ function MovementTypeBadge({ type }: { type: string }) {
 // INVENTARIO TAB
 // ═══════════════════════════════════════════════════════
 function InventarioTab() {
+  const router = useRouter()
   const [stockItems, setStockItems] = useState<StockRow[]>([])
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [brands, setBrands] = useState<string[]>([])
@@ -107,6 +110,7 @@ function InventarioTab() {
   // Seed banner state (BUG2): si la empresa activa tiene 0 filas en
   // tt_stock, ofrecemos inicializar con el RPC seed_stock_for_company.
   const { activeCompanyId, activeCompany } = useCompanyContext()
+  const { filterByCompany, companyKey, companyIds } = useCompanyFilter()
   const [seedSummary, setSeedSummary] = useState<null | {
     warehouses_count: number
     products_count: number
@@ -115,6 +119,7 @@ function InventarioTab() {
     rows_with_zero_count: number
   }>(null)
   const [seeding, setSeeding] = useState(false)
+  const [showSeedConfirm, setShowSeedConfirm] = useState(false)
 
   const loadSeedSummary = useCallback(async () => {
     if (!activeCompanyId) { setSeedSummary(null); return }
@@ -125,9 +130,14 @@ function InventarioTab() {
     } catch { /* non-blocking */ }
   }, [activeCompanyId])
 
-  const handleSeedStock = useCallback(async () => {
+  const handleSeedStock = useCallback(() => {
     if (!activeCompanyId) return
-    if (!confirm(`Inicializar stock=0 para todos los productos × ${seedSummary?.warehouses_count || 'N'} almacenes de ${activeCompany?.name || 'esta empresa'}?\n\nEs idempotente: no pisa cantidades existentes, solo agrega filas faltantes.`)) return
+    setShowSeedConfirm(true)
+  }, [activeCompanyId])
+
+  const performSeedStock = useCallback(async () => {
+    if (!activeCompanyId) return
+    setShowSeedConfirm(false)
     setSeeding(true)
     try {
       const res = await fetch('/api/stock/seed', {
@@ -152,16 +162,21 @@ function InventarioTab() {
   }, [activeCompanyId, activeCompany, seedSummary, addToast, loadSeedSummary])
 
   useEffect(() => { void loadSeedSummary() }, [loadSeedSummary])
-  useEffect(() => { loadWarehouses() }, [])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { loadWarehouses() }, [companyKey])
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => { loadStock() }, 300)
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
-  }, [search, warehouseFilter, brandFilter])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, warehouseFilter, brandFilter, companyKey])
 
   async function loadWarehouses() {
     const supabase = createClient()
-    const { data } = await supabase.from('tt_warehouses').select('*').eq('active', true).order('name')
+    // tt_warehouses tiene company_id → filtramos por la(s) company(s) activa(s)
+    let q = supabase.from('tt_warehouses').select('*').eq('active', true).order('name')
+    q = filterByCompany(q)
+    const { data } = await q
     setWarehouses((data || []) as Warehouse[])
   }
 
@@ -169,13 +184,32 @@ function InventarioTab() {
     const sb = createClient()
     setLoading(true)
     try {
+      // tt_stock NO tiene company_id propio → filtramos por warehouse_id IN
+      // (almacenes de las companies activas del usuario).
+      if (companyIds.length === 0) {
+        setStockItems([]); setBrands([])
+        setKpis({ total: 0, inStock: 0, lowStock: 0, outOfStock: 0, virtualTotal: 0 })
+        setLoading(false)
+        return
+      }
+      const { data: whIds } = await sb.from('tt_warehouses').select('id').in('company_id', companyIds)
+      const validWarehouseIds = (whIds || []).map((r) => r.id as string)
+      if (validWarehouseIds.length === 0) {
+        setStockItems([]); setBrands([])
+        setKpis({ total: 0, inStock: 0, lowStock: 0, outOfStock: 0, virtualTotal: 0 })
+        setLoading(false)
+        return
+      }
+
       // Query tt_stock with virtual stock data from tt_stock_virtual
       let query = sb.from('tt_stock').select(`id, product_id, warehouse_id, quantity, reserved, min_quantity, product:tt_products(sku, name, brand), warehouse:tt_warehouses(name, code)`).order('quantity', { ascending: true })
+      query = query.in('warehouse_id', validWarehouseIds)
       if (warehouseFilter) query = query.eq('warehouse_id', warehouseFilter)
       const { data } = await query
 
       // Also fetch virtual stock data
       let virtualQuery = sb.from('tt_stock_virtual').select('product_id, warehouse_id, stock_real, reserved, disponible, pending_reception, pending_delivery, stock_virtual, min_quantity')
+      virtualQuery = virtualQuery.in('warehouse_id', validWarehouseIds)
       if (warehouseFilter) virtualQuery = virtualQuery.eq('warehouse_id', warehouseFilter)
       const { data: virtualData } = await virtualQuery
 
@@ -222,7 +256,10 @@ function InventarioTab() {
       setKpis({ total: items.length, inStock: items.filter((i) => i.quantity > i.min_quantity).length, lowStock: items.filter((i) => i.quantity > 0 && i.quantity <= i.min_quantity).length, outOfStock: items.filter((i) => i.quantity === 0).length, virtualTotal })
       setStockItems(items)
     } finally { setLoading(false) }
-  }, [search, warehouseFilter, brandFilter])
+    // companyKey identifica las companies activas; companyIds se usa adentro
+    // pero cambia por referencia cada render, por eso no va en deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, warehouseFilter, brandFilter, companyKey])
 
   // Product autocomplete for ajuste modal
   useEffect(() => {
@@ -280,11 +317,17 @@ function InventarioTab() {
       }
 
       // Insert movement record
+      // Para 'ajuste' guardamos el delta absoluto (after - before) para que el reporte
+      // de movimientos refleje correctamente lo que cambió. Para entrada/salida
+      // guardamos la cantidad solicitada por el usuario.
+      const movementQty = ajusteType === 'ajuste'
+        ? Math.abs(qtyAfter - qtyBefore)
+        : ajusteQty
       await sb.from('tt_stock_movements').insert({
         product_id: productId,
         warehouse_id: ajusteWarehouse,
         movement_type: ajusteType,
-        quantity: ajusteType === 'ajuste' ? ajusteQty : ajusteQty,
+        quantity: movementQty,
         quantity_before: qtyBefore,
         quantity_after: qtyAfter,
         reference: `Ajuste manual - ${ajusteType}`,
@@ -423,19 +466,34 @@ function InventarioTab() {
                     <TableHead className="text-right">Cantidad</TableHead>
                     <TableHead className="text-right">Minimo</TableHead>
                     <TableHead>Estado</TableHead>
+                    <TableHead className="text-right">Acción</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {alertItems.map((item) => (
-                    <TableRow key={item.id} className={item.quantity === 0 ? 'bg-red-500/5' : 'bg-amber-500/5'}>
-                      <TableCell className="font-mono text-sm">{item.product_sku}</TableCell>
-                      <TableCell className="max-w-[200px] truncate">{item.product_name}</TableCell>
-                      <TableCell className="text-[#9CA3AF]">{item.warehouse_name}</TableCell>
-                      <TableCell className={`text-right font-bold text-lg ${item.quantity === 0 ? 'text-red-400' : 'text-amber-400'}`}>{item.quantity}</TableCell>
-                      <TableCell className="text-right text-[#6B7280]">{item.min_quantity}</TableCell>
-                      <TableCell>{stockBadge(item.quantity, item.min_quantity)}</TableCell>
-                    </TableRow>
-                  ))}
+                  {alertItems.map((item) => {
+                    // Fix 4 — Crear OC para reponer: target = 2x min, descontando lo ya en stock
+                    const qtyToBuy = Math.max(1, (item.min_quantity * 2) - item.quantity)
+                    const payload = JSON.stringify([{ sku: item.product_sku, qty: qtyToBuy }])
+                    return (
+                      <TableRow key={item.id} className={item.quantity === 0 ? 'bg-red-500/5' : 'bg-amber-500/5'}>
+                        <TableCell className="font-mono text-sm">{item.product_sku}</TableCell>
+                        <TableCell className="max-w-[200px] truncate">{item.product_name}</TableCell>
+                        <TableCell className="text-[#9CA3AF]">{item.warehouse_name}</TableCell>
+                        <TableCell className={`text-right font-bold text-lg ${item.quantity === 0 ? 'text-red-400' : 'text-amber-400'}`}>{item.quantity}</TableCell>
+                        <TableCell className="text-right text-[#6B7280]">{item.min_quantity}</TableCell>
+                        <TableCell>{stockBadge(item.quantity, item.min_quantity)}</TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => router.push(`/compras?tab=pedidos&newWithProducts=${encodeURIComponent(payload)}`)}
+                          >
+                            <Plus size={12} /> Crear OC
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
                 </TableBody>
               </Table>
             </div>
@@ -589,6 +647,21 @@ function InventarioTab() {
               {ajusteSubmitting ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
               Confirmar Ajuste
             </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={showSeedConfirm} onClose={() => setShowSeedConfirm(false)} title="Inicializar stock" size="md">
+        <div className="space-y-4">
+          <p className="text-sm text-[#D1D5DB]">
+            ¿Inicializar stock=0 para todos los productos × {seedSummary?.warehouses_count || 'N'} almacenes de {activeCompany?.name || 'esta empresa'}?
+          </p>
+          <p className="text-xs text-[#6B7280]">
+            Es idempotente: no pisa cantidades existentes, sólo agrega filas faltantes.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setShowSeedConfirm(false)}>Cancelar</Button>
+            <Button onClick={performSeedStock}>Inicializar</Button>
           </div>
         </div>
       </Modal>
@@ -804,63 +877,40 @@ function TraspasosTab() {
 
     setTransferring(true)
     try {
-      // Get origin stock
-      const { data: originStock } = await supabase.from('tt_stock').select('id, quantity').eq('warehouse_id', originWH).eq('product_id', selectedProduct).single()
-      if (!originStock || (originStock.quantity as number) < quantity) {
-        addToast({ type: 'error', title: 'Stock insuficiente en origen' }); setTransferring(false); return
-      }
-
-      const originQtyBefore = originStock.quantity as number
-      const originQtyAfter = originQtyBefore - quantity
-
-      // Decrement origin
-      await supabase.from('tt_stock').update({ quantity: originQtyAfter }).eq('id', originStock.id)
-
-      // Increment destination
-      const { data: destStock } = await supabase.from('tt_stock').select('id, quantity').eq('warehouse_id', destWH).eq('product_id', selectedProduct).single()
-      const destQtyBefore = destStock ? (destStock.quantity as number) : 0
-      const destQtyAfter = destQtyBefore + quantity
-
-      if (destStock) {
-        await supabase.from('tt_stock').update({ quantity: destQtyAfter }).eq('id', destStock.id)
-      } else {
-        await supabase.from('tt_stock').insert({ warehouse_id: destWH, product_id: selectedProduct, quantity, reserved: 0, min_quantity: 0 })
-      }
-
-      // Get warehouse names for reference
       const originWHName = warehouses.find(w => w.id === originWH)?.name || originWH
       const destWHName = warehouses.find(w => w.id === destWH)?.name || destWH
       const refText = `Traspaso ${originWHName} -> ${destWHName}`
 
-      // Insert 2 movement records: salida from origin + entrada to destination
-      await supabase.from('tt_stock_movements').insert([
-        {
-          product_id: selectedProduct,
-          warehouse_id: originWH,
-          movement_type: 'traspaso',
-          quantity,
-          quantity_before: originQtyBefore,
-          quantity_after: originQtyAfter,
-          reference: refText,
-          notes: `Salida por traspaso a ${destWHName}`,
-        },
-        {
-          product_id: selectedProduct,
-          warehouse_id: destWH,
-          movement_type: 'traspaso',
-          quantity,
-          quantity_before: destQtyBefore,
-          quantity_after: destQtyAfter,
-          reference: refText,
-          notes: `Entrada por traspaso desde ${originWHName}`,
-        },
-      ])
+      // Llamada al RPC transaccional. Si cualquier paso falla → ROLLBACK automático.
+      // Ver supabase/migrations/v89_fn_transfer_stock.sql
+      const sb = createClient()
+      const { data, error } = await sb.rpc('fn_transfer_stock', {
+        p_product_id: selectedProduct,
+        p_quantity: quantity,
+        p_from_warehouse: originWH,
+        p_to_warehouse: destWH,
+        p_reference: refText,
+        p_notes: null,
+      })
 
-      addToast({ type: 'success', title: 'Traspaso realizado' })
+      if (error) {
+        // Mensaje claro del Postgres (RAISE EXCEPTION del RPC)
+        const msg = error.message || 'Error en el traspaso'
+        addToast({ type: 'error', title: 'Traspaso fallido', message: msg })
+        setTransferring(false)
+        return
+      }
+
+      const result = Array.isArray(data) ? data[0] : data
+      const info = result
+        ? `${originWHName}: ${result.qty_origin_before} → ${result.qty_origin_after} | ${destWHName}: ${result.qty_dest_before} → ${result.qty_dest_after}`
+        : `${quantity} unidades transferidas`
+      addToast({ type: 'success', title: 'Traspaso realizado', message: info })
       setOriginWH(''); setDestWH(''); setSelectedProduct(''); setQuantity(1)
       loadRecentTraspasos()
-    } catch {
-      addToast({ type: 'error', title: 'Error en el traspaso' })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Error en el traspaso'
+      addToast({ type: 'error', title: 'Error en el traspaso', message: msg })
     } finally {
       setTransferring(false)
     }
@@ -944,30 +994,98 @@ function TraspasosTab() {
 // ═══════════════════════════════════════════════════════
 function AlmacenesTab() {
   const supabase = createClient()
+  const { addToast } = useToast()
+  const { activeCompanyId } = useCompanyContext()
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [loading, setLoading] = useState(true)
   const [stockCounts, setStockCounts] = useState<Record<string, number>>({})
+  const [showForm, setShowForm] = useState(false)
+  const [editing, setEditing] = useState<Warehouse | null>(null)
+  const [form, setForm] = useState({ name: '', code: '', city: '', country: 'ES', address: '' })
+  const [saving, setSaving] = useState(false)
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true)
-      const [{ data: wh }, { data: stock }] = await Promise.all([
-        supabase.from('tt_warehouses').select('*').eq('active', true).order('name'),
-        supabase.from('tt_stock').select('warehouse_id, quantity'),
-      ])
-      setWarehouses((wh || []) as Warehouse[])
-      const counts: Record<string, number> = {}
-      for (const s of (stock || [])) { const wid = s.warehouse_id as string; counts[wid] = (counts[wid] || 0) + ((s.quantity as number) || 0) }
-      setStockCounts(counts)
-      setLoading(false)
-    })()
-  }, [])
+  const load = useCallback(async () => {
+    setLoading(true)
+    const [{ data: wh }, { data: stock }] = await Promise.all([
+      supabase.from('tt_warehouses').select('*').eq('active', true).order('name'),
+      supabase.from('tt_stock').select('warehouse_id, quantity'),
+    ])
+    setWarehouses((wh || []) as Warehouse[])
+    const counts: Record<string, number> = {}
+    for (const s of (stock || [])) { const wid = s.warehouse_id as string; counts[wid] = (counts[wid] || 0) + ((s.quantity as number) || 0) }
+    setStockCounts(counts)
+    setLoading(false)
+  }, [supabase])
+
+  useEffect(() => { void load() }, [load])
+
+  function openNew() {
+    setEditing(null)
+    setForm({ name: '', code: '', city: '', country: 'ES', address: '' })
+    setShowForm(true)
+  }
+
+  function openEdit(w: Warehouse) {
+    setEditing(w)
+    setForm({ name: w.name || '', code: w.code || '', city: w.city || '', country: w.country || 'ES', address: w.address || '' })
+    setShowForm(true)
+  }
+
+  async function saveWarehouse() {
+    if (!form.name.trim() || !form.code.trim()) {
+      addToast({ type: 'error', title: 'Nombre y código son obligatorios' })
+      return
+    }
+    setSaving(true)
+    try {
+      if (editing) {
+        const { error } = await supabase.from('tt_warehouses').update({
+          name: form.name.trim(),
+          code: form.code.trim(),
+          city: form.city.trim() || null,
+          country: form.country.trim() || 'ES',
+          address: form.address.trim() || null,
+        }).eq('id', editing.id)
+        if (error) throw error
+        addToast({ type: 'success', title: 'Almacén actualizado' })
+      } else {
+        const { error } = await supabase.from('tt_warehouses').insert({
+          name: form.name.trim(),
+          code: form.code.trim(),
+          city: form.city.trim() || null,
+          country: form.country.trim() || 'ES',
+          address: form.address.trim() || null,
+          company_id: activeCompanyId || null,
+          active: true,
+        })
+        if (error) throw error
+        addToast({ type: 'success', title: 'Almacén creado' })
+      }
+      setShowForm(false)
+      void load()
+    } catch (e) {
+      addToast({ type: 'error', title: 'Error', message: (e as Error).message })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function deactivateWarehouse(w: Warehouse) {
+    if (!window.confirm(`¿Desactivar almacén "${w.name}"?`)) return
+    const { error } = await supabase.from('tt_warehouses').update({ active: false }).eq('id', w.id)
+    if (error) { addToast({ type: 'error', title: 'Error', message: error.message }); return }
+    addToast({ type: 'success', title: 'Almacén desactivado' })
+    void load()
+  }
 
   if (loading) return <div className="flex justify-center py-20"><Loader2 className="animate-spin text-[#FF6600]" size={32} /></div>
 
   return (
     <div className="space-y-4">
-      <KPICard label="Total almacenes" value={warehouses.length} icon={<WarehouseIcon size={22} />} />
+      <div className="flex items-center justify-between">
+        <KPICard label="Total almacenes" value={warehouses.length} icon={<WarehouseIcon size={22} />} />
+        <Button onClick={openNew}><Plus size={14} /> Nuevo almacén</Button>
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {warehouses.map((w) => (
           <Card key={w.id}>
@@ -982,9 +1100,34 @@ function AlmacenesTab() {
                 <p className="text-[10px] text-[#6B7280]">unidades</p>
               </div>
             </div>
+            <div className="flex gap-2 mt-3 pt-3 border-t border-[#1E2330]">
+              <Button variant="secondary" size="sm" onClick={() => openEdit(w)}>
+                <Pencil size={12} /> Editar
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => deactivateWarehouse(w)}>
+                <X size={12} /> Desactivar
+              </Button>
+            </div>
           </Card>
         ))}
       </div>
+
+      <Modal isOpen={showForm} onClose={() => setShowForm(false)} title={editing ? 'Editar almacén' : 'Nuevo almacén'} size="md">
+        <div className="space-y-3">
+          <Input label="Nombre *" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Almacén Madrid" />
+          <Input label="Código *" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="MAD" />
+          <Input label="Ciudad" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} placeholder="Madrid" />
+          <Input label="País" value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} placeholder="ES" />
+          <Input label="Dirección" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="Calle Mayor 1" />
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="secondary" onClick={() => setShowForm(false)} disabled={saving}>Cancelar</Button>
+            <Button onClick={saveWarehouse} disabled={saving}>
+              {saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
+              {editing ? 'Guardar' : 'Crear'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }

@@ -1,39 +1,11 @@
 'use client'
 
-import { useState, useEffect } from 'react'
 import { AlertTriangle } from 'lucide-react'
-import { createClient } from '@/lib/supabase/client'
+import { useStockAlerts } from '@/hooks/use-stock-alerts'
 import { WidgetSkeleton, WidgetError } from '../widget-wrapper'
 
 export function KpiStockAlerts() {
-  const [count, setCount] = useState(0)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(false)
-
-  useEffect(() => {
-    async function load() {
-      try {
-        const supabase = createClient()
-        // Products where current stock is below min_quantity
-        const { data, error: e } = await supabase
-          .from('tt_stock')
-          .select('quantity, min_quantity')
-
-        if (e) throw e
-
-        const alerts = (data || []).filter((item: any) => {
-          const minQty = item.min_quantity ?? 0
-          return minQty > 0 && (item.quantity || 0) < minQty
-        })
-        setCount(alerts.length)
-      } catch {
-        setError(true)
-      } finally {
-        setLoading(false)
-      }
-    }
-    load()
-  }, [])
+  const { count, loading, error } = useStockAlerts()
 
   if (loading) return <WidgetSkeleton />
   if (error) return <WidgetError />

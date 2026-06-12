@@ -3,27 +3,18 @@
 // Soporte offline completo con sincronización en segundo plano
 // ============================================================================
 
-const CACHE_VERSION = 'v2';
+const CACHE_VERSION = 'v3-fix-offline-on-redirect';
 const STATIC_CACHE = `torquetools-static-${CACHE_VERSION}`;
 const API_CACHE = `torquetools-api-${CACHE_VERSION}`;
 const PAGE_CACHE = `torquetools-pages-${CACHE_VERSION}`;
 const OFFLINE_PAGE = '/offline.html';
 
-// Assets estáticos y rutas críticas para pre-cachear en install
+// Assets estáticos y rutas públicas para pre-cachear en install.
+// IMPORTANTE: NO incluir rutas autenticadas (/dashboard, /cotizador, etc.) —
+// si el user no está logueado, esas rutas devuelven redirect a login y el
+// HTML cacheado sería del login, no de la página real.
 const PRECACHE_URLS = [
   '/',
-  '/dashboard',
-  '/dashboard/ejecutivo',
-  '/cotizador',
-  '/clientes',
-  '/catalogo',
-  '/compras',
-  '/ventas',
-  '/stock',
-  '/sat',
-  '/calendario',
-  '/scanner',
-  '/admin',
   '/offline.html',
   '/manifest.json',
   '/icons/icon-192.png',
@@ -100,7 +91,22 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // --- Llamadas a Supabase API → Network First ---
+  // --- Supabase REST/Auth/Storage → PASS-THROUGH, NO cachear ---
+  // SEGURIDAD: cachear responses de Supabase guarda tokens y datos
+  // específicos de usuario en un cache compartido, filtrando datos entre
+  // sesiones distintas en el mismo browser. Siempre ir a la red.
+  if (
+    url.hostname.endsWith('.supabase.co') ||
+    url.hostname.endsWith('.supabase.in') ||
+    url.pathname.startsWith('/rest/v1/') ||
+    url.pathname.startsWith('/auth/v1/') ||
+    url.pathname.startsWith('/storage/v1/') ||
+    url.pathname.startsWith('/realtime/v1/')
+  ) {
+    return; // dejá que el browser haga el fetch normal, sin tocar
+  }
+
+  // --- Llamadas a API internas (/api/*) → Network First ---
   if (isApiCall(url)) {
     event.respondWith(networkFirstStrategy(request));
     return;
@@ -186,8 +192,8 @@ async function navigationStrategy(request) {
   // Refresh en background (no bloquea respuesta si hay cache)
   const networkPromise = fetch(request)
     .then((res) => {
+      // Solo cachear responses 2xx (no redirects ni errores)
       if (res && res.ok) {
-        // Clonar antes de meter al cache
         cache.put(request, res.clone()).catch(() => {});
       }
       return res;
@@ -196,7 +202,6 @@ async function navigationStrategy(request) {
 
   // 1. Si hay cache → servir YA, refresh en background
   if (cached) {
-    // Disparamos pero no esperamos
     networkPromise.catch(() => {});
     return cached;
   }
@@ -206,7 +211,11 @@ async function navigationStrategy(request) {
     setTimeout(() => resolve(null), 4000)
   );
   const fresh = await Promise.race([networkPromise, timeoutPromise]);
-  if (fresh && fresh.ok) return fresh;
+  // FIX (2026-05-25): aceptar también redirects (3xx) — antes solo aceptaba
+  // 2xx, lo que hacía caer al fallback offline cuando el proxy/middleware
+  // hacía un 307 a /login, mostrando "Sin conexión" en lugar de la app.
+  // Si el server respondió cualquier cosa < 500, no estamos offline.
+  if (fresh && fresh.status < 500) return fresh;
 
   // 3. Red falló o tardó demasiado → fallback offline
   const offlinePage = await caches.match(OFFLINE_PAGE);
@@ -223,12 +232,9 @@ async function navigationStrategy(request) {
 // ============================================================================
 
 function isApiCall(url) {
-  return (
-    url.hostname.includes('supabase') ||
-    url.pathname.startsWith('/api/') ||
-    url.pathname.startsWith('/rest/') ||
-    url.hostname.includes('supabase.co')
-  );
+  // Solo APIs internas de Next.js. Supabase ya se filtra antes en el handler
+  // de fetch con pass-through total — no debe llegar acá nunca.
+  return url.pathname.startsWith('/api/');
 }
 
 function isStaticAsset(url) {

@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 import { aiQuery } from '@/lib/ai'
 import { google } from 'googleapis'
 import { getGmailTokens, setGmailTokens } from '@/lib/gmail-tokens'
+import { requireAuth } from '@/lib/auth/require-admin'
 
 export const runtime = 'nodejs'
 
@@ -89,6 +90,16 @@ function checkOCInAttachments(payload: Record<string, unknown>): boolean {
 
 export async function POST(req: NextRequest) {
   try {
+    // Auth: aceptar (a) Bearer GMAIL_PUBSUB_SECRET (para Pub/Sub real de Google) o
+    // (b) sesión autenticada (para llamadas internas desde el ERP).
+    const authHeader = req.headers.get('authorization') ?? ''
+    const pubsubSecret = process.env.GMAIL_PUBSUB_SECRET ?? ''
+    const isPubsub = !!pubsubSecret && authHeader === `Bearer ${pubsubSecret}`
+    if (!isPubsub) {
+      const auth = await requireAuth()
+      if (!auth.ok) return auth.response
+    }
+
     const body = await req.json() as { messageId?: string; companyId?: string }
     const { messageId, companyId } = body
 

@@ -1,0 +1,17 @@
+{
+  "empresaA": {
+    "userId": "73a37126-801f-44c7-b1cc-bfa84ba495ef",
+    "companyId": "f15f288d-f3c6-44ed-a02d-880c2a1bd2a9",
+    "documentId": "46b0bdd0-450d-4395-8389-138335eb759c",
+    "clientId": "7932e88a-e558-4265-8274-b3f3de8c8b79",
+    "warehouseId": "0f8f45bc-fb84-4a5a-aee6-499f48896b71"
+  },
+  "empresaB": {
+    "userId": "0dbc2064-4180-4cc0-ba23-eaedec36ac7a",
+    "companyId": "85c664cc-0304-426a-b90b-395f73d3121e",
+    "documentId": "4cb99708-c6a2-472f-ac49-686ae9709239",
+    "clientId": "7a43cf67-26e4-45be-af4c-00574c2e86b8",
+    "warehouseId": "375ec449-c12f-4f2e-a7b1-d40e57180e8e"
+  },
+  "generatedAt": "2026-05-25T13:01:11.605Z"
+}

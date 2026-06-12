@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient as createServiceClient } from '@supabase/supabase-js'
-import { createClient } from '@/lib/supabase/server'
+import { requireAdmin, userHasCompanyAccess } from '@/lib/auth/require-admin'
+import { withCompanyFilter, ensureCompanyAccess } from '@/lib/auth/with-company-filter'
 
 export const runtime = 'nodejs'
 
@@ -18,15 +19,18 @@ export const runtime = 'nodejs'
  */
 export async function POST(req: NextRequest) {
   try {
+    // Auth + admin gate (operación destructiva masiva)
+    const guard = await requireAdmin()
+    if (!guard.ok) return guard.response
+
     const { companyId } = await req.json()
     if (!companyId) {
       return NextResponse.json({ error: 'companyId requerido' }, { status: 400 })
     }
 
-    // Auth + admin gate
-    const supabaseAuth = await createClient()
-    const { data: { user } } = await supabaseAuth.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
+    if (!(await userHasCompanyAccess(guard.ttUserId, guard.role, companyId))) {
+      return NextResponse.json({ error: 'Sin acceso a esta empresa' }, { status: 403 })
+    }
 
     const supabase = createServiceClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -62,10 +66,13 @@ export async function POST(req: NextRequest) {
  */
 export async function GET(req: NextRequest) {
   try {
+    const guard = await withCompanyFilter()
+    if (!guard.ok) return guard.response
+
     const companyId = req.nextUrl.searchParams.get('companyId')
-    if (!companyId) {
-      return NextResponse.json({ error: 'companyId requerido' }, { status: 400 })
-    }
+    const access = ensureCompanyAccess(guard, companyId)
+    if (!access.ok) return access.response
+
     const supabase = createServiceClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!,

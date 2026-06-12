@@ -215,10 +215,13 @@ export interface ClaudeCallResult<T = string> {
 }
 
 export async function callClaude(params: ClaudeCallParams): Promise<ClaudeCallResult<string>> {
-  const apiKey = process.env.ANTHROPIC_API_KEY
+  // Fallback a CLAUDE_KEY (mismo valor) cuando ANTHROPIC_API_KEY viene vacía
+  // del entorno padre (caso típico cuando el server corre dentro de un
+  // agente Claude que sobreescribe la variable con "").
+  const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_KEY
   if (!apiKey) {
     return {
-      data: null, error: 'ANTHROPIC_API_KEY no configurada',
+      data: null, error: 'ANTHROPIC_API_KEY no configurada (ni CLAUDE_KEY)',
       cacheHit: false, costUsd: 0, model: params.model || DEFAULT_MODEL,
       inputTokens: 0, outputTokens: 0, cacheReadTokens: 0,
     }

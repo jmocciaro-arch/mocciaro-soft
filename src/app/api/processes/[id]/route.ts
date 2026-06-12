@@ -7,6 +7,7 @@ import {
   recalculateProcess,
 } from '@/lib/process-engine'
 import type { ProcessStatus } from '@/types/process'
+import { withCompanyFilter } from '@/lib/auth/with-company-filter'
 
 // GET /api/processes/[id] — get full process with stages, docs, thread
 export async function GET(
@@ -14,9 +15,16 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const guard = await withCompanyFilter()
+    if (!guard.ok) return guard.response
+
     const { id } = await params
     const data = await getProcessFull(id)
     if (!data.process) {
+      return NextResponse.json({ error: 'Process not found' }, { status: 404 })
+    }
+    const procCompanyId = (data.process as unknown as { company_id?: string }).company_id
+    if (!guard.assertAccess(procCompanyId)) {
       return NextResponse.json({ error: 'Process not found' }, { status: 404 })
     }
     return NextResponse.json(data)
@@ -31,7 +39,21 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const guard = await withCompanyFilter()
+    if (!guard.ok) return guard.response
+
     const { id } = await params
+
+    // Verificar ownership
+    const procData = await getProcessFull(id)
+    if (!procData.process) {
+      return NextResponse.json({ error: 'Process not found' }, { status: 404 })
+    }
+    const procCompanyId = (procData.process as unknown as { company_id?: string }).company_id
+    if (!guard.assertAccess(procCompanyId)) {
+      return NextResponse.json({ error: 'Process not found' }, { status: 404 })
+    }
+
     const body = await request.json()
     const action = body.action as string
 

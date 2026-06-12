@@ -12,6 +12,7 @@ import { LeadScoreBadge } from '@/components/ai/lead-score-badge'
 import { DocumentProcessBar } from '@/components/workflow/document-process-bar'
 import { buildSteps } from '@/lib/workflow-definitions'
 import { useRouter } from 'next/navigation'
+import { useToast } from '@/components/ui/toast'
 import { Plus, Sparkles, RefreshCw, Mail, Phone, Zap, FileText } from 'lucide-react'
 
 interface Lead {
@@ -44,6 +45,7 @@ export { LeadsPage as LeadsIATab }
 export default function LeadsPage() {
   const supabase = createClient()
   const { filterByCompany, activeCompanyId } = useCompanyFilter()
+  const { addToast } = useToast()
   const [leads, setLeads] = useState<Lead[]>([])
   const [loading, setLoading] = useState(true)
   const [newOpen, setNewOpen] = useState(false)
@@ -93,7 +95,7 @@ export default function LeadsPage() {
           } } : l))
         )
       } else {
-        alert('Error: ' + j.error)
+        addToast({ type: 'error', title: 'Error', message: String(j.error || 'Falló el scoring') })
       }
     } finally {
       setScoringId(null)
@@ -193,6 +195,7 @@ function KPI({ label, value }: { label: string; value: number }) {
 function NewLeadModal({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: () => void }) {
   const supabase = createClient()
   const { activeCompanyId } = useCompanyFilter()
+  const { addToast } = useToast()
   const [form, setForm] = useState({ name: '', email: '', phone: '', company_name: '', industry: '', source: 'web_form', raw_message: '', estimated_value: '' })
   const [saving, setSaving] = useState(false)
   const [autoScore, setAutoScore] = useState(true)
@@ -235,7 +238,7 @@ function NewLeadModal({ open, onClose, onCreated }: { open: boolean; onClose: ()
       }
       onCreated()
     } catch (err) {
-      alert('Error: ' + (err as Error).message)
+      addToast({ type: 'error', title: 'Error', message: (err as Error).message })
     } finally {
       setSaving(false)
     }
@@ -279,12 +282,18 @@ function NewLeadModal({ open, onClose, onCreated }: { open: boolean; onClose: ()
 }
 
 function LeadDetailModal({ lead, onClose, onRefresh }: { lead: Lead; onClose: () => void; onRefresh: () => void }) {
+  const { addToast } = useToast()
   const [converting, setConverting] = useState(false)
   const [convertMsg, setConvertMsg] = useState('')
+  const [showConfirmConvert, setShowConfirmConvert] = useState(false)
   const needs = (lead.ai_needs || {}) as Record<string, unknown>
 
+  function askConvert() {
+    setShowConfirmConvert(true)
+  }
+
   async function convertToOpportunity() {
-    if (!confirm('¿Convertir este lead en una oportunidad del pipeline?')) return
+    setShowConfirmConvert(false)
     setConverting(true)
     setConvertMsg('Convirtiendo...')
     try {
@@ -397,7 +406,7 @@ function LeadDetailModal({ lead, onClose, onRefresh }: { lead: Lead; onClose: ()
               <button
                 type="button"
                 className="text-xs underline"
-                onClick={() => { navigator.clipboard.writeText(lead.ai_suggested_email || ''); alert('Copiado') }}
+                onClick={() => { navigator.clipboard.writeText(lead.ai_suggested_email || ''); addToast({ type: 'success', title: 'Copiado al portapapeles' }) }}
               >Copiar</button>
             </div>
             <div className="text-sm p-3 rounded-md border whitespace-pre-wrap font-mono" style={{ borderColor: '#2A3040', background: '#1E2330', fontSize: 12 }}>
@@ -439,7 +448,7 @@ function LeadDetailModal({ lead, onClose, onRefresh }: { lead: Lead; onClose: ()
             </Button>
 
             {!lead.converted_opportunity_id && (
-              <Button variant="secondary" onClick={convertToOpportunity} disabled={converting}>
+              <Button variant="secondary" onClick={askConvert} disabled={converting}>
                 {converting ? 'Convirtiendo...' : '🎯 Convertir a oportunidad'}
               </Button>
             )}
@@ -454,6 +463,16 @@ function LeadDetailModal({ lead, onClose, onRefresh }: { lead: Lead; onClose: ()
           </div>
         </div>
       </div>
+
+      <Modal isOpen={showConfirmConvert} onClose={() => setShowConfirmConvert(false)} title="Convertir lead" size="sm">
+        <div className="space-y-4">
+          <p className="text-sm text-[#D1D5DB]">¿Convertir este lead en una oportunidad del pipeline?</p>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setShowConfirmConvert(false)}>Cancelar</Button>
+            <Button onClick={convertToOpportunity}>Convertir</Button>
+          </div>
+        </div>
+      </Modal>
     </Modal>
   )
 }

@@ -1,9 +1,13 @@
 import { NextResponse } from 'next/server'
 import { getOrCreateThread, getMessages, postMessage } from '@/lib/process-engine'
+import { requireAuth } from '@/lib/auth/require-admin'
 
 // GET /api/threads?entity_type=X&entity_id=Y — get thread + messages for entity
 export async function GET(request: Request) {
   try {
+    const auth = await requireAuth()
+    if (!auth.ok) return auth.response
+
     const { searchParams } = new URL(request.url)
     const entityType = searchParams.get('entity_type')
     const entityId = searchParams.get('entity_id')
@@ -22,8 +26,13 @@ export async function GET(request: Request) {
 // POST /api/threads — post a message
 export async function POST(request: Request) {
   try {
+    const auth = await requireAuth()
+    if (!auth.ok) return auth.response
+
     const body = await request.json()
-    const { thread_id, entity_type, entity_id, author_user_id, content, is_internal, attachments, mentions } = body
+    const { thread_id, entity_type, entity_id, content, is_internal, attachments, mentions } = body
+    // Forzar author_user_id desde la sesión (no confiar en el body)
+    const author_user_id = auth.ttUserId
 
     let targetThreadId = thread_id
     if (!targetThreadId && entity_type && entity_id) {
