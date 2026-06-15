@@ -15,7 +15,8 @@ import { SkeletonCardGrid } from '@/components/ui/skeleton'
 import { ChannelCard } from '@/components/channels/channel-card'
 import { NewListingModal } from '@/components/channels/new-listing-modal'
 import { EditListingModal, type EditableListing } from '@/components/channels/edit-listing-modal'
-import { ArrowLeftRight, Inbox, PackageOpen, RefreshCw, Pencil, AlertTriangle } from 'lucide-react'
+import { CompetitionAnalysisModal, type AnalyzableListing } from '@/components/channels/competition-analysis-modal'
+import { ArrowLeftRight, Inbox, PackageOpen, RefreshCw, Pencil, AlertTriangle, BarChart3 } from 'lucide-react'
 import { formatRelative } from '@/lib/utils'
 import { buyerName, estadoBucketFor, CHANNEL_ORDER_STATUS_LABELS } from '@/lib/dashboard/executive-kpis'
 import { LISTING_STATUS_LABELS, LISTING_STATUS_BADGE } from '@/lib/channels/constants'
@@ -71,6 +72,7 @@ export default function CanalesPage() {
   const [creatingId, setCreatingId] = useState<string | null>(null)
   const [showNewListing, setShowNewListing] = useState(false)
   const [editing, setEditing] = useState<EditableListing | null>(null)
+  const [analyzing, setAnalyzing] = useState<AnalyzableListing | null>(null)
   const [syncing, setSyncing] = useState(false)
 
   const canManageOrders = can('manage_channel_orders')
@@ -106,6 +108,13 @@ export default function CanalesPage() {
 
   const channelLabels = useMemo(
     () => Object.fromEntries(gate.enabledChannels.map(c => [c.id, c.label])),
+    [gate.enabledChannels],
+  )
+
+  // Solo las publicaciones de canales MercadoLibre se pueden analizar (el endpoint
+  // de competencia es 100% ML). Set de channel_ids para gatear el botón por fila.
+  const mlChannelIds = useMemo(
+    () => new Set(gate.enabledChannels.filter(c => c.code === 'mercadolibre').map(c => c.id)),
     [gate.enabledChannels],
   )
 
@@ -237,22 +246,36 @@ export default function CanalesPage() {
       render: v => (v ? <span className="text-red-400 text-xs truncate block max-w-[180px]" title={String(v)}>{String(v)}</span> : <span className="text-[#6B7280] text-xs">—</span>),
     },
     {
-      key: 'id', label: '', width: '90px',
+      key: 'id', label: '', width: '210px',
       render: (_v, row) => {
         const r = row as ListingRow
-        // Solo se editan en ML las publicaciones con external_id (las traídas por sync).
-        if (!canManageChannels || !r.external_id) return null
+        // Tanto competencia como edición operan sobre publicaciones con external_id
+        // (las traídas por sync); las manuales no tienen ID de ML.
+        if (!r.external_id) return null
+        const externalId = r.external_id
+        const isMl = mlChannelIds.has(r.channel_id)
         return (
-          <Button size="sm" variant="secondary" onClick={() => setEditing({
-            id: r.id, title: r.title, price: r.price, currency: r.currency,
-            stock_published: r.stock_published, status: r.status,
-          })}>
-            <Pencil size={13} /> Editar
-          </Button>
+          <div className="flex gap-1.5 justify-end">
+            {isMl && (
+              <Button size="sm" variant="secondary" onClick={() => setAnalyzing({
+                id: r.id, channel_id: r.channel_id, external_id: externalId, title: r.title,
+              })}>
+                <BarChart3 size={13} /> Competencia
+              </Button>
+            )}
+            {canManageChannels && (
+              <Button size="sm" variant="secondary" onClick={() => setEditing({
+                id: r.id, title: r.title, price: r.price, currency: r.currency,
+                stock_published: r.stock_published, status: r.status,
+              })}>
+                <Pencil size={13} /> Editar
+              </Button>
+            )}
+          </div>
         )
       },
     },
-  ], [channelLabels, canManageChannels]) // eslint-disable-line react-hooks/exhaustive-deps
+  ], [channelLabels, canManageChannels, mlChannelIds]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- Gating §1 ----
   if (gate.loading) {
@@ -393,6 +416,11 @@ export default function CanalesPage() {
         listing={editing}
         onClose={() => setEditing(null)}
         onSaved={() => void loadData()}
+      />
+
+      <CompetitionAnalysisModal
+        listing={analyzing}
+        onClose={() => setAnalyzing(null)}
       />
     </div>
   )
