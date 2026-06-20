@@ -1397,6 +1397,7 @@ export default function AdminPage() {
                         id: c.id as string,
                         name: (c.name as string) || '',
                         logo_url: (c.logo_url as string) ?? null,
+                        logo_iso_url: (c.logo_iso_url as string) ?? null,
                         country: (c.country as string) ?? null,
                         code_prefix: (c.code_prefix as string) ?? null,
                         tax_id: (c.tax_id as string) ?? null,

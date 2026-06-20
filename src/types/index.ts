@@ -729,6 +729,7 @@ export interface CompanyDisplay {
   can_sell: boolean
   can_buy: boolean
   logo_url?: string | null
+  logo_iso_url?: string | null
 }
 
 // =====================================================

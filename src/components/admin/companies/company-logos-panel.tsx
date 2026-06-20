@@ -12,12 +12,15 @@ export type CompanyRow = {
   id: string
   name: string
   logo_url?: string | null
+  logo_iso_url?: string | null
   country?: string | null
   code_prefix?: string | null
   tax_id?: string | null
   default_tax_rate?: number | string | null
   active?: boolean | null
 }
+
+type LogoKind = 'logo' | 'iso'
 
 interface Props {
   companies: CompanyRow[]
@@ -48,20 +51,22 @@ export function CompanyLogosPanel({
   const supabase = createClient()
   const { addToast } = useToast()
 
-  const [uploading, setUploading] = useState<string | null>(null)
+  const [uploading, setUploading] = useState<string | null>(null) // formato: `${companyId}:${kind}`
   const [justUploaded, setJustUploaded] = useState<string | null>(null)
-  // Mapa de previsualización local para refrescar sin esperar al reload
+  // Mapa de previsualización local para refrescar sin esperar al reload (key: `${companyId}:${kind}`)
   const [localPreviews, setLocalPreviews] = useState<Record<string, string>>({})
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({})
 
-  const triggerInput = (companyId: string) => {
-    inputRefs.current[companyId]?.click()
+  const slotKey = (companyId: string, kind: LogoKind) => `${companyId}:${kind}`
+
+  const triggerInput = (companyId: string, kind: LogoKind) => {
+    inputRefs.current[slotKey(companyId, kind)]?.click()
   }
 
-  const handleFile = async (companyId: string, file: File | null) => {
+  const handleFile = async (companyId: string, kind: LogoKind, file: File | null) => {
     if (!file) return
+    const sk = slotKey(companyId, kind)
 
-    // Validación básica
     if (!file.type.startsWith('image/')) {
       addToast({ type: 'warning', title: 'Solo se aceptan imágenes (PNG, JPG, SVG)' })
       return
@@ -71,53 +76,45 @@ export function CompanyLogosPanel({
       return
     }
 
-    // Preview local inmediato
     const localUrl = URL.createObjectURL(file)
-    setLocalPreviews((prev) => ({ ...prev, [companyId]: localUrl }))
+    setLocalPreviews((prev) => ({ ...prev, [sk]: localUrl }))
 
-    setUploading(companyId)
+    setUploading(sk)
     try {
       const ext = file.name.split('.').pop()?.toLowerCase() || 'png'
-      const storagePath = `by-id/${companyId}/logo.${ext}`
+      const filename = kind === 'iso' ? 'iso' : 'logo'
+      const storagePath = `by-id/${companyId}/${filename}.${ext}`
 
-      // Upload a Supabase Storage con upsert
       const { error: uploadErr } = await supabase.storage
         .from('company-logos')
         .upload(storagePath, file, { upsert: true, contentType: file.type })
 
       if (uploadErr) throw uploadErr
 
-      // URL pública
       const { data: { publicUrl } } = supabase.storage
         .from('company-logos')
         .getPublicUrl(storagePath)
 
-      // Actualizar logo_url en DB
+      const dbField = kind === 'iso' ? 'logo_iso_url' : 'logo_url'
       const { error: dbErr } = await supabase
         .from('tt_companies')
-        .update({ logo_url: publicUrl })
+        .update({ [dbField]: publicUrl })
         .eq('id', companyId)
 
       if (dbErr) throw dbErr
 
-      setJustUploaded(companyId)
+      setJustUploaded(sk)
       setTimeout(() => setJustUploaded(null), 3000)
-      addToast({ type: 'success', title: 'Logo actualizado correctamente' })
+      addToast({ type: 'success', title: kind === 'iso' ? 'Isotipo actualizado' : 'Logotipo actualizado' })
       onUpdated()
     } catch (e) {
-      // Revertir preview local si falló
-      setLocalPreviews((prev) => {
-        const next = { ...prev }
-        delete next[companyId]
-        return next
-      })
+      setLocalPreviews((prev) => { const n = { ...prev }; delete n[sk]; return n })
       addToast({
         type: 'error',
         title: 'Error subiendo logo',
         message: e instanceof Error ? e.message : 'Error desconocido',
       })
     } finally {
-      setUploading(false as unknown as string)
       setUploading(null)
     }
   }
@@ -135,11 +132,54 @@ export function CompanyLogosPanel({
       ) : (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {visible.map((c) => {
-          const isUploading = uploading === c.id
-          const wasJustUploaded = justUploaded === c.id
-          const displayUrl = localPreviews[c.id] || (c.logo_url ? bustCache(c.logo_url) : null)
           const flag = COUNTRY_FLAGS[c.country ?? ''] ?? '🏢'
           const isInactive = c.active === false
+
+          const renderSlot = (kind: LogoKind, sourceUrl: string | null | undefined, label: string, aspect: 'wide' | 'square') => {
+            const sk = slotKey(c.id, kind)
+            const isUploading = uploading === sk
+            const wasJustUploaded = justUploaded === sk
+            const displayUrl = localPreviews[sk] || (sourceUrl ? bustCache(sourceUrl) : null)
+            return (
+              <div className="flex flex-col gap-1 flex-1 min-w-0">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] uppercase tracking-wider text-[#6B7280]">{label}</span>
+                  {wasJustUploaded && <CheckCircle2 size={12} className="text-emerald-400 shrink-0" />}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => triggerInput(c.id, kind)}
+                  disabled={isUploading}
+                  className={`relative w-full rounded-lg bg-[#1A2030] border-2 border-dashed border-[#2A3040] hover:border-orange-500/50 transition-colors flex items-center justify-center overflow-hidden cursor-pointer group/img ${
+                    aspect === 'square' ? 'aspect-square' : 'h-24'
+                  }`}
+                  title={`Clic para cambiar ${label.toLowerCase()}`}
+                >
+                  {displayUrl ? (
+                    <>
+                      <Image src={displayUrl} alt={`${label} ${c.name}`} fill className="object-contain p-2" unoptimized />
+                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center rounded-lg">
+                        <div className="flex flex-col items-center gap-1">
+                          <Upload size={16} className="text-white" />
+                          <span className="text-white text-[9px] font-medium">Cambiar</span>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex flex-col items-center gap-1 text-[#4B5563]">
+                      <ImageOff size={20} />
+                      <span className="text-[9px]">Sin {label.toLowerCase()}</span>
+                    </div>
+                  )}
+                  {isUploading && (
+                    <div className="absolute inset-0 bg-black/70 flex items-center justify-center rounded-lg">
+                      <RefreshCw size={18} className="text-orange-400 animate-spin" />
+                    </div>
+                  )}
+                </button>
+              </div>
+            )
+          }
 
           return (
             <div
@@ -159,9 +199,6 @@ export function CompanyLogosPanel({
                     <p className="text-[10px] text-[#4B5563] font-mono">{c.code_prefix}</p>
                   )}
                 </div>
-                {wasJustUploaded && (
-                  <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
-                )}
                 {isInactive ? (
                   <Badge variant="default">Inactiva</Badge>
                 ) : (
@@ -169,45 +206,11 @@ export function CompanyLogosPanel({
                 )}
               </div>
 
-              {/* Logo preview — click para reemplazar */}
-              <button
-                type="button"
-                onClick={() => triggerInput(c.id)}
-                disabled={isUploading}
-                className="relative w-full h-28 rounded-lg bg-[#1A2030] border-2 border-dashed border-[#2A3040] hover:border-orange-500/50 transition-colors flex items-center justify-center overflow-hidden cursor-pointer group/img"
-                title="Clic para cambiar logo"
-              >
-                {displayUrl ? (
-                  <>
-                    <Image
-                      src={displayUrl}
-                      alt={`Logo ${c.name}`}
-                      fill
-                      className="object-contain p-2"
-                      unoptimized
-                    />
-                    {/* Overlay hover */}
-                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center rounded-lg">
-                      <div className="flex flex-col items-center gap-1">
-                        <Upload size={18} className="text-white" />
-                        <span className="text-white text-[10px] font-medium">Cambiar logo</span>
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <div className="flex flex-col items-center gap-2 text-[#4B5563]">
-                    <ImageOff size={28} />
-                    <span className="text-[10px]">Sin logo</span>
-                  </div>
-                )}
-
-                {/* Spinner de carga */}
-                {isUploading && (
-                  <div className="absolute inset-0 bg-black/70 flex items-center justify-center rounded-lg">
-                    <RefreshCw size={20} className="text-orange-400 animate-spin" />
-                  </div>
-                )}
-              </button>
+              {/* Logotipo (con nombre) + Isotipo (cuadrado) */}
+              <div className="flex gap-2 items-stretch">
+                {renderSlot('logo', c.logo_url, 'Logotipo', 'wide')}
+                {renderSlot('iso', c.logo_iso_url, 'Isotipo', 'square')}
+              </div>
 
               {/* Datos compactos */}
               <div className="grid grid-cols-3 gap-2 w-full">
@@ -246,14 +249,21 @@ export function CompanyLogosPanel({
                 </Button>
               )}
 
-              {/* Input file oculto */}
+              {/* Inputs file ocultos — uno por tipo */}
               <input
-                ref={(el) => { inputRefs.current[c.id] = el }}
+                ref={(el) => { inputRefs.current[slotKey(c.id, 'logo')] = el }}
                 type="file"
                 accept="image/png,image/jpeg,image/jpg,image/svg+xml,image/webp"
                 className="hidden"
-                onChange={(e) => handleFile(c.id, e.target.files?.[0] ?? null)}
-                // Limpiar value para poder subir el mismo archivo de nuevo
+                onChange={(e) => handleFile(c.id, 'logo', e.target.files?.[0] ?? null)}
+                onClick={(e) => { (e.target as HTMLInputElement).value = '' }}
+              />
+              <input
+                ref={(el) => { inputRefs.current[slotKey(c.id, 'iso')] = el }}
+                type="file"
+                accept="image/png,image/jpeg,image/jpg,image/svg+xml,image/webp"
+                className="hidden"
+                onChange={(e) => handleFile(c.id, 'iso', e.target.files?.[0] ?? null)}
                 onClick={(e) => { (e.target as HTMLInputElement).value = '' }}
               />
             </div>

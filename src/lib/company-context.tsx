@@ -167,7 +167,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       if (isSuper) {
         const { data: allCompanies, error: allErr } = await supabase
           .from('tt_companies')
-          .select('id, name, country, currency, company_type, logo_url')
+          .select('id, name, country, currency, company_type, logo_url, logo_iso_url')
           .order('name')
 
         if (allErr) {
@@ -186,6 +186,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
             can_sell: true,
             can_buy: true,
             logo_url: (c as { logo_url?: string | null }).logo_url ?? null,
+            logo_iso_url: (c as { logo_iso_url?: string | null }).logo_iso_url ?? null,
           }))
           setCompanies(displays)
           const storedId = getStoredCompanyId()
@@ -216,7 +217,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
           is_default,
           can_sell,
           can_buy,
-          company:tt_companies(id, name, country, currency, company_type, logo_url)
+          company:tt_companies(id, name, country, currency, company_type, logo_url, logo_iso_url)
         `)
         .eq('user_id', ttUser.id)
 
@@ -226,7 +227,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         console.warn('[CompanyContext] Usuario sin filas en tt_user_companies. Fallback a tt_companies (via RLS).')
         const { data: allCompanies, error: allErr } = await supabase
           .from('tt_companies')
-          .select('id, name, country, currency, company_type, logo_url')
+          .select('id, name, country, currency, company_type, logo_url, logo_iso_url')
           .order('name')
 
         if (allErr) {
@@ -245,6 +246,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
             can_sell: true,
             can_buy: true,
             logo_url: (c as { logo_url?: string | null }).logo_url ?? null,
+            logo_iso_url: (c as { logo_iso_url?: string | null }).logo_iso_url ?? null,
           }))
           setCompanies(displays)
           const storedId = getStoredCompanyId()
@@ -270,6 +272,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
           can_sell: uc.can_sell as boolean,
           can_buy: uc.can_buy as boolean,
           logo_url: (comp.logo_url as string | null | undefined) ?? null,
+          logo_iso_url: (comp.logo_iso_url as string | null | undefined) ?? null,
         }
       })
 

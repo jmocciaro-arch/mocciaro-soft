@@ -51,16 +51,16 @@ export function ActiveCompanyBadge() {
               transform: active ? 'scale(1)' : 'scale(0.92)',
             }}
           >
-            {c.logo_url ? (
+            {(c.logo_iso_url || c.logo_url) ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={c.logo_url}
+                src={c.logo_iso_url || c.logo_url || ''}
                 alt={c.name}
                 className="w-full h-full object-contain rounded-sm transition-all duration-150"
                 style={{
                   filter: active ? 'none' : 'grayscale(100%)',
                   opacity: active ? 1 : 0.55,
-                  background: 'white',
+                  background: 'transparent',
                 }}
               />
             ) : (
