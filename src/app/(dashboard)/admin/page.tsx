@@ -299,6 +299,9 @@ export default function AdminPage() {
   const [loadingRoles, setLoadingRoles] = useState(false)
   const [savingRolePerms, setSavingRolePerms] = useState(false)
   const [editingRole, setEditingRole] = useState<RbacRole | null>(null)
+  const [showNewRole, setShowNewRole] = useState(false)
+  const [newRoleForm, setNewRoleForm] = useState({ name: '', label: '', category: 'internal', description: '' })
+  const [savingNewRole, setSavingNewRole] = useState(false)
   const [roleSearch, setRoleSearch] = useState('')
   const [roleCategoryFilter, setRoleCategoryFilter] = useState('')
 
@@ -640,6 +643,40 @@ export default function AdminPage() {
       addToast({ type: 'error', title: 'Error al guardar permisos' })
     } finally {
       setSavingRolePerms(false)
+    }
+  }
+
+  const saveNewRole = async () => {
+    const name = newRoleForm.name.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_')
+    const label = newRoleForm.label.trim()
+    if (!name || !label) {
+      addToast({ type: 'warning', title: 'Nombre técnico y etiqueta son obligatorios' })
+      return
+    }
+    setSavingNewRole(true)
+    try {
+      const { data, error } = await supabase
+        .from('tt_roles')
+        .insert({
+          name,
+          label,
+          category: newRoleForm.category,
+          description: newRoleForm.description.trim() || null,
+          is_default: false,
+          active: true,
+        })
+        .select()
+        .single()
+      if (error) throw error
+      addToast({ type: 'success', title: 'Rol creado', message: label })
+      setShowNewRole(false)
+      setNewRoleForm({ name: '', label: '', category: 'internal', description: '' })
+      await loadRbacData()
+      if (data) setEditingRole(data as RbacRole)
+    } catch (e) {
+      addToast({ type: 'error', title: 'Error', message: (e as Error)?.message || 'No se pudo crear el rol' })
+    } finally {
+      setSavingNewRole(false)
     }
   }
 
@@ -1266,8 +1303,11 @@ export default function AdminPage() {
             {activeTab === 'roles' && (
               <div className="space-y-4">
                 <Card>
-                  <CardHeader>
+                  <CardHeader className="flex flex-row items-center justify-between gap-3 flex-wrap">
                     <CardTitle>Roles del sistema</CardTitle>
+                    <Button size="sm" onClick={() => setShowNewRole(true)}>
+                      <Plus size={14} /> Nuevo rol
+                    </Button>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="flex gap-3 flex-wrap">
@@ -2230,6 +2270,69 @@ export default function AdminPage() {
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* ─── NEW ROLE ─── */}
+      <Modal isOpen={showNewRole} onClose={() => setShowNewRole(false)} title="Nuevo rol" size="md">
+        <div className="space-y-4">
+          <div>
+            <label className="text-xs font-semibold text-[#9CA3AF] uppercase tracking-wider">Etiqueta visible *</label>
+            <input
+              type="text"
+              value={newRoleForm.label}
+              onChange={(e) => {
+                const label = e.target.value
+                const auto = label.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+                setNewRoleForm((f) => ({ ...f, label, name: f.name || auto }))
+              }}
+              placeholder="ej. Jefe de Mantenimiento"
+              className="mt-1 w-full bg-[#1E2330] border border-[#2A3040] rounded-lg px-3 py-2 text-sm text-[#F0F2F5] focus:border-[#FF6600] outline-none"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-[#9CA3AF] uppercase tracking-wider">Nombre técnico (sin espacios) *</label>
+            <input
+              type="text"
+              value={newRoleForm.name}
+              onChange={(e) => setNewRoleForm((f) => ({ ...f, name: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_') }))}
+              placeholder="ej. mantenimiento_jefe"
+              className="mt-1 w-full bg-[#1E2330] border border-[#2A3040] rounded-lg px-3 py-2 text-sm text-[#F0F2F5] font-mono focus:border-[#FF6600] outline-none"
+            />
+            <p className="text-[10px] text-[#6B7280] mt-1">Identificador único, en minúsculas y sin espacios. Se autogenera del label.</p>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-[#9CA3AF] uppercase tracking-wider">Categoría</label>
+            <Select
+              options={[
+                { value: 'internal', label: 'Interno' },
+                { value: 'external_client', label: 'Cliente externo' },
+                { value: 'external_supplier', label: 'Proveedor externo' },
+              ]}
+              value={newRoleForm.category}
+              onChange={(e) => setNewRoleForm((f) => ({ ...f, category: e.target.value }))}
+              className="mt-1"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-[#9CA3AF] uppercase tracking-wider">Descripción</label>
+            <textarea
+              value={newRoleForm.description}
+              onChange={(e) => setNewRoleForm((f) => ({ ...f, description: e.target.value }))}
+              placeholder="Qué hace este rol en el sistema..."
+              rows={3}
+              className="mt-1 w-full bg-[#1E2330] border border-[#2A3040] rounded-lg px-3 py-2 text-sm text-[#F0F2F5] focus:border-[#FF6600] outline-none"
+            />
+          </div>
+          <div className="flex justify-end gap-3 pt-2 border-t border-[#1E2330]">
+            <Button variant="secondary" onClick={() => setShowNewRole(false)} disabled={savingNewRole}>Cancelar</Button>
+            <Button onClick={saveNewRole} loading={savingNewRole}>
+              <Plus size={14} /> Crear rol
+            </Button>
+          </div>
+          <p className="text-[11px] text-[#6B7280]">
+            Después de crear el rol vas a poder asignarle permisos haciendo click en la tarjeta del rol.
+          </p>
+        </div>
       </Modal>
 
       {/* ─── EDIT COMPANY (modal nuevo profesional) ─── */}

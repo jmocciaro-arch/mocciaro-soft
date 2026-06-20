@@ -3,9 +3,12 @@
 import '@/components/sat/buscatools-theme.css'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useEffect } from 'react'
 import {
   Wrench, Cpu, Box, Layers, BookOpen, Package, Pause, History, ClipboardList,
 } from 'lucide-react'
+
+const SAT_FONTS_HREF = 'https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700;800;900&display=swap'
 
 const SAT_NAV = [
   { href: '/sat',            label: 'Dashboard',    icon: Wrench },
@@ -21,6 +24,15 @@ const SAT_NAV = [
 
 export default function SatLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
+
+  useEffect(() => {
+    if (document.head.querySelector('link[data-sat-fonts]')) return
+    const link = document.createElement('link')
+    link.rel = 'stylesheet'
+    link.href = SAT_FONTS_HREF
+    link.setAttribute('data-sat-fonts', '')
+    document.head.appendChild(link)
+  }, [])
 
   return (
     <div className="sat-theme">

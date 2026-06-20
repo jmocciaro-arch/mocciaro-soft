@@ -34,11 +34,50 @@
   --sat-fn: 'DM Sans', system-ui, -apple-system, sans-serif;
   --sat-mo: 'DM Mono', ui-monospace, monospace;
 
+  /* ── OVERRIDE de tokens del design system ERP ──────────
+     Re-mapeamos las CSS vars de Mocciaro Soft al HTML buscatool
+     para que Card / Button / Table / Badge / KPICard se pinten
+     automáticamente con el look FEIN sin tocar las páginas.
+     ─────────────────────────────────────────────────────── */
+  --color-background:    var(--sat-dk);
+  --color-foreground:    var(--sat-tx);
+  --color-foreground-soft: var(--sat-tx2);
+  --color-card:          var(--sat-dk2);
+  --color-card-hover:    var(--sat-dk3);
+  --color-border:        var(--sat-br);
+  --color-border-hover:  var(--sat-br2);
+  --color-border-strong: var(--sat-br2);
+  --color-primary:       var(--sat-or);
+  --color-primary-hover: #FB923C;
+  --accent:              var(--sat-or);
+  --accent-hover:        #FB923C;
+
   font-family: var(--sat-fn);
   color: var(--sat-tx);
+  background: var(--sat-dk);
 }
 
-/* DM Sans se carga globalmente desde el layout root del ERP */
+/* Pintar el fondo de la zona SAT con el dark del HTML */
+.sat-theme,
+.sat-theme * { font-family: var(--sat-fn); }
+.sat-theme code,
+.sat-theme pre,
+.sat-theme .font-mono,
+.sat-theme [class*="td-ref"],
+.sat-theme [class*="td-mod"] { font-family: var(--sat-mo); }
+
+/* Componentes UI del ERP heredan los nuevos colores via CSS vars */
+.sat-theme .bg-card { background-color: var(--sat-dk2) !important; }
+.sat-theme .bg-background { background-color: var(--sat-dk) !important; }
+.sat-theme .border-border { border-color: var(--sat-br) !important; }
+.sat-theme .text-foreground { color: var(--sat-tx) !important; }
+.sat-theme .text-muted-foreground,
+.sat-theme .text-\\[\\#6B7280\\] { color: var(--sat-tx2) !important; }
+.sat-theme .text-\\[\\#F0F2F5\\] { color: var(--sat-tx) !important; }
+.sat-theme .text-\\[\\#D1D5DB\\] { color: var(--sat-tx) !important; }
+.sat-theme .border-\\[\\#1E2330\\] { border-color: var(--sat-br) !important; }
+.sat-theme .bg-\\[\\#0F1218\\] { background-color: var(--sat-dk3) !important; }
+.sat-theme .divide-\\[\\#1E2330\\] > * + * { border-color: var(--sat-br) !important; }
 
 /* ── WORKFLOW TABS — COLORED STEP LINE ──────────────── */
 .sat-theme .wf-nav {

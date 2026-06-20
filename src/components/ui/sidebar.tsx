@@ -20,6 +20,7 @@ import { CompanySelector } from '@/components/ui/company-selector'
 import { AlertsBell } from '@/components/alerts/alerts-bell'
 import { SyncStatus } from '@/components/pwa/sync-status'
 import { CacheStatusBadge } from '@/components/ui/cache-status-badge'
+import { ActiveCompanyBadge } from '@/components/ui/active-company-badge'
 import { ThemeToggle } from '@/components/theme/theme-toggle'
 
 interface SidebarContextType {
@@ -499,6 +500,9 @@ export function TopBar({ userName }: { userName?: string }) {
       </div>
 
       <div className="flex items-center gap-3">
+        {/* Badge visual de empresa activa (logo + nombre + bandera) */}
+        <ActiveCompanyBadge />
+
         {/* Cache status (búsquedas instantáneas) */}
         <CacheStatusBadge />
 

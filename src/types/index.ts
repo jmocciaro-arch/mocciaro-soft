@@ -728,6 +728,7 @@ export interface CompanyDisplay {
   is_default: boolean
   can_sell: boolean
   can_buy: boolean
+  logo_url?: string | null
 }
 
 // =====================================================
