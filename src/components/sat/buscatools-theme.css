@@ -1,10 +1,10 @@
-/* ══════════════════════════════════════════════════════
-   Buscatools FEIN AccuTec — Design system scoped a /sat
+/* ======================================================
+   Buscatools FEIN AccuTec - Design system scoped a /sat
    Aplicar envolviendo el modulo SAT en <div class="sat-theme">
-   ══════════════════════════════════════════════════════ */
+   ====================================================== */
 
 .sat-theme {
-  /* ── VARIABLES DE COLOR ───────────────────────────── */
+  /* -- VARIABLES DE COLOR ----------------------------- */
   --sat-or: #F97316;
   --sat-or-d: rgba(249, 115, 22, 0.13);
   --sat-or-g: rgba(249, 115, 22, 0.07);
@@ -34,11 +34,11 @@
   --sat-fn: 'DM Sans', system-ui, -apple-system, sans-serif;
   --sat-mo: 'DM Mono', ui-monospace, monospace;
 
-  /* ── OVERRIDE de tokens del design system ERP ──────────
+  /* -- OVERRIDE de tokens del design system ERP ----------
      Re-mapeamos las CSS vars de Mocciaro Soft al HTML buscatool
      para que Card / Button / Table / Badge / KPICard se pinten
      automáticamente con el look FEIN sin tocar las páginas.
-     ─────────────────────────────────────────────────────── */
+     ------------------------------------------------------- */
   --color-background:    var(--sat-dk);
   --color-foreground:    var(--sat-tx);
   --color-foreground-soft: var(--sat-tx2);
@@ -72,14 +72,14 @@
 .sat-theme .border-border { border-color: var(--sat-br) !important; }
 .sat-theme .text-foreground { color: var(--sat-tx) !important; }
 .sat-theme .text-muted-foreground,
-.sat-theme .text-\\[\\#6B7280\\] { color: var(--sat-tx2) !important; }
-.sat-theme .text-\\[\\#F0F2F5\\] { color: var(--sat-tx) !important; }
-.sat-theme .text-\\[\\#D1D5DB\\] { color: var(--sat-tx) !important; }
-.sat-theme .border-\\[\\#1E2330\\] { border-color: var(--sat-br) !important; }
-.sat-theme .bg-\\[\\#0F1218\\] { background-color: var(--sat-dk3) !important; }
-.sat-theme .divide-\\[\\#1E2330\\] > * + * { border-color: var(--sat-br) !important; }
+.sat-theme .text-\[\#6B7280\] { color: var(--sat-tx2) !important; }
+.sat-theme .text-\[\#F0F2F5\] { color: var(--sat-tx) !important; }
+.sat-theme .text-\[\#D1D5DB\] { color: var(--sat-tx) !important; }
+.sat-theme .border-\[\#1E2330\] { border-color: var(--sat-br) !important; }
+.sat-theme .bg-\[\#0F1218\] { background-color: var(--sat-dk3) !important; }
+.sat-theme .divide-\[\#1E2330\] > * + * { border-color: var(--sat-br) !important; }
 
-/* ── WORKFLOW TABS — COLORED STEP LINE ──────────────── */
+/* -- WORKFLOW TABS - COLORED STEP LINE ---------------- */
 .sat-theme .wf-nav {
   display: flex;
   align-items: center;
@@ -146,7 +146,7 @@
 .sat-theme .wf-tab[data-step="3"].wf-act { color: var(--sat-gn); background: var(--sat-gn-d); border-color: var(--sat-gn); }
 .sat-theme .wf-tab[data-step="4"].wf-act { color: var(--sat-pu); background: var(--sat-pu-d); border-color: var(--sat-pu); }
 
-/* ── SECTION HEADERS con color por paso ─────────────── */
+/* -- SECTION HEADERS con color por paso --------------- */
 .sat-theme .sn {
   display: flex;
   align-items: center;
@@ -165,7 +165,7 @@
 .sat-theme .sn-g { background: var(--sat-gn-d); color: var(--sat-gn); border-left: 3px solid var(--sat-gn); }
 .sat-theme .sn-p { background: var(--sat-pu-d); color: var(--sat-pu); border-left: 3px solid var(--sat-pu); }
 
-/* ── INSPECTION TOGGLES (OK/NOK/NA) ─────────────────── */
+/* -- INSPECTION TOGGLES (OK/NOK/NA) ------------------- */
 .sat-theme .pc {
   display: flex;
   align-items: center;
@@ -204,7 +204,7 @@
 .sat-theme .tgl.s-nok { background: var(--sat-rd); border-color: var(--sat-rd); color: #fff; }
 .sat-theme .tgl.s-na { background: var(--sat-tx3); border-color: var(--sat-tx3); color: var(--sat-dk); }
 
-/* ── KPI CARDS con stripe de color superior ─────────── */
+/* -- KPI CARDS con stripe de color superior ----------- */
 .sat-theme .sat-kpi {
   position: relative;
   background: var(--sat-dk2);
@@ -245,7 +245,7 @@
   margin-top: 3px;
 }
 
-/* ── BADGES ─────────────────────────────────────────── */
+/* -- BADGES ------------------------------------------- */
 .sat-theme .bd {
   display: inline-flex;
   align-items: center;
@@ -264,7 +264,7 @@
 .sat-theme .bd.b-corr { background: var(--sat-or-d); color: var(--sat-or); }
 .sat-theme .bd.b-amber { background: var(--sat-am-d); color: var(--sat-am); }
 
-/* ── BUTTONS ───────────────────────────────────────── */
+/* -- BUTTONS ----------------------------------------- */
 .sat-theme .sat-btn {
   display: inline-flex;
   align-items: center;
@@ -290,7 +290,7 @@
 .sat-theme .sat-btn-rd { background: var(--sat-rd); color: #fff; }
 .sat-theme .sat-btn-am { background: var(--sat-am); color: var(--sat-dk); }
 
-/* ── FORM FIELDS ─────────────────────────────────────── */
+/* -- FORM FIELDS --------------------------------------- */
 .sat-theme .fg {
   display: flex;
   flex-direction: column;
@@ -325,7 +325,7 @@
   border-color: var(--sat-or);
 }
 
-/* ── TABLES ───────────────────────────────────────── */
+/* -- TABLES ----------------------------------------- */
 .sat-theme .sat-table {
   width: 100%;
   border-collapse: collapse;
@@ -364,7 +364,7 @@
   color: var(--sat-bl);
 }
 
-/* ── PAUSE BANNER ───────────────────────────────────── */
+/* -- PAUSE BANNER ------------------------------------- */
 .sat-theme .pause-banner {
   background: var(--sat-am-d);
   border: 1px solid var(--sat-am);
