@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react'
 import Link from 'next/link'
-import { Package, Wrench, History, Plus, ChevronRight, Users, Tag, ClipboardList } from 'lucide-react'
+import { Package, Wrench, History, Plus, ChevronRight, Users, Tag, ClipboardList, Pencil } from 'lucide-react'
 import { fuzzyFilter } from '@/lib/sat/fuzzy-match'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
@@ -37,6 +37,8 @@ export default function SatActivosPage() {
   const [showNuevoActivo, setShowNuevoActivo] = useState(false)
   const [clientes, setClientes] = useState<Array<{ id: string; name: string; city?: string | null }>>([])
   const [nuevoActivo, setNuevoActivo] = useState({
+    id: '' as string,
+    ref: '' as string,
     brand: 'FEIN', model: '', internal_id: '', serial_number: '',
     client_id: '', city: '', province: '', notes: '',
   })
@@ -83,8 +85,25 @@ export default function SatActivosPage() {
 
   const handleNuevoActivo = () => {
     setNuevoActivo({
+      id: '', ref: '',
       brand: 'FEIN', model: '', internal_id: '', serial_number: '',
       client_id: '', city: '', province: '', notes: '',
+    })
+    setShowNuevoActivo(true)
+  }
+
+  const handleEditarActivo = (a: any) => {
+    setNuevoActivo({
+      id: a.id,
+      ref: a.ref || '',
+      brand: a.brand || '',
+      model: a.model || '',
+      internal_id: a.internal_id || '',
+      serial_number: a.serial_number || '',
+      client_id: a.client_id || '',
+      city: a.city || '',
+      province: a.province || '',
+      notes: a.notes || '',
     })
     setShowNuevoActivo(true)
   }
@@ -94,37 +113,13 @@ export default function SatActivosPage() {
       addToast({ type: 'warning', title: 'Marca y modelo son obligatorios' })
       return
     }
+    const isEdit = !!nuevoActivo.id
     setSavingActivo(true)
     try {
       const sb = createClient()
-      // Generar ref auto (siguiente ACTXXXXX)
-      const { data: maxRef } = await sb
-        .from('tt_sat_assets')
-        .select('ref')
-        .ilike('ref', 'ACT%')
-        .order('ref', { ascending: false })
-        .limit(1)
-      let nextNum = 400
-      if (maxRef && maxRef.length) {
-        const n = parseInt(((maxRef[0].ref as string) || '').replace(/\D/g, ''))
-        if (!isNaN(n)) nextNum = n + 1
-      }
-      const ref = `ACT${String(nextNum).padStart(5, '0')}`
-
-      // Obtener company de TorqueTools
-      const { data: co } = await sb.from('tt_companies').select('id').ilike('name', '%torquetools%').limit(1)
-      const companyId = (co as Array<{ id: string }> | null)?.[0]?.id
-
-      if (!companyId) {
-        addToast({ type: 'error', title: 'No se encontró empresa TorqueTools' })
-        setSavingActivo(false)
-        return
-      }
-
       const clienteSeleccionado = clientes.find((c) => c.id === nuevoActivo.client_id)
 
-      const { error } = await sb.from('tt_sat_assets').insert({
-        ref,
+      const baseFields = {
         internal_id: nuevoActivo.internal_id || null,
         serial_number: nuevoActivo.serial_number || null,
         brand: nuevoActivo.brand,
@@ -132,20 +127,55 @@ export default function SatActivosPage() {
         model_normalized: nuevoActivo.model.replace(/\s+/g, '').replace(/-PC$/i, '').toUpperCase(),
         client_id: nuevoActivo.client_id || null,
         client_name_raw: clienteSeleccionado?.name || null,
-        company_id: companyId,
         city: nuevoActivo.city || null,
         province: nuevoActivo.province || null,
-        country: 'AR',
-        is_new: true,
         notes: nuevoActivo.notes || null,
-      } as any)
-
-      if (error) {
-        addToast({ type: 'error', title: 'Error', message: error.message })
-        setSavingActivo(false)
-        return
       }
-      addToast({ type: 'success', title: 'Activo creado', message: ref })
+
+      if (isEdit) {
+        const { error } = await sb.from('tt_sat_assets')
+          .update(baseFields as any)
+          .eq('id', nuevoActivo.id)
+        if (error) {
+          addToast({ type: 'error', title: 'Error', message: error.message })
+          return
+        }
+        addToast({ type: 'success', title: 'Activo actualizado', message: nuevoActivo.ref })
+      } else {
+        // Generar ref auto (siguiente ACTXXXXX)
+        const { data: maxRef } = await sb
+          .from('tt_sat_assets')
+          .select('ref')
+          .ilike('ref', 'ACT%')
+          .order('ref', { ascending: false })
+          .limit(1)
+        let nextNum = 400
+        if (maxRef && maxRef.length) {
+          const n = parseInt(((maxRef[0].ref as string) || '').replace(/\D/g, ''))
+          if (!isNaN(n)) nextNum = n + 1
+        }
+        const ref = `ACT${String(nextNum).padStart(5, '0')}`
+
+        const { data: co } = await sb.from('tt_companies').select('id').ilike('name', '%torquetools%').limit(1)
+        const companyId = (co as Array<{ id: string }> | null)?.[0]?.id
+        if (!companyId) {
+          addToast({ type: 'error', title: 'No se encontró empresa TorqueTools' })
+          return
+        }
+
+        const { error } = await sb.from('tt_sat_assets').insert({
+          ref,
+          ...baseFields,
+          company_id: companyId,
+          country: 'AR',
+          is_new: true,
+        } as any)
+        if (error) {
+          addToast({ type: 'error', title: 'Error', message: error.message })
+          return
+        }
+        addToast({ type: 'success', title: 'Activo creado', message: ref })
+      }
       setShowNuevoActivo(false)
       reload()
     } finally {
@@ -339,9 +369,14 @@ export default function SatActivosPage() {
                       </TableCell>
                       <TableCell>{a.city || '-'}</TableCell>
                       <TableCell className="text-center">
-                        <Link href={`/sat/activos/${a.id}`}>
-                          <Button size="sm" variant="secondary">Ver <ChevronRight size={14} /></Button>
-                        </Link>
+                        <div className="flex gap-1 justify-center">
+                          <Button size="sm" variant="secondary" onClick={() => handleEditarActivo(a)} title="Editar activo">
+                            <Pencil size={14} />
+                          </Button>
+                          <Link href={`/sat/activos/${a.id}`}>
+                            <Button size="sm" variant="secondary">Ver <ChevronRight size={14} /></Button>
+                          </Link>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))
@@ -352,11 +387,18 @@ export default function SatActivosPage() {
         </Card>
       </div>
 
-      {/* Modal nuevo activo */}
-      <Modal isOpen={showNuevoActivo} onClose={() => setShowNuevoActivo(false)} title="+ Nuevo activo" size="lg">
+      {/* Modal nuevo/editar activo */}
+      <Modal
+        isOpen={showNuevoActivo}
+        onClose={() => setShowNuevoActivo(false)}
+        title={nuevoActivo.id ? `Editar activo · ${nuevoActivo.ref}` : '+ Nuevo activo'}
+        size="lg"
+      >
         <div className="space-y-4">
           <p className="text-xs" style={{ color: '#6B7280' }}>
-            La referencia se genera automáticamente (ACTxxxxx)
+            {nuevoActivo.id
+              ? 'Cambiá el cliente para transferir el activo (parte de pago, venta a otro cliente, etc.)'
+              : 'La referencia se genera automáticamente (ACTxxxxx)'}
           </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -450,7 +492,9 @@ export default function SatActivosPage() {
 
           <div className="flex justify-end gap-2 pt-3" style={{ borderTop: '1px solid #1E2330' }}>
             <Button variant="secondary" onClick={() => setShowNuevoActivo(false)}>Cancelar</Button>
-            <Button onClick={guardarNuevoActivo} loading={savingActivo}>Crear activo</Button>
+            <Button onClick={guardarNuevoActivo} loading={savingActivo}>
+              {nuevoActivo.id ? 'Guardar cambios' : 'Crear activo'}
+            </Button>
           </div>
         </div>
       </Modal>
