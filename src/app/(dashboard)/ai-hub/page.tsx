@@ -2,6 +2,8 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useCompanyContext } from '@/lib/company-context'
+import { ActionPreviewCard } from '@/components/ai/action-preview-card'
+import type { ProposedQuoteAction } from '@/lib/schemas/assistant-quote'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import {
@@ -85,7 +87,7 @@ const PROVIDERS: ProviderConfig[] = [
   },
 ]
 
-interface Msg { role: 'user' | 'assistant'; content: string; provider?: string }
+interface Msg { role: 'user' | 'assistant'; content: string; provider?: string; action?: ProposedQuoteAction | null }
 
 export default function AIHubPage() {
   const { activeCompany } = useCompanyContext()
@@ -165,7 +167,7 @@ export default function AIHubPage() {
       })
       const j = await res.json()
       if (res.ok) {
-        setMessages([...newMsgs, { role: 'assistant', content: j.reply, provider: j.provider }])
+        setMessages([...newMsgs, { role: 'assistant', content: j.reply, provider: j.provider, action: j.proposed_action ?? null }])
         // Si voice mode está ON, leer la respuesta en voz alta
         if (voiceMode && j.reply) speakText(j.reply)
       } else {
@@ -291,7 +293,7 @@ export default function AIHubPage() {
                 </div>
               )}
               {messages.map((m, i) => (
-                <div key={i} className={m.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
+                <div key={i} className={m.role === 'user' ? 'flex justify-end' : 'flex flex-col items-start'}>
                   <div
                     className="max-w-[90%] rounded-xl px-3 py-2 text-sm whitespace-pre-wrap"
                     style={{
@@ -304,6 +306,11 @@ export default function AIHubPage() {
                   >
                     {m.content}
                   </div>
+                  {m.role === 'assistant' && m.action && (
+                    <div className="w-full max-w-[90%] mt-1">
+                      <ActionPreviewCard action={m.action} companyId={activeCompany?.id} />
+                    </div>
+                  )}
                 </div>
               ))}
               {loading && (
@@ -416,7 +423,7 @@ export default function AIHubPage() {
                 </div>
 
                 <div className="pt-4 border-t" style={{ borderColor: '#2A3040' }}>
-                  <div className="text-xs opacity-60 mb-2">💡 Tip: hacé click en "Copiar contexto" arriba para pasarle a {provider.name} quién sos y qué datos tenés</div>
+                  <div className="text-xs opacity-60 mb-2">💡 Tip: hacé click en &quot;Copiar contexto&quot; arriba para pasarle a {provider.name} quién sos y qué datos tenés</div>
                   <div className="flex gap-2 justify-center flex-wrap">
                     <button
                       type="button"

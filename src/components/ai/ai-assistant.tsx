@@ -6,10 +6,12 @@ import { useCompanyContext } from '@/lib/company-context'
 import { Sparkles, X, Send, Copy, RotateCcw, Bot, Volume2, VolumeX } from 'lucide-react'
 import { AgentPanel } from '@/components/ai/agent-panel'
 import { VoiceChat, speakText, stopSpeaking } from '@/components/ai/voice-chat'
+import { ActionPreviewCard } from '@/components/ai/action-preview-card'
+import type { ProposedQuoteAction } from '@/lib/schemas/assistant-quote'
 
 type ActiveTab = 'chat' | 'agent'
 
-interface Msg { role: 'user' | 'assistant'; content: string }
+interface Msg { role: 'user' | 'assistant'; content: string; action?: ProposedQuoteAction | null }
 
 const STORAGE_KEY = 'mocciaro-ai-assistant-history'
 const QUICK_PROMPTS = [
@@ -43,7 +45,9 @@ export function AIAssistant() {
 
   // Persistir historial
   useEffect(() => {
-    if (messages.length > 0) localStorage.setItem(STORAGE_KEY, JSON.stringify(messages))
+    // Persistimos solo texto: la acción propuesta (tarjeta) es efímera de la sesión
+    // viva, para no re-ofrecer crear un borrador ya creado al recargar.
+    if (messages.length > 0) localStorage.setItem(STORAGE_KEY, JSON.stringify(messages.map((m) => ({ role: m.role, content: m.content }))))
   }, [messages])
 
   // Auto-scroll al final
@@ -71,7 +75,7 @@ export function AIAssistant() {
       const j = await res.json()
       if (!res.ok) throw new Error(j.error || 'Error')
       setProvider(j.provider)
-      setMessages([...newMessages, { role: 'assistant', content: j.reply }])
+      setMessages([...newMessages, { role: 'assistant', content: j.reply, action: j.proposed_action ?? null }])
       if (voiceMode && j.reply) speakText(j.reply)
     } catch (err) {
       setMessages([...newMessages, { role: 'assistant', content: `✗ ${(err as Error).message}` }])
@@ -223,7 +227,7 @@ export function AIAssistant() {
               </div>
             ) : (
               messages.map((m, i) => (
-                <div key={i} className={m.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
+                <div key={i} className={m.role === 'user' ? 'flex justify-end' : 'flex flex-col items-start'}>
                   <div
                     className="max-w-[85%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap relative group"
                     style={{
@@ -247,6 +251,11 @@ export function AIAssistant() {
                       </button>
                     )}
                   </div>
+                  {m.role === 'assistant' && m.action && (
+                    <div className="w-full mt-1">
+                      <ActionPreviewCard action={m.action} companyId={activeCompany?.id} />
+                    </div>
+                  )}
                 </div>
               ))
             )}
