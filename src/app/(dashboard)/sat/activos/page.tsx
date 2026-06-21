@@ -3,6 +3,15 @@
 import { useState, useMemo } from 'react'
 import Link from 'next/link'
 import { Package, Wrench, History, Plus, ChevronRight, Users, Tag, ClipboardList, Pencil } from 'lucide-react'
+
+const ASSET_CHANGE_REASONS: Array<{ value: string; label: string; hint: string }> = [
+  { value: 'PARTE_DE_PAGO',   label: 'Parte de pago',     hint: 'Equipo recibido como parte de pago de otro' },
+  { value: 'VENTA_A_CLIENTE', label: 'Venta a cliente',   hint: 'Equipo vendido a otro cliente' },
+  { value: 'STOCK',           label: 'Pasa a stock',      hint: 'Queda en stock interno de la empresa' },
+  { value: 'BACK_UP',         label: 'Back up',           hint: 'Reservado como respaldo / backup' },
+  { value: 'DADO_DE_BAJA',    label: 'Dado de baja',      hint: 'Equipo dado de baja del parque' },
+  { value: 'OTRO',            label: 'Otro',              hint: 'Especificar en el detalle' },
+]
 import { fuzzyFilter } from '@/lib/sat/fuzzy-match'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
@@ -41,6 +50,8 @@ export default function SatActivosPage() {
     ref: '' as string,
     brand: 'FEIN', model: '', internal_id: '', serial_number: '',
     client_id: '', city: '', province: '', notes: '',
+    reason: '' as string,        // solo se usa en edición (motivo del cambio)
+    details: '' as string,       // solo se usa en edición (detalle libre)
   })
   const [savingActivo, setSavingActivo] = useState(false)
   const { } = useCompanyFilter()
@@ -88,6 +99,7 @@ export default function SatActivosPage() {
       id: '', ref: '',
       brand: 'FEIN', model: '', internal_id: '', serial_number: '',
       client_id: '', city: '', province: '', notes: '',
+      reason: '', details: '',
     })
     setShowNuevoActivo(true)
   }
@@ -104,6 +116,8 @@ export default function SatActivosPage() {
       city: a.city || '',
       province: a.province || '',
       notes: a.notes || '',
+      reason: '',     // reason se elige al editar, no se hereda
+      details: '',
     })
     setShowNuevoActivo(true)
   }
@@ -139,6 +153,23 @@ export default function SatActivosPage() {
         if (error) {
           addToast({ type: 'error', title: 'Error', message: error.message })
           return
+        }
+        // Si el user puso un motivo / detalle, lo enganchamos al evento que
+        // el trigger acaba de crear (último evento de este asset).
+        if (nuevoActivo.reason || nuevoActivo.details) {
+          const { data: lastEvent } = await sb
+            .from('tt_sat_asset_events')
+            .select('id')
+            .eq('asset_id', nuevoActivo.id)
+            .order('performed_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+          if (lastEvent?.id) {
+            await sb.from('tt_sat_asset_events').update({
+              reason: nuevoActivo.reason || null,
+              details: nuevoActivo.details || null,
+            }).eq('id', lastEvent.id)
+          }
         }
         addToast({ type: 'success', title: 'Activo actualizado', message: nuevoActivo.ref })
       } else {
@@ -480,7 +511,7 @@ export default function SatActivosPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1.5" style={{ color: '#9CA3AF' }}>Notas</label>
+            <label className="block text-sm font-medium mb-1.5" style={{ color: '#9CA3AF' }}>Notas (persistentes del activo)</label>
             <textarea
               value={nuevoActivo.notes}
               onChange={(e) => setNuevoActivo({ ...nuevoActivo, notes: e.target.value })}
@@ -489,6 +520,54 @@ export default function SatActivosPage() {
               style={{ background: '#1E2330', border: '1px solid #2A3040', color: '#F0F2F5' }}
             />
           </div>
+
+          {/* Motivo del cambio — solo en edición */}
+          {nuevoActivo.id && (
+            <div
+              className="space-y-3 p-3 rounded-lg"
+              style={{ background: 'rgba(249,115,22,0.05)', border: '1px solid rgba(249,115,22,0.25)' }}
+            >
+              <div>
+                <label className="block text-sm font-medium mb-2" style={{ color: '#FB923C' }}>
+                  Motivo del cambio (queda en la línea de tiempo)
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {ASSET_CHANGE_REASONS.map((r) => {
+                    const active = nuevoActivo.reason === r.value
+                    return (
+                      <button
+                        key={r.value}
+                        type="button"
+                        onClick={() => setNuevoActivo({ ...nuevoActivo, reason: active ? '' : r.value })}
+                        title={r.hint}
+                        className="text-left px-3 py-2 rounded-md text-xs font-semibold border transition-all"
+                        style={{
+                          background: active ? 'rgba(249,115,22,0.15)' : '#1E2330',
+                          color: active ? '#FB923C' : '#9CA3AF',
+                          borderColor: active ? '#F97316' : '#2A3040',
+                        }}
+                      >
+                        {active ? '✓ ' : ''}{r.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1.5" style={{ color: '#9CA3AF' }}>
+                  Detalle del cambio (opcional, queda en la timeline)
+                </label>
+                <textarea
+                  value={nuevoActivo.details}
+                  onChange={(e) => setNuevoActivo({ ...nuevoActivo, details: e.target.value })}
+                  rows={2}
+                  placeholder="Ej: Recibido como parte de pago de Whirlpool por venta de ASW18-60-PC nuevo. Negociado por Juan."
+                  className="w-full rounded-lg px-3 py-2 text-sm outline-none resize-none"
+                  style={{ background: '#1E2330', border: '1px solid #2A3040', color: '#F0F2F5' }}
+                />
+              </div>
+            </div>
+          )}
 
           <div className="flex justify-end gap-2 pt-3" style={{ borderTop: '1px solid #1E2330' }}>
             <Button variant="secondary" onClick={() => setShowNuevoActivo(false)}>Cancelar</Button>

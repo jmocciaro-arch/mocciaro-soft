@@ -14,9 +14,20 @@ interface AssetEvent {
   old_values: Record<string, unknown> | null
   new_values: Record<string, unknown> | null
   notes: string | null
+  reason: string | null
+  details: string | null
   performed_by_name: string | null
   source: string | null
   performed_at: string
+}
+
+const REASON_LABELS: Record<string, string> = {
+  PARTE_DE_PAGO:   'Parte de pago',
+  VENTA_A_CLIENTE: 'Venta a cliente',
+  STOCK:           'Pasa a stock',
+  BACK_UP:         'Back up',
+  DADO_DE_BAJA:    'Dado de baja',
+  OTRO:            'Otro',
 }
 
 interface Props {
@@ -147,6 +158,23 @@ export function AssetTimeline({ events }: Props) {
                     <p className="text-xs mt-1 italic" style={{ color: 'var(--sat-tx2)' }}>
                       {String(e.notes)}
                     </p>
+                  )}
+
+                  {/* Motivo + detalle del cambio (cargado desde el modal de edición) */}
+                  {(e.reason || e.details) && (
+                    <div className="mt-2 p-2 rounded-md" style={{ background: 'var(--sat-dk3)', border: '1px solid var(--sat-br)' }}>
+                      {e.reason && (
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--sat-tx3)' }}>Motivo:</span>
+                          <span className="px-2 py-0.5 rounded text-xs font-semibold" style={{ background: 'var(--sat-or-d)', color: 'var(--sat-or)' }}>
+                            {REASON_LABELS[e.reason] || e.reason}
+                          </span>
+                        </div>
+                      )}
+                      {e.details && (
+                        <p className="text-xs" style={{ color: 'var(--sat-tx)' }}>{e.details}</p>
+                      )}
+                    </div>
                   )}
                 </li>
               )
