@@ -170,23 +170,37 @@ export function CompanyConfigModal({ open, onClose, company, onSaved }: Props) {
   const [deleteConfirmName, setDeleteConfirmName] = useState('')
   const [deleting, setDeleting] = useState(false)
 
+  // Importante: solo re-inicializar el form cuando el modal se ABRE o cambia el id de la empresa.
+  // Si dependemos del objeto `company` completo, cada re-render del padre crea una referencia nueva,
+  // dispara este efecto y resetea los cambios que el usuario está escribiendo.
+  const companyId = company?.id ?? null
   useEffect(() => {
-    if (!open || !company) return
-    setForm({ ...company })
+    if (!open || !companyId) return
+    // Recargar datos frescos de la DB para evitar pisar campos con valores stale
+    // que pueda traer el padre vía companyForm parcial.
+    void supabase
+      .from('tt_companies')
+      .select('*')
+      .eq('id', companyId)
+      .single()
+      .then(({ data }) => {
+        if (data) setForm(data as CompanyConfigData)
+        else if (company) setForm({ ...company })
+      })
     setTab('general')
     setEditingAccount(null)
     setShowDeleteDialog(false)
     setDeleteDeps(null)
     setDeleteConfirmName('')
-    // Cargar cuentas bancarias
     void supabase
       .from('tt_company_bank_accounts')
       .select('*')
-      .eq('company_id', company.id)
+      .eq('company_id', companyId)
       .order('is_default', { ascending: false })
       .order('alias')
       .then(({ data }) => setAccounts((data || []) as BankAccount[]))
-  }, [open, company, supabase])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, companyId, supabase])
 
   const update = useCallback((k: keyof CompanyConfigData, v: unknown) => {
     setForm(f => f ? { ...f, [k]: v as never } : f)
