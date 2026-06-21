@@ -3,15 +3,7 @@
 import { useState, useMemo } from 'react'
 import Link from 'next/link'
 import { Package, Wrench, History, Plus, ChevronRight, Users, Tag, ClipboardList, Pencil } from 'lucide-react'
-
-const ASSET_CHANGE_REASONS: Array<{ value: string; label: string; hint: string }> = [
-  { value: 'PARTE_DE_PAGO',   label: 'Parte de pago',     hint: 'Equipo recibido como parte de pago de otro' },
-  { value: 'VENTA_A_CLIENTE', label: 'Venta a cliente',   hint: 'Equipo vendido a otro cliente' },
-  { value: 'STOCK',           label: 'Pasa a stock',      hint: 'Queda en stock interno de la empresa' },
-  { value: 'BACK_UP',         label: 'Back up',           hint: 'Reservado como respaldo / backup' },
-  { value: 'DADO_DE_BAJA',    label: 'Dado de baja',      hint: 'Equipo dado de baja del parque' },
-  { value: 'OTRO',            label: 'Otro',              hint: 'Especificar en el detalle' },
-]
+import { useAssetChangeReasons } from '@/hooks/use-asset-change-reasons'
 import { fuzzyFilter } from '@/lib/sat/fuzzy-match'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
@@ -55,6 +47,7 @@ export default function SatActivosPage() {
   })
   const [savingActivo, setSavingActivo] = useState(false)
   const { } = useCompanyFilter()
+  const { reasons: changeReasons } = useAssetChangeReasons()
 
   // Cargar clientes para el modal
   useEffect(() => {
@@ -532,14 +525,14 @@ export default function SatActivosPage() {
                   Motivo del cambio (queda en la línea de tiempo)
                 </label>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                  {ASSET_CHANGE_REASONS.map((r) => {
+                  {changeReasons.map((r) => {
                     const active = nuevoActivo.reason === r.value
                     return (
                       <button
                         key={r.value}
                         type="button"
                         onClick={() => setNuevoActivo({ ...nuevoActivo, reason: active ? '' : r.value })}
-                        title={r.hint}
+                        title={r.hint || ''}
                         className="text-left px-3 py-2 rounded-md text-xs font-semibold border transition-all"
                         style={{
                           background: active ? 'rgba(249,115,22,0.15)' : '#1E2330',

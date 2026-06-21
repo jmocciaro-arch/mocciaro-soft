@@ -4,6 +4,7 @@ import { Card } from '@/components/ui/card'
 import {
   History, Plus, Users, Building2, Wrench, FileText, Edit3,
 } from 'lucide-react'
+import { useAssetChangeReasons } from '@/hooks/use-asset-change-reasons'
 
 type Row = Record<string, unknown>
 
@@ -21,14 +22,6 @@ interface AssetEvent {
   performed_at: string
 }
 
-const REASON_LABELS: Record<string, string> = {
-  PARTE_DE_PAGO:   'Parte de pago',
-  VENTA_A_CLIENTE: 'Venta a cliente',
-  STOCK:           'Pasa a stock',
-  BACK_UP:         'Back up',
-  DADO_DE_BAJA:    'Dado de baja',
-  OTRO:            'Otro',
-}
 
 interface Props {
   events: Row[]
@@ -70,6 +63,10 @@ function fmtDate(iso: string): string {
 }
 
 export function AssetTimeline({ events }: Props) {
+  const { reasons } = useAssetChangeReasons({ onlyActive: false })
+  const reasonLabel = (value: string): string =>
+    reasons.find((r) => r.value === value)?.label || value
+
   return (
     <Card className="p-0 overflow-hidden">
       <div className="p-4 border-b flex items-center gap-2" style={{ borderColor: 'var(--sat-br)', color: 'var(--sat-tl)' }}>
@@ -167,7 +164,7 @@ export function AssetTimeline({ events }: Props) {
                         <div className="flex items-center gap-2 mb-1">
                           <span className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--sat-tx3)' }}>Motivo:</span>
                           <span className="px-2 py-0.5 rounded text-xs font-semibold" style={{ background: 'var(--sat-or-d)', color: 'var(--sat-or)' }}>
-                            {REASON_LABELS[e.reason] || e.reason}
+                            {reasonLabel(e.reason)}
                           </span>
                         </div>
                       )}
