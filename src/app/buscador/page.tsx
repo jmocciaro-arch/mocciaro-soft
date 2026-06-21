@@ -12,7 +12,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { LayoutGrid, Table2, GitCompare, Check, X, Search, Link2, Plus } from 'lucide-react'
+import { LayoutGrid, Table2, GitCompare, Check, X, Search, Link2, Plus, Bot, Sparkles, ChevronRight, TrendingUp, Users, Package2 } from 'lucide-react'
 
 type Product = {
   id: string
@@ -38,6 +38,18 @@ type Product = {
 type FacetItem = { value: string; count: number }
 type Facets = { brand: FacetItem[]; category: FacetItem[]; encastre: FacetItem[] }
 type ApiResponse = { total: number; items: Product[]; facets: Facets }
+
+type AiClient = { client_name: string; last_doc_date: string; purchase_count: number; last_price: number; currency: string }
+type AiCoProduct = { sku: string; description: string; co_count: number }
+type AiPricePoint = { date: string; unit_price: number; currency: string; client_name: string }
+type AiInsightResult = {
+  catalogFound: boolean
+  product: { id: string; sku: string; name: string; brand: string | null; price_eur: number | null } | null
+  clients: AiClient[]
+  coProducts: AiCoProduct[]
+  priceHistory: AiPricePoint[]
+  aiSummary: string
+}
 
 const T = { bg: '#0B0E13', surface: '#141820', card: '#1A1F29', border: '#2A3040', accent: '#FF6600', text: '#F0F2F5', soft: '#9CA3AF', muted: '#6B7280' }
 
@@ -94,7 +106,37 @@ export default function BuscadorPage() {
   const [detail, setDetail] = useState<Product | null>(null)
   const [selected, setSelected] = useState<string[]>([])
   const [comparing, setComparing] = useState(false)
+  const [aiOpen, setAiOpen] = useState(false)
+  const [aiInputQuery, setAiInputQuery] = useState('')
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiResult, setAiResult] = useState<AiInsightResult | null>(null)
+  const [aiError, setAiError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+
+  async function queryInsight(q: string) {
+    if (!q.trim()) return
+    setAiLoading(true)
+    setAiError(null)
+    setAiResult(null)
+    try {
+      const res = await fetch('/api/catalog/product-insight', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: q }),
+      })
+      const json = (await res.json()) as AiInsightResult & { error?: string }
+      if (res.status === 401) {
+        setAiError('no_auth')
+      } else if (!res.ok) {
+        setAiError(json.error || 'Error al consultar')
+      } else {
+        setAiResult(json)
+      }
+    } catch (err) {
+      setAiError((err as Error).message)
+    }
+    setAiLoading(false)
+  }
 
   const fetchData = useCallback(async () => {
     abortRef.current?.abort()
@@ -143,6 +185,18 @@ export default function BuscadorPage() {
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar por SKU, nombre, marca…"
             className="flex-1 min-w-0 bg-transparent text-sm outline-none" style={{ color: T.text }} />
         </div>
+
+        {/* Asesor IA — botón de acceso rápido */}
+        <button
+          type="button"
+          onClick={() => setAiOpen(true)}
+          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm mb-3 transition-colors hover:opacity-90"
+          style={{ background: 'linear-gradient(135deg, #1A1F29, #1F2535)', border: `1px solid #FF660044`, color: T.soft }}
+        >
+          <Bot className="w-4 h-4 shrink-0" style={{ color: '#FF6600' }} />
+          <span style={{ color: T.soft }}>Consultá el asesor IA sobre cualquier producto…</span>
+          <span className="ml-auto text-[10px] font-semibold px-2 py-0.5 rounded-full" style={{ background: '#FF660020', color: '#FF6600' }}>IA</span>
+        </button>
 
         {/* Filtros compactos + toggle de vista */}
         <div className="flex flex-wrap items-center gap-2 mb-3">
@@ -244,13 +298,201 @@ export default function BuscadorPage() {
         </div>
       )}
 
-      {detail && <ProductDetail product={detail} onClose={() => setDetail(null)} onCompare={(p) => { setSelected((s) => s.includes(p.id) ? s : [...s, p.id]); setDetail(null); setComparing(true) }} />}
+      {detail && <ProductDetail product={detail} onClose={() => setDetail(null)} onCompare={(p) => { setSelected((s) => s.includes(p.id) ? s : [...s, p.id]); setDetail(null); setComparing(true) }} onAiQuery={(sku) => { setAiInputQuery(sku); setAiOpen(true); void queryInsight(sku) }} />}
       {comparing && selectedProducts.length > 0 && <Comparison products={selectedProducts} onRemove={toggle} onClose={() => setComparing(false)} />}
+
+      {/* Panel Asesor IA */}
+      {aiOpen && (
+        <div className="fixed inset-0 z-50 flex" style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(2px)' }} onClick={() => setAiOpen(false)}>
+          <div className="ml-auto w-full max-w-md h-full flex flex-col overflow-hidden" style={{ background: T.bg, borderLeft: `1px solid ${T.border}` }} onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: T.border }}>
+              <div className="flex items-center gap-2">
+                <Bot className="w-4 h-4" style={{ color: '#FF6600' }} />
+                <span className="font-bold text-sm" style={{ color: T.text }}>Asesor IA de Productos</span>
+              </div>
+              <button type="button" onClick={() => setAiOpen(false)} className="p-1 rounded hover:bg-white/10"><X className="w-4 h-4" style={{ color: T.soft }} /></button>
+            </div>
+
+            {/* Búsqueda */}
+            <div className="px-4 py-3 border-b" style={{ borderColor: T.border }}>
+              <div className="flex gap-2">
+                <div className="flex-1 flex items-center gap-2 rounded-lg px-3 py-2" style={{ background: T.surface, border: `1px solid ${T.border}` }}>
+                  <Search className="w-3.5 h-3.5 shrink-0" style={{ color: T.muted }} />
+                  <input
+                    value={aiInputQuery}
+                    onChange={(e) => setAiInputQuery(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') void queryInsight(aiInputQuery) }}
+                    placeholder="SKU o nombre del producto…"
+                    className="flex-1 bg-transparent text-sm outline-none"
+                    style={{ color: T.text }}
+                    autoFocus
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void queryInsight(aiInputQuery)}
+                  disabled={aiLoading}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold"
+                  style={{ background: '#FF6600', color: 'white', opacity: aiLoading ? 0.7 : 1 }}
+                >
+                  {aiLoading ? <span className="animate-spin">⟳</span> : <ChevronRight className="w-4 h-4" />}
+                </button>
+              </div>
+              <p className="text-[11px] mt-1.5" style={{ color: T.muted }}>Escribí el SKU o nombre — te digo historial de clientes, precios y co-ventas</p>
+            </div>
+
+            {/* Resultado */}
+            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+              {aiError === 'no_auth' && (
+                <div className="rounded-xl p-4 text-center" style={{ background: T.surface, border: `1px solid ${T.border}` }}>
+                  <Bot className="w-8 h-8 mx-auto mb-2" style={{ color: T.muted }} />
+                  <p className="text-sm font-semibold" style={{ color: T.text }}>Iniciá sesión para ver el historial</p>
+                  <p className="text-xs mt-1" style={{ color: T.muted }}>El asesor IA accede a ventas, clientes y precios — requiere tu cuenta.</p>
+                </div>
+              )}
+              {aiError && aiError !== 'no_auth' && (
+                <div className="text-sm p-3 rounded-lg" style={{ background: '#ef444420', color: '#f87171', border: '1px solid #ef444430' }}>
+                  Error: {aiError}
+                </div>
+              )}
+
+              {aiLoading && (
+                <div className="space-y-3">
+                  {[80, 60, 90, 70].map((w, i) => (
+                    <div key={i} className="h-3 rounded animate-pulse" style={{ width: `${w}%`, background: T.surface }} />
+                  ))}
+                </div>
+              )}
+
+              {!aiLoading && aiResult && (
+                <>
+                  {/* Status */}
+                  <div className="flex items-center gap-2 p-3 rounded-lg" style={{ background: aiResult.catalogFound ? '#22c55e14' : '#ef444414', border: `1px solid ${aiResult.catalogFound ? '#22c55e30' : '#ef444430'}` }}>
+                    <span className="text-lg">{aiResult.catalogFound ? '✅' : '🔍'}</span>
+                    <div>
+                      <p className="text-sm font-semibold" style={{ color: aiResult.catalogFound ? '#4ade80' : '#f87171' }}>
+                        {aiResult.catalogFound ? `En catálogo: ${aiResult.product?.sku}` : 'No está en el catálogo'}
+                      </p>
+                      {aiResult.product?.name && <p className="text-xs mt-0.5" style={{ color: T.soft }}>{aiResult.product.name}</p>}
+                    </div>
+                  </div>
+
+                  {/* AI Summary */}
+                  {aiResult.aiSummary && (
+                    <div className="p-3 rounded-xl" style={{ background: '#FF660010', border: '1px solid #FF660030' }}>
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <Sparkles className="w-3.5 h-3.5" style={{ color: '#FF6600' }} />
+                        <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: '#FF6600' }}>Análisis IA</span>
+                      </div>
+                      <p className="text-sm leading-relaxed" style={{ color: T.text }}>{aiResult.aiSummary}</p>
+                    </div>
+                  )}
+
+                  {/* Clientes */}
+                  {aiResult.clients.length > 0 && (
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <Users className="w-3.5 h-3.5" style={{ color: T.soft }} />
+                        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: T.muted }}>Clientes ({aiResult.clients.length})</span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {aiResult.clients.map((c, i) => (
+                          <div key={i} className="flex items-center justify-between p-2 rounded-lg" style={{ background: T.surface }}>
+                            <div>
+                              <span className="text-sm font-medium" style={{ color: T.text }}>{c.client_name}</span>
+                              <span className="text-[10px] ml-2" style={{ color: T.muted }}>{c.purchase_count} pedido{c.purchase_count !== 1 ? 's' : ''}</span>
+                            </div>
+                            <span className="text-xs font-mono font-bold" style={{ color: '#4ade80' }}>
+                              {c.currency} {c.last_price.toFixed(2)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Co-ventas */}
+                  {aiResult.coProducts.length > 0 && (
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <Package2 className="w-3.5 h-3.5" style={{ color: T.soft }} />
+                        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: T.muted }}>Se vende con</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {aiResult.coProducts.map((cp, i) => (
+                          <button
+                            key={i}
+                            type="button"
+                            onClick={() => { setAiInputQuery(cp.sku); void queryInsight(cp.sku) }}
+                            className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium hover:opacity-80"
+                            style={{ background: T.surface, border: `1px solid ${T.border}`, color: T.text }}
+                          >
+                            <span className="font-mono" style={{ color: '#FF6600' }}>{cp.sku}</span>
+                            <span style={{ color: T.muted }}>×{cp.co_count}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Historial de precios */}
+                  {aiResult.priceHistory.length > 0 && (
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <TrendingUp className="w-3.5 h-3.5" style={{ color: T.soft }} />
+                        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: T.muted }}>Historial de precios</span>
+                      </div>
+                      <div className="rounded-xl overflow-hidden" style={{ border: `1px solid ${T.border}` }}>
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr style={{ background: T.surface }}>
+                              <th className="text-left p-2 font-medium" style={{ color: T.muted }}>Fecha</th>
+                              <th className="text-left p-2 font-medium" style={{ color: T.muted }}>Cliente</th>
+                              <th className="text-right p-2 font-medium" style={{ color: T.muted }}>Precio</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {aiResult.priceHistory.slice(-10).reverse().map((pt, i) => {
+                              const prev = aiResult.priceHistory.slice(-10).reverse()[i + 1]
+                              const change = prev ? ((pt.unit_price - prev.unit_price) / prev.unit_price) * 100 : 0
+                              return (
+                                <tr key={i} style={{ borderTop: `1px solid ${T.border}` }}>
+                                  <td className="p-2" style={{ color: T.soft }}>{pt.date}</td>
+                                  <td className="p-2 truncate max-w-[100px]" style={{ color: T.text }}>{pt.client_name}</td>
+                                  <td className="p-2 text-right font-mono font-bold">
+                                    <span style={{ color: change > 5 ? '#f87171' : change < -5 ? '#4ade80' : T.text }}>
+                                      {pt.currency} {pt.unit_price.toFixed(2)}
+                                    </span>
+                                    {Math.abs(change) > 3 && <span className="ml-1 text-[10px]" style={{ color: change > 0 ? '#f87171' : '#4ade80' }}>{change > 0 ? '▲' : '▼'}{Math.abs(change).toFixed(0)}%</span>}
+                                  </td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {!aiLoading && !aiResult && !aiError && (
+                <div className="text-center py-8" style={{ color: T.muted }}>
+                  <Bot className="w-12 h-12 mx-auto mb-3 opacity-20" />
+                  <p className="text-sm">Escribí un SKU o nombre de producto para analizar</p>
+                  <p className="text-xs mt-1 opacity-60">Ej: QSP200N3, FEIN ASCS 6.25, torquímetro 200 Nm</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
-function ProductDetail({ product, onClose, onCompare }: { product: Product; onClose: () => void; onCompare: (p: Product) => void }) {
+function ProductDetail({ product, onClose, onCompare, onAiQuery }: { product: Product; onClose: () => void; onCompare: (p: Product) => void; onAiQuery?: (sku: string) => void }) {
   const p = product
   const gallery = Array.isArray(p.gallery_urls) ? p.gallery_urls : []
   const page = spec(p, 'page_catalog')
@@ -317,6 +559,7 @@ function ProductDetail({ product, onClose, onCompare }: { product: Product; onCl
         <div className="flex flex-wrap gap-2 p-4 pt-0">
           <button type="button" className="flex-1 min-w-[160px] flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-semibold" style={{ background: `linear-gradient(135deg, ${T.accent}, #ef4444)`, color: 'white' }}><Plus className="w-4 h-4" /> Agregar a cotización</button>
           <button type="button" onClick={() => onCompare(p)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm" style={{ background: T.surface, color: T.text, border: `1px solid ${T.border}` }}><GitCompare className="w-4 h-4" /> Comparar</button>
+          {onAiQuery && <button type="button" onClick={() => { onClose(); onAiQuery(p.sku) }} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm" style={{ background: '#FF660015', color: '#FF6600', border: '1px solid #FF660030' }}><Bot className="w-4 h-4" /> Asesor IA</button>}
           <button type="button" className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm" style={{ background: T.surface, color: T.text, border: `1px solid ${T.border}` }}><Link2 className="w-4 h-4" /> Copiar link</button>
         </div>
       </div>
