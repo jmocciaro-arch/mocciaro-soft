@@ -463,21 +463,27 @@ export default function CotizadorPage() {
     }
   }
 
-  async function generateQuoteNumber() {
+  async function generateQuoteNumber(offset = 0): Promise<string> {
     const supabase = createClient()
     const year = new Date().getFullYear()
+    // Lee de tt_documents (tabla real donde se guardan las cotizaciones).
+    // tt_quotes es legacy y ya no refleja los números reales.
     const { data } = await supabase
-      .from('tt_quotes')
-      .select('number')
-      .ilike('number', `COT-${year}-%`)
-      .order('number', { ascending: false })
+      .from('tt_documents')
+      .select('system_code')
+      .ilike('system_code', `COT-${year}-%`)
+      .in('doc_type', ['coti', 'presupuesto', 'quote'])
+      .order('system_code', { ascending: false })
       .limit(1)
     let nextNum = 1
     if (data && data.length > 0) {
-      const lastNum = data[0].number.split('-').pop()
-      nextNum = (parseInt(lastNum || '0', 10) || 0) + 1
+      const parts = ((data[0].system_code as string) || '').split('-')
+      const num = parseInt(parts[parts.length - 1] || '0', 10)
+      if (!isNaN(num) && num > 0) nextNum = num + 1
     }
-    setQuoteNumber(`COT-${year}-${nextNum.toString().padStart(4, '0')}`)
+    const number = `COT-${year}-${(nextNum + offset).toString().padStart(4, '0')}`
+    setQuoteNumber(number)
+    return number
   }
 
   async function searchClients(query: string) {
@@ -625,46 +631,61 @@ export default function CotizadorPage() {
     try {
       // Migrado a tt_documents (Fase 2) — antes escribía a tt_quotes + tt_quote_items.
       const userIdResult = (await supabase.from('tt_users').select('id').eq('role', 'admin').limit(1).single()).data?.id || null
-      const { data: quoteData, error: quoteError } = await supabase
-        .from('tt_documents')
-        .insert({
-          doc_type: 'presupuesto',
-          subtype: docSubtype || 'standard',
-          system_code: quoteNumber,
-          display_ref: quoteNumber,
-          company_id: selectedCompanyId,
-          client_id: selectedClient?.id || null,
-          user_id: userIdResult,
-          status: 'draft',
-          notes,
-          internal_notes: internalNotes,
-          incoterm: incoterm || null,
-          payment_terms: paymentTerms || null,
-          currency,
-          subtotal,
-          tax_rate: ivaEnabled ? taxRate : 0,
-          tax_amount: taxAmount,
-          total,
-          valid_until: validUntil ? new Date(validUntil).toISOString() : null,
-          metadata: {
-            subject_iva: ivaEnabled,
-            irpf_enabled: irpfEnabled,
-            irpf_rate: irpfEnabled ? irpfRate : 0,
-            irpf_amount: irpfAmount,
-            re_enabled: reEnabled,
-            re_rate: reEnabled ? reRate : 0,
-            re_amount: reAmount,
-            payment_days: paymentDays || null,
-            payment_terms_type: paymentTermsType || null,
-            // Contactos del cliente involucrados en este documento, con su rol.
-            // null en vez de [] para distinguir "no se cargaron" de "se borraron todos".
-            participating_contacts: participatingContacts.length > 0 ? participatingContacts : null,
-          },
-        })
-        .select('id').single()
-      if (quoteError) throw quoteError
+
+      // Regenerar número fresco justo antes del insert para minimizar race condition.
+      // Si hay conflicto de clave única (23505) se reintenta con offset +1.
+      let activeCode = await generateQuoteNumber()
+
+      let quoteData: { id: string } | null = null
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const { data, error: quoteError } = await supabase
+          .from('tt_documents')
+          .insert({
+            doc_type: 'presupuesto',
+            subtype: docSubtype || 'standard',
+            system_code: activeCode,
+            display_ref: activeCode,
+            company_id: selectedCompanyId,
+            client_id: selectedClient?.id || null,
+            user_id: userIdResult,
+            status: 'draft',
+            notes,
+            internal_notes: internalNotes,
+            incoterm: incoterm || null,
+            payment_terms: paymentTerms || null,
+            currency,
+            subtotal,
+            tax_rate: ivaEnabled ? taxRate : 0,
+            tax_amount: taxAmount,
+            total,
+            valid_until: validUntil ? new Date(validUntil).toISOString() : null,
+            metadata: {
+              subject_iva: ivaEnabled,
+              irpf_enabled: irpfEnabled,
+              irpf_rate: irpfEnabled ? irpfRate : 0,
+              irpf_amount: irpfAmount,
+              re_enabled: reEnabled,
+              re_rate: reEnabled ? reRate : 0,
+              re_amount: reAmount,
+              payment_days: paymentDays || null,
+              payment_terms_type: paymentTermsType || null,
+              participating_contacts: participatingContacts.length > 0 ? participatingContacts : null,
+            },
+          })
+          .select('id').single()
+        // Duplicate system_code → regenerar y reintentar
+        if (quoteError?.code === '23505' && quoteError.message.includes('system_code') && attempt < 2) {
+          activeCode = await generateQuoteNumber(attempt + 1)
+          continue
+        }
+        if (quoteError) throw quoteError
+        quoteData = data
+        break
+      }
+      if (!quoteData) throw new Error('No se pudo generar un número de cotización único')
+
       const docLines = items.map((item, idx) => ({
-        document_id: quoteData.id,
+        document_id: quoteData!.id,
         product_id: item.product_id,
         sort_order: idx + 1,
         sku: item.sku,
@@ -716,7 +737,7 @@ export default function CotizadorPage() {
         }
       }
 
-      await supabase.from('tt_activity_log').insert({ entity_type: 'document', entity_id: quoteData.id, action: 'Cotizacion creada', detail: `${quoteNumber} - ${selectedClient?.name || 'Sin cliente'} - ${formatCurrency(total, currency)}` })
+      await supabase.from('tt_activity_log').insert({ entity_type: 'document', entity_id: quoteData!.id, action: 'Cotizacion creada', detail: `${activeCode} - ${selectedClient?.name || 'Sin cliente'} - ${formatCurrency(total, currency)}` })
 
       // Si la cotización vino de una OC importada, vincular el PDF como attachment
       // 'oc_cliente'. El endpoint mueve el archivo del bucket 'client-pos' al
@@ -751,7 +772,7 @@ export default function CotizadorPage() {
       })
       // No reseteamos los datos — dejamos al usuario sobre la cotización recién creada
       // para que pueda adjuntar archivos. setCurrentQuoteId expone el ID al panel de adjuntos.
-      setCurrentQuoteId(quoteData.id as string)
+      setCurrentQuoteId(quoteData!.id as string)
       loadSavedQuotes()
     } catch (err) {
       console.error('Error guardando cotizacion:', err)
