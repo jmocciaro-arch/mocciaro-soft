@@ -19,6 +19,7 @@ import {
 import { MediaCapture, type MediaItem as Photo } from '@/components/sat/media-capture'
 import { Modal } from '@/components/ui/modal'
 import { SATWorkflow } from '@/components/sat/sat-workflow'
+import { AssetTimeline } from '@/components/sat/asset-timeline'
 
 type Row = Record<string, unknown>
 
@@ -31,6 +32,7 @@ export default function AssetDetailPage() {
   const [asset, setAsset] = useState<Row | null>(null)
   const [modelSpecs, setModelSpecs] = useState<Row | null>(null)
   const [history, setHistory] = useState<Row[]>([])
+  const [auditEvents, setAuditEvents] = useState<Row[]>([])
   const [openTickets, setOpenTickets] = useState<Row[]>([])
   const [loading, setLoading] = useState(true)
   const [detailService, setDetailService] = useState<Row | null>(null)
@@ -71,6 +73,15 @@ export default function AssetDetailPage() {
       .eq('asset_id', assetId)
       .order('fecha', { ascending: false })
     setHistory((hist || []) as Row[])
+
+    // Auditoría de cambios del activo
+    const { data: audit } = await sb
+      .from('tt_sat_asset_events')
+      .select('*')
+      .eq('asset_id', assetId)
+      .order('performed_at', { ascending: false })
+      .limit(200)
+    setAuditEvents((audit || []) as Row[])
 
     // Tickets abiertos
     const { data: tickets } = await sb
@@ -499,6 +510,9 @@ export default function AssetDetailPage() {
           </Table>
         )}
       </Card>
+
+      {/* Timeline / Auditoría de cambios del activo */}
+      <AssetTimeline events={auditEvents} />
 
       {/* Modal de detalle del servicio */}
       {detailService && (
