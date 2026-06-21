@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { getEnv } from '@/lib/env'
+import { withCompanyFilter, ensureCompanyAccess } from '@/lib/auth/with-company-filter'
+import { looksLikeCatalogQuery, searchCatalogWithStock, formatCatalogContext } from '@/lib/assistant/catalog-stock'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -19,6 +21,16 @@ export async function POST(req: NextRequest) {
     const { messages, companyId, page } = await req.json()
     if (!Array.isArray(messages) || messages.length === 0) {
       return NextResponse.json({ error: 'messages requerido' }, { status: 400 })
+    }
+
+    // Seguridad: autenticar al usuario y, si viene companyId, validar acceso a esa empresa.
+    // Antes este endpoint usaba service_role con el companyId del body SIN chequear acceso
+    // (un usuario podía leer datos de cualquier empresa pasando otro companyId).
+    const guard = await withCompanyFilter()
+    if (!guard.ok) return guard.response
+    if (companyId) {
+      const access = ensureCompanyAccess(guard, companyId)
+      if (!access.ok) return access.response
     }
 
     // 1) Cargar contexto del ERP
@@ -40,7 +52,16 @@ export async function POST(req: NextRequest) {
         supabase.from('tt_clients').select('name, email, phone').eq('company_id', companyId).limit(10),
       ])
 
-      const c = company.data as any
+      const c = company.data as {
+        name: string; trade_name: string | null; legal_name: string | null
+        tax_id: string | null; country: string | null; code_prefix: string | null
+      } | null
+      // supabase infiere el embed client:tt_clients(name) como array; en una relación
+      // to-one el runtime devuelve objeto. Casteamos a la forma real que usa el template.
+      const overdueRows = (overdueInvoices.data ?? []) as unknown as Array<{
+        legal_number: string | null; total: number | null; currency: string | null
+        invoice_date: string | null; client: { name: string } | null
+      }>
       erpContext = `\n=== CONTEXTO DEL ERP (datos reales) ===
 Empresa activa: ${c?.trade_name || c?.name} ${c?.country ? '('+c.country+')' : ''}
 Razón social: ${c?.legal_name || '—'}
@@ -49,19 +70,29 @@ CUIT/NIF: ${c?.tax_id || '—'}
 
 Leads totales: ${leadsCount.count || 0}
 Leads HOT (top 5 por score):
-${(hotLeads.data || []).map((l: any) => `  - ${l.name}${l.company_name ? ' @ '+l.company_name : ''} — score ${l.ai_score} — ${(l.ai_tags||[]).join(', ')}`).join('\n') || '  (ninguno)'}
+${(hotLeads.data || []).map((l: { name: string; company_name: string | null; ai_score: number | null; ai_tags: string[] | null }) => `  - ${l.name}${l.company_name ? ' @ '+l.company_name : ''} — score ${l.ai_score} — ${(l.ai_tags||[]).join(', ')}`).join('\n') || '  (ninguno)'}
 
 Leads recientes:
-${(recentLeads.data || []).map((l: any) => `  - ${l.name} (${l.ai_temperature || 'sin analizar'}) — ${l.status}`).join('\n') || '  (ninguno)'}
+${(recentLeads.data || []).map((l: { name: string; ai_temperature: string | null; status: string | null }) => `  - ${l.name} (${l.ai_temperature || 'sin analizar'}) — ${l.status}`).join('\n') || '  (ninguno)'}
 
 Oportunidades recientes (top 5):
-${(opps.data || []).map((o: any) => `  - ${o.title} — ${o.stage} — ${o.currency} ${o.value} — ${o.probability}%`).join('\n') || '  (ninguna)'}
+${(opps.data || []).map((o: { title: string; stage: string | null; value: number | null; currency: string | null; probability: number | null }) => `  - ${o.title} — ${o.stage} — ${o.currency} ${o.value} — ${o.probability}%`).join('\n') || '  (ninguna)'}
 
 Facturas pendientes de cobro (top 5):
-${(overdueInvoices.data || []).map((f: any) => `  - ${f.legal_number || '—'} — ${f.currency} ${f.total} — ${f.client?.name || 's/cliente'} — ${f.invoice_date}`).join('\n') || '  (ninguna)'}
+${overdueRows.map((f) => `  - ${f.legal_number || '—'} — ${f.currency} ${f.total} — ${f.client?.name || 's/cliente'} — ${f.invoice_date}`).join('\n') || '  (ninguna)'}
 
 Clientes en esta empresa: ${topClients.data?.length || 0}
 `
+    }
+
+    // Consulta de catálogo/stock: si el último mensaje parece pregunta de inventario,
+    // buscamos productos cruzando TODAS las marcas/modelos + stock real y lo inyectamos.
+    let catalogContext = ''
+    const lastUser = [...messages].reverse().find((m: Msg) => m.role === 'user')
+    if (lastUser && looksLikeCatalogQuery(lastUser.content)) {
+      const companyScope = companyId ? [companyId] : guard.accessibleCompanyIds
+      const items = await searchCatalogWithStock({ query: lastUser.content, accessibleCompanyIds: companyScope })
+      catalogContext = formatCatalogContext(lastUser.content, items)
     }
 
     const systemPrompt = `Sos el asistente IA del ERP Mocciaro Soft. Ayudás a Juan Manuel Mocciaro a operar el sistema.
@@ -71,6 +102,7 @@ INSTRUCCIONES:
 - Respondé en español rioplatense (usar "vos")
 - Sé breve y directo, usá listas/tablas cuando tenga sentido
 - Si te preguntan stats o cosas de datos, usá SOLO la info de arriba (no inventes números)
+- Si te preguntan por stock, inventario o qué productos hay, usá SOLO el bloque "INVENTARIO" de abajo (si aparece). No inventes productos, SKUs ni cantidades. Cruzá todas las marcas/modelos y priorizá lo que tiene stock > 0.
 - Si no tenés la info, decí "no tengo ese dato cargado, probá en /admin/diagnostico o refrescá"
 - Podés redactar emails con tono profesional argentino, incluyendo saludo y firma "Saludos, Equipo Mocciaro"
 - Podés explicar cómo usar módulos:
@@ -83,7 +115,8 @@ INSTRUCCIONES:
   * /sat → servicio técnico
   * /admin/diagnostico → health check del sistema
 - Si te pide "crear X" o "mandar email a Y" — **NO lo hacés directamente**, sino que le sugerís los pasos en la UI o le generás el draft que puede copiar
-${page ? `\nEl usuario está viendo: ${page}` : ''}`
+${page ? `\nEl usuario está viendo: ${page}` : ''}
+${catalogContext}`
 
     // 2) Intentar Gemini primero
     let reply = ''
