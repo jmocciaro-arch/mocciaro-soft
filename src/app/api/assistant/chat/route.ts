@@ -40,25 +40,26 @@ export async function POST(req: NextRequest) {
         supabase.from('tt_clients').select('name, email, phone').eq('company_id', companyId).limit(10),
       ])
 
-      const c = company.data as any
+      type AnyRow = Record<string, unknown>
+      const c = company.data as AnyRow | null
       erpContext = `\n=== CONTEXTO DEL ERP (datos reales) ===
-Empresa activa: ${c?.trade_name || c?.name} ${c?.country ? '('+c.country+')' : ''}
-Razón social: ${c?.legal_name || '—'}
-Prefijo docs: ${c?.code_prefix || '—'}
-CUIT/NIF: ${c?.tax_id || '—'}
+Empresa activa: ${String(c?.trade_name || c?.name || '')} ${c?.country ? '('+String(c.country)+')' : ''}
+Razón social: ${String(c?.legal_name || '—')}
+Prefijo docs: ${String(c?.code_prefix || '—')}
+CUIT/NIF: ${String(c?.tax_id || '—')}
 
 Leads totales: ${leadsCount.count || 0}
 Leads HOT (top 5 por score):
-${(hotLeads.data || []).map((l: any) => `  - ${l.name}${l.company_name ? ' @ '+l.company_name : ''} — score ${l.ai_score} — ${(l.ai_tags||[]).join(', ')}`).join('\n') || '  (ninguno)'}
+${((hotLeads.data || []) as AnyRow[]).map((l) => `  - ${String(l.name || '')}${l.company_name ? ' @ '+String(l.company_name) : ''} — score ${String(l.ai_score || '')} — ${((l.ai_tags as string[]) || []).join(', ')}`).join('\n') || '  (ninguno)'}
 
 Leads recientes:
-${(recentLeads.data || []).map((l: any) => `  - ${l.name} (${l.ai_temperature || 'sin analizar'}) — ${l.status}`).join('\n') || '  (ninguno)'}
+${((recentLeads.data || []) as AnyRow[]).map((l) => `  - ${String(l.name || '')} (${String(l.ai_temperature || 'sin analizar')}) — ${String(l.status || '')}`).join('\n') || '  (ninguno)'}
 
 Oportunidades recientes (top 5):
-${(opps.data || []).map((o: any) => `  - ${o.title} — ${o.stage} — ${o.currency} ${o.value} — ${o.probability}%`).join('\n') || '  (ninguna)'}
+${((opps.data || []) as AnyRow[]).map((o) => `  - ${String(o.title || '')} — ${String(o.stage || '')} — ${String(o.currency || '')} ${String(o.value || '')} — ${String(o.probability || '')}%`).join('\n') || '  (ninguna)'}
 
 Facturas pendientes de cobro (top 5):
-${(overdueInvoices.data || []).map((f: any) => `  - ${f.legal_number || '—'} — ${f.currency} ${f.total} — ${f.client?.name || 's/cliente'} — ${f.invoice_date}`).join('\n') || '  (ninguna)'}
+${((overdueInvoices.data || []) as AnyRow[]).map((f) => `  - ${String(f.legal_number || '—')} — ${String(f.currency || '')} ${String(f.total || '')} — ${String((f.client as AnyRow | null)?.name || 's/cliente')} — ${String(f.invoice_date || '')}`).join('\n') || '  (ninguna)'}
 
 Clientes en esta empresa: ${topClients.data?.length || 0}
 `
@@ -134,7 +135,7 @@ ${page ? `\nEl usuario está viendo: ${page}` : ''}`
             'anthropic-version': '2023-06-01',
           },
           body: JSON.stringify({
-            model: 'claude-sonnet-4-20250514',
+            model: 'claude-sonnet-4-6-20251001',
             max_tokens: 2048,
             system: systemPrompt,
             messages: messages.map((m: Msg) => ({ role: m.role, content: m.content })),
