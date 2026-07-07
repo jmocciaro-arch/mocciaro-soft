@@ -9,7 +9,7 @@
       "schedule": "5 8 * * *"
     },
     {
-      "path": "/api/fx/rates",
+      "path": "/api/fx/rates?cron=1",
       "schedule": "0 10 * * *"
     },
     {

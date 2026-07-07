@@ -1,8 +1,12 @@
 /**
  * GET  /api/fx/rates           → rates actuales (último día disponible)
- * POST /api/fx/rates           → fetch desde dolarapi.com + ECB y guarda en tt_fx_rates
+ * GET  /api/fx/rates?cron=1     → fetch desde dolarapi.com + ECB y guarda (lo dispara el cron de Vercel)
+ * POST /api/fx/rates           → mismo fetch+guardado, para disparo manual
  *
- * El POST lo llama el cron de Vercel (0 10 * * *) y también puede llamarse manualmente.
+ * Los cron jobs de Vercel disparan siempre GET (nunca POST), por eso el
+ * guardado tiene que ser alcanzable por GET con el marcador ?cron=1
+ * (mismo patrón que /api/ai/daily-summary?cron=1). Sin esto el cron pegaba
+ * en el GET de solo-lectura y tt_fx_rates quedaba congelada.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -22,7 +26,14 @@ function getServiceClient() {
 }
 
 // ── GET: devuelve los rates más recientes ────────────────────────────────────
-export async function GET(_req: NextRequest) {
+export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url)
+  // Los cron de Vercel disparan GET (no POST): con ?cron=1 enrutamos al
+  // fetch+guardado (valida CRON_SECRET y loguea en tt_cron_runs).
+  if (searchParams.get('cron') === '1') {
+    return fxCronHandler(req)
+  }
+
   const supabase = getServiceClient()
 
   const { data, error } = await supabase
@@ -80,4 +91,8 @@ const fxPostHandler = async (_req: NextRequest): Promise<NextResponse> => {
   }
 }
 
-export const POST = wrapCronHandler('fx-rates', fxPostHandler)
+// Handler compartido (fetch+guardado) con logging a tt_cron_runs y validación de CRON_SECRET.
+// Alcanzable por GET ?cron=1 (cron de Vercel) y por POST (disparo manual con el secret).
+const fxCronHandler = wrapCronHandler('fx-rates', fxPostHandler)
+
+export const POST = fxCronHandler
