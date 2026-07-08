@@ -3,7 +3,7 @@
 // Soporte offline completo con sincronización en segundo plano
 // ============================================================================
 
-const CACHE_VERSION = 'v2';
+const CACHE_VERSION = 'v3';
 const STATIC_CACHE = `torquetools-static-${CACHE_VERSION}`;
 const API_CACHE = `torquetools-api-${CACHE_VERSION}`;
 const PAGE_CACHE = `torquetools-pages-${CACHE_VERSION}`;
@@ -201,14 +201,22 @@ async function navigationStrategy(request) {
     return cached;
   }
 
-  // 2. Sin cache: intentar red con timeout de 4s
+  // 2. Sin cache: intentar red con timeout de 8s (cold start de Vercel +
+  //    SSR del dashboard pueden superar 4s; antes eso caía a offline).
   const timeoutPromise = new Promise((resolve) =>
-    setTimeout(() => resolve(null), 4000)
+    setTimeout(() => resolve(null), 8000)
   );
   const fresh = await Promise.race([networkPromise, timeoutPromise]);
-  if (fresh && fresh.ok) return fresh;
 
-  // 3. Red falló o tardó demasiado → fallback offline
+  // Devolver CUALQUIER respuesta real de la red, no solo res.ok:
+  // - '/' redirige a /dashboard; las navegaciones usan redirect:'manual',
+  //   así que fetch devuelve un 'opaqueredirect' con ok=false AUNQUE haya
+  //   internet. Con el check de ok, la raíz caía SIEMPRE al offline.html.
+  //   El browser sigue el redirect solo al recibir el opaqueredirect.
+  // - Un error HTTP (500) también es más honesto que "sin conexión".
+  if (fresh) return fresh;
+
+  // 3. La red realmente falló (fetch rechazó o tardó >8s) → fallback offline
   const offlinePage = await caches.match(OFFLINE_PAGE);
   if (offlinePage) return offlinePage;
 
