@@ -56,13 +56,14 @@ interface NavGroup {
   items: NavItem[]
 }
 
-// Menú agrupado: 26 ítems planos → 9 grupos colapsables. El usuario abre solo
-// lo que necesita; el grupo de la página activa se auto-expande.
+// Menú agrupado en 8 grupos colapsables. El usuario abre solo lo que
+// necesita; el grupo de la página activa se auto-expande.
+// Criterio: un destino = una sola entrada (sin duplicados), sin secciones
+// de un solo ítem, y cada ítem en la sección donde el usuario lo buscaría.
 const navGroups: NavGroup[] = [
   { id: 'principal', title: 'Principal', icon: Inbox, items: [
     { label: 'Inicio', href: '/inicio', icon: Inbox },
     { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-    { label: 'Dashboard ejecutivo', href: '/dashboard/ejecutivo', icon: BarChart3 },
   ] },
   { id: 'ventas', title: 'Ventas', icon: FileText, items: [
     { label: 'Cotizador', href: '/cotizador', icon: FileText, badgeKey: 'quotes_draft', requiredPermissions: ['create_quote', 'edit_quote', 'view_sales_reports'] },
@@ -71,22 +72,19 @@ const navGroups: NavGroup[] = [
     { label: 'Facturas', href: '/ventas?tab=facturas', icon: CreditCard, requiredPermissions: ['view_financials', 'create_invoice'] },
     { label: 'Recurrentes', href: '/ventas/recurrentes', icon: RefreshCw, requiredPermissions: ['create_invoice'] },
     { label: 'Cobros', href: '/cobros', icon: Banknote, requiredPermissions: ['view_financials'] },
+    // Gating §1: acá la condición A (RBAC); la B (≥1 canal habilitado) la resuelve la página.
+    { label: 'Canales', href: '/canales', icon: ArrowLeftRight, requiredPermissions: ['view_channels'] },
   ] },
   { id: 'compras', title: 'Compras y stock', icon: ShoppingCart, items: [
     { label: 'Compras', href: '/compras?tab=pedidos', icon: ShoppingCart, badgeKey: 'po_pending', requiredPermissions: ['create_purchase_order', 'view_suppliers'] },
     { label: 'Proveedores', href: '/compras?tab=proveedores', icon: Building2, requiredPermissions: ['view_suppliers'] },
     { label: 'Stock', href: '/stock', icon: Warehouse, requiredPermissions: ['view_stock'] },
     { label: 'Catalogo', href: '/catalogo', icon: Package, requiredPermissions: ['view_catalog'] },
-  ] },
-  { id: 'comex', title: 'Comex y logística', icon: Globe, items: [
     { label: 'Comex y Logística', href: '/comex', icon: Globe, requiredPermissions: ['view_comex'] },
-    // Gating §1: acá la condición A (RBAC); la B (≥1 canal habilitado) la resuelve la página.
-    { label: 'Canales', href: '/canales', icon: ArrowLeftRight, requiredPermissions: ['view_channels'] },
   ] },
   { id: 'clientes', title: 'Clientes', icon: Users, items: [
     { label: 'CRM', href: '/crm', icon: Target, requiredPermissions: ['view_crm'] },
     { label: 'Clientes', href: '/clientes', icon: Users, requiredPermissions: ['view_clients'] },
-    { label: 'Buscador Web', href: '/buscador-clientes', icon: Globe, requiredPermissions: ['admin_users'] },
   ] },
   { id: 'finanzas', title: 'Finanzas', icon: TrendingUp, items: [
     { label: 'Finanzas', href: '/finanzas', icon: TrendingUp, requiredPermissions: ['view_financials'] },
@@ -98,6 +96,7 @@ const navGroups: NavGroup[] = [
   { id: 'ia', title: 'Automatización e IA', icon: Sparkles, items: [
     { label: 'Workflows', href: '/workflows', icon: Workflow },
     { label: 'Hub IA', href: '/ai-hub', icon: Sparkles },
+    // Única entrada a /dashboard/ejecutivo (antes duplicada como "Dashboard ejecutivo" en Principal).
     { label: 'Agente IA', href: '/dashboard/ejecutivo', icon: Bot },
   ] },
   { id: 'admin', title: 'Administración', icon: Settings, items: [
@@ -105,6 +104,8 @@ const navGroups: NavGroup[] = [
     { label: 'Informes', href: '/informes', icon: BarChart3, requiredPermissions: ['view_sales_reports', 'view_financials'] },
     { label: 'Automatizaciones', href: '/admin/automatizaciones', icon: Zap, requiredPermissions: ['admin_users'] },
     { label: 'WhatsApp', href: '/admin/whatsapp', icon: MessageCircle, requiredPermissions: ['admin_users'] },
+    // Requiere admin_users: vive en Administración, no en Clientes.
+    { label: 'Buscador Web', href: '/buscador-clientes', icon: Globe, requiredPermissions: ['admin_users'] },
   ] },
 ]
 
