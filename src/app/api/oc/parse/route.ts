@@ -1,9 +1,41 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { parseOCPDF, detectOCDiscrepancies } from '@/lib/ai/parse-oc-pdf'
+import { parseOCPDF, detectOCDiscrepancies, type ParsedOC } from '@/lib/ai/parse-oc-pdf'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
+
+/** Normaliza un fragmento para nombre de archivo: sin acentos, MAYÚSCULAS, espacios → '-'. */
+function fileNamePart(raw: string | null | undefined, fallback: string, maxLen = 30): string {
+  const cleaned = (raw ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // acentos fuera (diacríticos combinantes tras NFD)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, maxLen)
+    .replace(/-+$/g, '')
+  return cleaned || fallback
+}
+
+/**
+ * Nombre canónico con el que la OC queda guardada en el sistema:
+ *   fecha_CLIENTE_OC-numero_MONEDA_monto_PROVEEDOR.pdf
+ * donde "proveedor" es la empresa nuestra que recibe la OC.
+ * Ej: 2026-07-07_ACEROS-DEL-PLATA_OC-4521_USD_12450.00_TORQUETOOLS.pdf
+ */
+function buildOCFileName(parsed: ParsedOC, computedTotal: number, companyName: string | null): string {
+  // Fecha de la propia OC si el parser la devolvió en ISO; si no, hoy.
+  const fecha = /^\d{4}-\d{2}-\d{2}$/.test(parsed.fecha ?? '')
+    ? (parsed.fecha as string)
+    : new Date().toISOString().slice(0, 10)
+  const cliente = fileNamePart(parsed.emisor_razon_social, 'CLIENTE')
+  const numero = fileNamePart(parsed.numero_oc, 'SN', 20)
+  const moneda = fileNamePart(parsed.moneda, 'ARS', 5)
+  const monto = computedTotal.toFixed(2)
+  const proveedor = fileNamePart(companyName, 'EMPRESA')
+  return `${fecha}_${cliente}_OC-${numero}_${moneda}_${monto}_${proveedor}.pdf`
+}
 
 /**
  * POST /api/oc/parse
@@ -36,6 +68,28 @@ export async function POST(req: NextRequest) {
       { auth: { persistSession: false } }
     )
 
+    // Total: SIEMPRE la suma de items, no el total que reporta la IA (puede
+    // alucinar). Se usa acá para el nombre canónico y más abajo para el doc.
+    const computedTotal = (result.data.items || []).reduce(
+      (sum, it) => sum + (it.cantidad || 0) * (it.precio_unitario || 0),
+      0
+    )
+
+    // Nombre canónico del archivo: la OC queda guardada en el sistema
+    // renombrada como fecha_cliente_OC-numero_moneda_monto_proveedor.pdf
+    // (proveedor = la empresa nuestra que recibe la OC). El nombre original
+    // se conserva en metadata para trazabilidad.
+    let companyName: string | null = null
+    if (companyId) {
+      const { data: companyRow } = await supabase
+        .from('tt_companies')
+        .select('name')
+        .eq('id', companyId)
+        .maybeSingle()
+      companyName = companyRow?.name ?? null
+    }
+    const canonicalFileName = buildOCFileName(result.data, computedTotal, companyName)
+
     // Subir el PDF a Storage (bucket privado 'client-pos').
     // pdf_storage_path se devuelve al frontend para que después de guardar la
     // cotización el endpoint /api/oc/attach-to-quote lo mueva al bucket
@@ -43,7 +97,9 @@ export async function POST(req: NextRequest) {
     let pdfUrl: string | null = null
     let pdfStoragePath: string | null = null
     if (companyId) {
-      const path = `${companyId}/${Date.now()}_${file.name.replace(/[^\w.-]/g, '_')}`
+      // Date.now() en el path evita colisiones si la misma OC se sube dos veces;
+      // el nombre visible para el usuario es canonicalFileName (sin timestamp).
+      const path = `${companyId}/${Date.now()}_${canonicalFileName}`
       const { error: upErr } = await supabase.storage
         .from('client-pos')
         .upload(path, buf, { contentType: 'application/pdf' })
@@ -64,20 +120,22 @@ export async function POST(req: NextRequest) {
         .select('sku, description, quantity, unit_price')
         .eq('document_id', quoteDocumentId)
       if (items?.length) {
-        discrepancies = detectOCDiscrepancies(result.data.items, items as any)
+        // Normalizar nullables de la DB al shape que espera detectOCDiscrepancies
+        const quoteItems = items.map((it) => ({
+          sku: it.sku ?? undefined,
+          description: it.description ?? undefined,
+          quantity: Number(it.quantity) || 0,
+          unit_price: Number(it.unit_price) || 0,
+        }))
+        discrepancies = detectOCDiscrepancies(result.data.items, quoteItems)
       }
     }
 
     // Guardar en tt_oc_parsed
     let ocParsedId: string | undefined
     if (createDocument) {
-      // Total: SIEMPRE confiamos en la suma de items, no en el total que
-      // reporta la IA (puede alucinar). Guardamos el total reportado en
-      // metadata por trazabilidad y para detectar mismatches.
-      const computedTotal = (result.data.items || []).reduce(
-        (sum, it) => sum + (it.cantidad || 0) * (it.precio_unitario || 0),
-        0
-      )
+      // Guardamos el total reportado por la IA en metadata por trazabilidad
+      // y para detectar mismatches contra computedTotal (calculado arriba).
       const aiReportedTotal = result.data.total ?? 0
       const totalMismatch =
         aiReportedTotal > 0 && Math.abs(aiReportedTotal - computedTotal) > 0.01
@@ -100,6 +158,9 @@ export async function POST(req: NextRequest) {
             ai_reported_total: aiReportedTotal,
             computed_total: computedTotal,
             total_mismatch: totalMismatch,
+            // Trazabilidad del archivo: nombre con el que llegó vs. cómo quedó guardado
+            original_file_name: file.name,
+            canonical_file_name: canonicalFileName,
           },
         })
         .select('id')
@@ -116,7 +177,7 @@ export async function POST(req: NextRequest) {
         .insert({
           document_id: doc.id,
           file_url: pdfUrl,
-          file_name: file.name,
+          file_name: canonicalFileName,
           parsed_at: new Date().toISOString(),
           parsed_by: result.data.provider_used || 'ai',
           parsed_items: result.data.items,
@@ -155,9 +216,11 @@ export async function POST(req: NextRequest) {
       pdfUrl,
       // pdf_storage_path + pdf_file_name: para que el cotizador llame a
       // /api/oc/attach-to-quote después de guardar la cotización y persistir
-      // el PDF como attachment con category='oc_cliente'.
+      // el PDF como attachment con category='oc_cliente'. pdf_file_name es el
+      // nombre canónico: attach-to-quote lo usa como nombre visible del
+      // attachment y para su check de idempotencia.
       pdf_storage_path: pdfStoragePath,
-      pdf_file_name: pdfStoragePath ? file.name : null,
+      pdf_file_name: pdfStoragePath ? canonicalFileName : null,
       ocParsedId,
       documentCreated: createDocument,
     })
