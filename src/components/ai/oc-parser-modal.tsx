@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Modal } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import type { ParsedOC, OCDiscrepancy } from '@/lib/ai/parse-oc-pdf'
@@ -41,14 +41,46 @@ interface Props {
 export function OCParserModal({ open, onClose, companyId, companyName, clientId, quoteDocumentId, onParsed }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [loading, setLoading] = useState(false)
-  const [result, setResult] = useState<{ data: ParsedOC; discrepancies: OCDiscrepancy[]; ocParsedId?: string } | null>(null)
+  const [result, setResult] = useState<{
+    data: ParsedOC
+    discrepancies: OCDiscrepancy[]
+    ocParsedId?: string
+    matches?: SKUMatch[]
+    pdf_storage_path?: string | null
+    pdf_file_name?: string | null
+  } | null>(null)
   const [msg, setMsg] = useState('')
+  // Preview local del PDF que se acaba de subir — se arma con URL.createObjectURL
+  // sobre el mismo File en memoria del browser (no hace falta pedirle al backend
+  // una signed URL del bucket privado: es literalmente el archivo que el usuario
+  // eligió, así que el preview es 100% fiel).
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null)
+
+  // Al cerrar (Cancelar, X, backdrop, o después de confirmar) resetear todo
+  // el estado — el componente NO se desmonta entre aperturas (el padre solo
+  // togglea `open`), así que sin esto la próxima apertura mostraría el
+  // resultado de la OC anterior en vez del dropzone de subida.
+  useEffect(() => {
+    if (!open) {
+      setPdfPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev)
+        return null
+      })
+      setResult(null)
+      setMsg('')
+    }
+  }, [open])
+  useEffect(() => () => { if (pdfPreviewUrl) URL.revokeObjectURL(pdfPreviewUrl) }, [pdfPreviewUrl])
 
   async function handleFile(file: File) {
     if (file.type !== 'application/pdf') {
       setMsg('✗ Solo PDF')
       return
     }
+    setPdfPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev)
+      return URL.createObjectURL(file)
+    })
     setLoading(true)
     setMsg('Analizando OC con IA...')
     try {
@@ -62,16 +94,20 @@ export function OCParserModal({ open, onClose, companyId, companyName, clientId,
       const res = await fetch('/api/oc/parse', { method: 'POST', body: fd })
       const j = await res.json()
       if (!res.ok) throw new Error(j.error || 'Error parseando')
-      setResult({ data: j.data, discrepancies: j.discrepancies || [], ocParsedId: j.ocParsedId })
-      setMsg(`✓ Parseado con ${j.data.provider_used}`)
-      onParsed?.({
+      // Ya NO se llama a onParsed acá — antes los datos se aplicaban a la
+      // cotización apenas terminaba de parsear, sin que el usuario confirmara
+      // nada. Ahora solo se guarda el resultado; onParsed se dispara recién
+      // cuando el usuario revisa el PDF al lado de los datos extraídos y
+      // clickea "Confirmar y usar estos datos".
+      setResult({
         data: j.data,
-        discrepancies: j.discrepancies,
+        discrepancies: j.discrepancies || [],
         ocParsedId: j.ocParsedId,
         matches: j.matches,
         pdf_storage_path: j.pdf_storage_path,
         pdf_file_name: j.pdf_file_name,
       })
+      setMsg(`✓ Parseado con ${j.data.provider_used}`)
     } catch (err) {
       setMsg('✗ ' + (err as Error).message)
     } finally {
@@ -79,11 +115,24 @@ export function OCParserModal({ open, onClose, companyId, companyName, clientId,
     }
   }
 
+  function handleConfirm() {
+    if (!result) return
+    onParsed?.({
+      data: result.data,
+      discrepancies: result.discrepancies,
+      ocParsedId: result.ocParsedId,
+      matches: result.matches,
+      pdf_storage_path: result.pdf_storage_path,
+      pdf_file_name: result.pdf_file_name,
+    })
+    onClose()
+  }
+
   const highCount = result?.discrepancies.filter((d) => d.severity === 'high').length || 0
   const medCount = result?.discrepancies.filter((d) => d.severity === 'medium').length || 0
 
   return (
-    <Modal isOpen={open} onClose={onClose} title="Importar OC del cliente" size="lg">
+    <Modal isOpen={open} onClose={onClose} title="Importar OC del cliente" size={result ? 'full' : 'lg'}>
       <div className="space-y-3">
         <input
           ref={inputRef}
@@ -113,7 +162,21 @@ export function OCParserModal({ open, onClose, companyId, companyName, clientId,
             {msg && <div className="text-xs opacity-70 text-center">{msg}</div>}
           </>
         ) : (
-          <>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Columna izquierda: PDF original, para confirmar visualmente que lo
+              que se cargó es lo que dice la OC antes de seguir el proceso. */}
+          <div className="rounded-lg border overflow-hidden bg-[#0B0E13]" style={{ borderColor: 'var(--sat-br, #2A3040)', height: '70vh' }}>
+            {pdfPreviewUrl ? (
+              <iframe src={pdfPreviewUrl} title="OC original" className="w-full h-full" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-xs opacity-60">
+                No se pudo previsualizar el PDF
+              </div>
+            )}
+          </div>
+
+          {/* Columna derecha: datos extraídos por la IA */}
+          <div className="space-y-3 overflow-y-auto pr-1" style={{ maxHeight: '70vh' }}>
             <div className="grid grid-cols-4 gap-2 text-xs">
               <Stat label="Nº OC" value={result.data.numero_oc || '–'} />
               <Stat label="Items" value={String(result.data.items.length)} />
@@ -173,12 +236,24 @@ export function OCParserModal({ open, onClose, companyId, companyName, clientId,
               <span>Cliente OC: <strong>{result.data.emisor_razon_social}</strong></span>
               <span>Items: <strong>{result.data.items.length}</strong></span>
             </div>
-          </>
+
+            <p className="text-[11px] opacity-60 text-center pt-1">
+              Comparación con el PDF a la izquierda antes de continuar — si algo no coincide, &quot;Otra OC&quot; para volver a subirla.
+            </p>
+          </div>
+          </div>
         )}
 
         <div className="flex justify-end gap-2 pt-2">
-          <Button variant="secondary" onClick={onClose}>{result ? 'Listo' : 'Cerrar'}</Button>
-          {result && <Button onClick={() => { setResult(null); inputRef.current?.click() }}>Otra OC</Button>}
+          {!result ? (
+            <Button variant="secondary" onClick={onClose}>Cerrar</Button>
+          ) : (
+            <>
+              <Button variant="secondary" onClick={onClose}>Cancelar</Button>
+              <Button variant="outline" onClick={() => { setResult(null); inputRef.current?.click() }}>Otra OC</Button>
+              <Button onClick={handleConfirm}>✓ Confirmar y usar estos datos</Button>
+            </>
+          )}
         </div>
       </div>
     </Modal>
