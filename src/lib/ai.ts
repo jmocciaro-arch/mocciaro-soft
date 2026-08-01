@@ -42,7 +42,7 @@ async function callClaude(messages: AIMessage[], options?: { maxTokens?: number 
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-6-20251001',
         max_tokens: options?.maxTokens || 4096,
         system: systemMsg,
         messages: userMessages,

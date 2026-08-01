@@ -32,6 +32,7 @@ import { DocLink } from '@/components/ui/doc-link'
 import { DocumentChain } from './document-chain'
 import { StockReservationsPanel } from './stock-reservations-panel'
 import { ClientPOCard, type ClientPOContext } from './client-po-card'
+import { ShippingGuidesTab, type ShippingGuide } from '@/components/compras/shipping-guides-tab'
 
 type Row = Record<string, unknown>
 
@@ -332,7 +333,7 @@ export function DocumentForm({
   const [editMode, setEditMode] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [activeTab, setActiveTab] = useState<'lineas' | 'rentabilidad' | 'mas_info' | 'adjuntos' | 'firma' | 'relacionados' | 'comparacion' | 'cobros'>('lineas')
+  const [activeTab, setActiveTab] = useState<'lineas' | 'rentabilidad' | 'mas_info' | 'adjuntos' | 'firma' | 'relacionados' | 'comparacion' | 'cobros' | 'guias'>('lineas')
   const [productCosts, setProductCosts] = useState<Record<string, number>>({})
 
   // Data
@@ -635,7 +636,7 @@ export function DocumentForm({
             company_id: d.company_id || '',
             client_reference: isPAP ? (d.supplier_name || '') : '',
             metadata: isPAP
-              ? { supplier_name: d.supplier_name, supplier_email: d.supplier_email }
+              ? { supplier_name: d.supplier_name, supplier_email: d.supplier_email, ...(d.metadata || {}) }
               : { doc_subtype: d.doc_subtype || undefined },
           })
 
@@ -2366,6 +2367,7 @@ export function DocumentForm({
             { id: 'relacionados' as const, label: 'Relacionados', icon: <Link2 size={14} /> },
             ...(isInvoiceType ? [{ id: 'cobros' as const, label: `Cobros${payments.length > 0 ? ` (${payments.length})` : ''}`, icon: <CreditCard size={14} /> }] : []),
             ...(isPAPWithInvoice ? [{ id: 'comparacion' as const, label: 'Comparacion PO/Factura', icon: <Scale size={14} /> }] : []),
+            ...(documentType === 'pap' ? [{ id: 'guias' as const, label: `Guías${(((doc?.metadata as Row)?.shipping_guides as ShippingGuide[]) || []).length > 0 ? ` (${((doc?.metadata as Row)?.shipping_guides as ShippingGuide[]).length})` : ''}`, icon: <PackageCheck size={14} /> }] : []),
           ] as Array<{ id: typeof activeTab; label: string; icon: React.ReactNode }>).map((tab) => (
             <button
               key={tab.id}
@@ -2842,6 +2844,15 @@ export function DocumentForm({
         {/* ====== TAB: ADJUNTOS ====== */}
         {activeTab === 'adjuntos' && (
           <AttachmentsTab doc={doc} documentId={documentId} />
+        )}
+
+        {/* ====== TAB: GUÍAS DE ENVÍO ====== */}
+        {activeTab === 'guias' && documentType === 'pap' && (
+          <ShippingGuidesTab
+            documentId={documentId}
+            source={source}
+            initialGuides={(((doc?.metadata as Row)?.shipping_guides as ShippingGuide[]) || [])}
+          />
         )}
 
         {/* ====== TAB: FIRMA ====== */}
