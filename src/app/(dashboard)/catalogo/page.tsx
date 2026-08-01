@@ -90,6 +90,8 @@ interface Product {
   supplier_code: string | null
   barcode: string | null
   lifecycle_status: LifecycleStatus | null
+  /** % de IVA de este producto. No todos llevan el mismo (21 / 10,5 / 0…). */
+  tax_rate: number | null
 }
 
 const LIFECYCLE_OPTIONS: Array<{ value: LifecycleStatus; label: string; variant: 'default' | 'success' | 'warning' | 'danger' }> = [
@@ -566,6 +568,7 @@ function ProductosTab() {
       price_ars: null,
       cost_eur: 0,
       price_min: null,
+      tax_rate: 21,
       encastre: '',
       torque_min: null,
       torque_max: null,
@@ -675,6 +678,8 @@ function ProductosTab() {
       price_ars: productForm.price_ars || null,
       cost_eur: productForm.cost_eur || 0,
       price_min: productForm.price_min || null,
+      // 0 es un valor válido (producto exento), así que no se puede usar `|| 21`.
+      tax_rate: productForm.tax_rate ?? 21,
       encastre: productForm.encastre?.trim() || null,
       torque_min: productForm.torque_min || null,
       torque_max: productForm.torque_max || null,
@@ -1176,6 +1181,7 @@ function ProductosTab() {
             { key: 'price_usd', label: 'Precio USD', type: 'number' },
             { key: 'price_ars', label: 'Precio ARS', type: 'number' },
             { key: 'price_min', label: 'Precio Minimo', type: 'number' },
+            { key: 'tax_rate', label: '% IVA', type: 'number' },
             { key: 'encastre', label: 'Encastre' },
             { key: 'torque_min', label: 'Torque Min', type: 'number' },
             { key: 'torque_max', label: 'Torque Max', type: 'number' },
@@ -2453,6 +2459,23 @@ function ProductosTab() {
                   </select>
                   <p className="text-[10px] text-[#6B7280] mt-1">
                     Borrador: en preparación. Activo: vendible. Descatalogado: ya no se vende. Obsoleto: archivado.
+                  </p>
+                  {/* IVA por producto: no todos llevan el mismo %. El cliente
+                      solo define SI aplica IVA; el % sale de acá. */}
+                  <label className="block text-sm font-medium text-[#9CA3AF] mb-1.5 mt-4">
+                    % IVA
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="100"
+                    value={productForm.tax_rate ?? 21}
+                    onChange={(e) => updateProductField('tax_rate', e.target.value === '' ? null : Number(e.target.value))}
+                    className="w-full h-10 rounded-lg bg-[#1E2330] border border-[#2A3040] px-3 text-sm text-[#F0F2F5] focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 transition-all"
+                  />
+                  <p className="text-[10px] text-[#6B7280] mt-1">
+                    Se aplica en cotizaciones/facturas cuando el cliente lleva IVA. 0 = exento.
                   </p>
                 </div>
                 <div className="w-full flex items-end">

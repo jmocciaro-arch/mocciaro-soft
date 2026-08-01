@@ -27,6 +27,8 @@ export interface MatchedProduct {
   name: string
   brand: string | null
   price_eur: number | null
+  /** % de IVA del producto — el IVA se define por producto, no todos son 21%. */
+  tax_rate: number | null
 }
 
 export interface MatchResult {
@@ -58,7 +60,7 @@ export async function matchClientSKU(
   if (opts.clientId) {
     const { data: alias } = await sb
       .from('tt_sku_aliases')
-      .select('product_id, product:tt_products(id, sku, name, brand, price_eur)')
+      .select('product_id, product:tt_products(id, sku, name, brand, price_eur, tax_rate)')
       .eq('client_id', opts.clientId)
       .eq('external_sku', externalSKU)
       .maybeSingle()
@@ -71,7 +73,7 @@ export async function matchClientSKU(
   // ─── 2. Match exacto en tt_products.sku ───
   const { data: exact } = await sb
     .from('tt_products')
-    .select('id, sku, name, brand, price_eur')
+    .select('id, sku, name, brand, price_eur, tax_rate')
     .eq('sku', externalSKU)
     .eq('active', true)
     .maybeSingle()
@@ -83,7 +85,7 @@ export async function matchClientSKU(
   // ilike con % aprovecha el índice GIN trigram (idx_products_sku_trgm)
   const { data: skuFuzzy } = await sb
     .from('tt_products')
-    .select('id, sku, name, brand, price_eur')
+    .select('id, sku, name, brand, price_eur, tax_rate')
     .ilike('sku', `%${externalSKU}%`)
     .eq('active', true)
     .limit(1)
@@ -96,7 +98,7 @@ export async function matchClientSKU(
   if (name && name.length >= 4) {
     const { data: nameFuzzy } = await sb
       .from('tt_products')
-      .select('id, sku, name, brand, price_eur')
+      .select('id, sku, name, brand, price_eur, tax_rate')
       .ilike('name', `%${name.slice(0, 30)}%`)
       .eq('active', true)
       .limit(1)
@@ -179,7 +181,7 @@ export async function getClientGlossary(
 > {
   const { data, error } = await sb
     .from('tt_sku_aliases')
-    .select('id, external_sku, source, notes, created_at, product:tt_products(id, sku, name, brand, price_eur)')
+    .select('id, external_sku, source, notes, created_at, product:tt_products(id, sku, name, brand, price_eur, tax_rate)')
     .eq('client_id', clientId)
     .order('external_sku')
   if (error || !data) return []

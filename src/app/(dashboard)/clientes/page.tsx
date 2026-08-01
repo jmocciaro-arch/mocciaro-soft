@@ -699,13 +699,31 @@ function CompanyDetail({ company, onClose, onUpdate }: {
                         { value: 'recargo_equivalencia', label: 'Recargo de equivalencia' },
                       ]} />
 
-                      {/* IVA */}
-                      <div className="grid grid-cols-2 gap-4 mt-4">
+                      {/* IVA — solo "aplica o no". El % NO se define acá:
+                          cada producto tiene su propio IVA (tt_products.tax_rate),
+                          porque no todos son 21%. Cuando el cliente no aplica IVA
+                          (exportación, exento), no se suma impuesto en ninguna línea. */}
+                      <div className="mt-4">
                         <label className="flex items-center gap-2 text-sm text-[#F0F2F5]">
-                          <input type="checkbox" checked={editData.subject_iva ?? true} onChange={(e) => setEditData({ ...editData, subject_iva: e.target.checked })} />
+                          <input
+                            type="checkbox"
+                            checked={editData.subject_iva ?? true}
+                            onChange={(e) => setEditData({
+                              ...editData,
+                              subject_iva: e.target.checked,
+                              // Si no aplica IVA, limpiar el % — antes quedaba un
+                              // 21% "fantasma" guardado aunque el check estuviera
+                              // destildado, y se llegaba a aplicar en cotizaciones.
+                              iva_rate: e.target.checked ? (editData.iva_rate ?? 21) : 0,
+                            })}
+                          />
                           Aplica IVA
                         </label>
-                        <Input label="% IVA" type="number" value={String(editData.iva_rate ?? 21)} onChange={(e) => setEditData({ ...editData, iva_rate: Number(e.target.value) })} />
+                        <p className="text-xs text-[#6B7280] mt-1">
+                          {(editData.subject_iva ?? true)
+                            ? 'El % de cada línea sale del IVA configurado en cada producto.'
+                            : 'Este cliente no lleva IVA (exportación / exento) — no se suma impuesto en sus documentos.'}
+                        </p>
                       </div>
 
                       {/* IRPF (España) */}

@@ -24,6 +24,8 @@ export interface CatalogProduct {
   name: string
   brand: string | null
   price_eur: number | null
+  /** % de IVA del producto — se define por producto, no todos son 21%. */
+  tax_rate?: number | null
   image_url?: string | null
   category?: string | null
   // Smart-search: explica por qué este producto apareció en los resultados
