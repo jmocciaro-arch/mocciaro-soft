@@ -126,9 +126,168 @@ export async function quoteToOrder(
 ): Promise<{ orderId: string; orderNumber: string }> {
   const supabase = supabaseClient ?? createClient()
 
-  // Idempotencia: si ya existe un pedido con este quote_id, devolvemos ese
-  // en lugar de crear un duplicado. Esto previene que doble-click o
-  // re-clicks accidentales generen pedidos PED-XXX duplicados.
+  // ===================================================================
+  // Rama real: cotizacion en tt_documents -> pedido tambien en
+  // tt_documents (doc_type='pedido'). CLAUDE.md prohibe escribir en
+  // tablas legacy (tt_sales_orders/tt_so_items) — antes esta rama las
+  // usaba igual que la legacy, violando la regla activamente para el
+  // 171 pedidos reales del modelo nuevo.
+  // ===================================================================
+  if (source === 'tt_documents') {
+    // Idempotencia via tt_document_relations (parent=cotizacion, relation_type='pedido')
+    const { data: existingLink } = await supabase
+      .from('tt_document_relations')
+      .select('child_id, tt_documents:child_id (system_code)')
+      .eq('parent_id', quoteId)
+      .eq('relation_type', 'pedido')
+      .limit(1)
+      .maybeSingle()
+    if (existingLink?.child_id) {
+      const childDoc = (existingLink as unknown as { tt_documents?: { system_code?: string } }).tt_documents
+      return { orderId: existingLink.child_id as string, orderNumber: childDoc?.system_code || '' }
+    }
+
+    const { data: quoteData } = await supabase.from('tt_documents').select('*').eq('id', quoteId).single()
+    const { data: quoteItems } = await supabase.from('tt_document_lines').select('*').eq('document_id', quoteId).order('sort_order')
+    if (!quoteData) throw new Error('Cotizacion no encontrada')
+
+    const clientIdForCheck = quoteData.client_id as string | null
+    if (clientIdForCheck) {
+      const { data: clientCheck } = await supabase
+        .from('tt_clients')
+        .select('payment_terms_days, payment_method, name')
+        .eq('id', clientIdForCheck)
+        .single()
+      if (!clientCheck) throw new Error('Cliente de la cotizacion no encontrado')
+      if (clientCheck.payment_terms_days == null || !clientCheck.payment_method) {
+        throw new Error(
+          `Cliente "${clientCheck.name}" sin condiciones comerciales. Cargá payment_terms_days y payment_method en /clientes antes de avanzar.`
+        )
+      }
+    }
+
+    const companyId = quoteData.company_id as string | null
+    if (!companyId) {
+      throw new Error('Cotización sin company_id. No se puede generar pedido — cargá la cotización con empresa explícita.')
+    }
+
+    const orderNumber = await generateDocNumber('PED')
+
+    const { data: order, error } = await supabase
+      .from('tt_documents')
+      .insert({
+        doc_type: 'pedido',
+        system_code: orderNumber,
+        company_id: companyId,
+        client_id: quoteData.client_id || null,
+        currency: (quoteData.currency as string) || 'EUR',
+        status: 'open',
+        subtotal: (quoteData.subtotal as number) || 0,
+        tax_amount: (quoteData.tax_amount as number) || 0,
+        total: (quoteData.total as number) || 0,
+        notes: (quoteData.notes as string) || '',
+        metadata: { source_quote_id: quoteId },
+      })
+      .select('id, system_code')
+      .single()
+
+    if (error || !order) throw error || new Error('Error creando pedido')
+
+    const lineItems = (quoteItems || []).map((item, idx) => ({
+      document_id: order.id,
+      sort_order: idx,
+      product_id: item.product_id || null,
+      description: (item.description as string) || '',
+      sku: (item.sku as string) || '',
+      quantity: (item.quantity as number) || 0,
+      unit_price: (item.unit_price as number) || 0,
+      discount_pct: (item.discount_pct as number) || 0,
+      subtotal: (item.subtotal as number) || 0,
+    }))
+
+    let insertedLines: Row[] = []
+    if (lineItems.length > 0) {
+      const { data: ins, error: insErr } = await supabase.from('tt_document_lines').insert(lineItems).select()
+      if (insErr) throw insErr
+      insertedLines = ins || []
+    }
+
+    // Reserva de stock (misma lógica que antes, sobre tt_document_lines)
+    if (insertedLines.length > 0) {
+      const { data: whs } = await supabase
+        .from('tt_warehouses')
+        .select('id')
+        .eq('company_id', companyId)
+        .eq('active', true)
+        .order('created_at', { ascending: true })
+        .limit(1)
+      const primaryWarehouseId = (whs?.[0]?.id as string) || null
+
+      if (primaryWarehouseId) {
+        for (const it of insertedLines) {
+          const productId = it.product_id as string | null
+          const qty = (it.quantity as number) || 0
+          if (!productId || qty <= 0) continue
+
+          await supabase.from('tt_stock_movements').insert({
+            product_id: productId,
+            warehouse_id: primaryWarehouseId,
+            movement_type: 'reserve',
+            quantity: qty,
+            document_id: order.id as string,
+            document_item_id: it.id as string,
+            reference: `Reserva por pedido ${orderNumber}`,
+          })
+
+          const { data: stockRow } = await supabase
+            .from('tt_stock')
+            .select('id, reserved, quantity')
+            .eq('product_id', productId)
+            .eq('warehouse_id', primaryWarehouseId)
+            .maybeSingle()
+          if (stockRow) {
+            await supabase
+              .from('tt_stock')
+              .update({ reserved: ((stockRow.reserved as number) || 0) + qty })
+              .eq('id', stockRow.id as string)
+          } else {
+            await supabase.from('tt_stock').insert({
+              product_id: productId,
+              warehouse_id: primaryWarehouseId,
+              quantity: 0,
+              reserved: qty,
+            })
+          }
+        }
+      }
+    }
+
+    await supabase.from('tt_documents').update({ status: 'closed' }).eq('id', quoteId)
+
+    await supabase.from('tt_document_relations').insert({
+      parent_id: quoteId,
+      child_id: order.id,
+      relation_type: 'pedido',
+    })
+
+    await supabase.from('tt_activity_log').insert({
+      entity_type: 'document',
+      entity_id: order.id as string,
+      action: 'created',
+      detail: `Pedido ${orderNumber} generado desde cotizacion`,
+    })
+
+    return { orderId: order.id as string, orderNumber: order.system_code as string }
+  }
+
+  // ===================================================================
+  // Rama legacy: cotizacion en tt_quotes -> pedido en tt_sales_orders.
+  // Sigue escribiendo en tablas legacy (CLAUDE.md regla 6) — pendiente
+  // de decisión: tt_quotes son solo 4 filas históricas y tt_sales_orders
+  // está en 0 filas en producción, sin uso real detectado. No se migra
+  // en este PR para no arriesgar el path legacy sin poder probarlo con
+  // datos reales; queda anotado como seguimiento.
+  // ===================================================================
   const { data: existingOrder } = await supabase
     .from('tt_sales_orders')
     .select('id, number')
@@ -145,24 +304,12 @@ export async function quoteToOrder(
 
   const orderNumber = await generateDocNumber('PED')
 
-  let quoteData: Row | null = null
-  let quoteItems: Row[] = []
-
-  if (source === 'local') {
-    const { data: q } = await supabase.from('tt_quotes').select('*').eq('id', quoteId).single()
-    const { data: items } = await supabase.from('tt_quote_items').select('*').eq('quote_id', quoteId).order('sort_order')
-    quoteData = q
-    quoteItems = items || []
-  } else {
-    const { data: q } = await supabase.from('tt_documents').select('*').eq('id', quoteId).single()
-    const { data: items } = await supabase.from('tt_document_lines').select('*').eq('document_id', quoteId).order('sort_order')
-    quoteData = q
-    quoteItems = items || []
-  }
+  const { data: quoteData } = await supabase.from('tt_quotes').select('*').eq('id', quoteId).single()
+  const { data: quoteItemsData } = await supabase.from('tt_quote_items').select('*').eq('quote_id', quoteId).order('sort_order')
+  const quoteItems = quoteItemsData || []
 
   if (!quoteData) throw new Error('Cotizacion no encontrada')
 
-  // Validar condiciones comerciales del cliente (payment_terms_days + payment_method)
   const clientIdForCheck = quoteData.client_id as string | null
   if (clientIdForCheck) {
     const { data: clientCheck } = await supabase
@@ -178,19 +325,17 @@ export async function quoteToOrder(
     }
   }
 
-  // Get company_id estrictamente desde la cotización — NO fallback (multi-empresa).
   const companyId = quoteData.company_id as string | null
   if (!companyId) {
     throw new Error('Cotización sin company_id. No se puede generar pedido — cargá la cotización con empresa explícita.')
   }
 
-  // Crear pedido en tt_sales_orders (tabla local)
   const { data: order, error } = await supabase
     .from('tt_sales_orders')
     .insert({
       company_id: companyId,
       client_id: quoteData.client_id || null,
-      quote_id: source === 'local' ? quoteId : null,
+      quote_id: quoteId,
       number: orderNumber,
       currency: (quoteData.currency as string) || 'EUR',
       status: 'confirmado',
@@ -204,7 +349,6 @@ export async function quoteToOrder(
 
   if (error || !order) throw error || new Error('Error creando pedido')
 
-  // Copiar items
   const soItems = quoteItems.map((item, idx) => ({
     sales_order_id: order.id,
     product_id: item.product_id || null,
@@ -219,20 +363,13 @@ export async function quoteToOrder(
 
   let insertedSoItems: Row[] = []
   if (soItems.length > 0) {
-    const { data: ins, error: insErr } = await supabase
-      .from('tt_so_items')
-      .insert(soItems)
-      .select()
+    const { data: ins, error: insErr } = await supabase.from('tt_so_items').insert(soItems).select()
     if (insErr) throw insErr
     insertedSoItems = ins || []
   }
 
-  // ---------------------------------------------------------------
-  // Reserva de stock: para cada item con product_id, registrar movimiento
-  // 'reserve' y aumentar tt_stock.reserved.
-  // ---------------------------------------------------------------
-  if (insertedSoItems.length > 0 && companyId) {
-    // Buscar warehouse primario de la company (primer activo)
+  // Reserva de stock — misma lógica que existía antes para este path legacy.
+  if (insertedSoItems.length > 0) {
     const { data: whs } = await supabase
       .from('tt_warehouses')
       .select('id')
@@ -248,7 +385,6 @@ export async function quoteToOrder(
         const qty = (it.qty_ordered as number) || 0
         if (!productId || qty <= 0) continue
 
-        // Insertar movimiento de reserva
         await supabase.from('tt_stock_movements').insert({
           product_id: productId,
           warehouse_id: primaryWarehouseId,
@@ -259,7 +395,6 @@ export async function quoteToOrder(
           reference: `Reserva por pedido ${orderNumber}`,
         })
 
-        // Actualizar tt_stock.reserved (crear fila si no existe)
         const { data: stockRow } = await supabase
           .from('tt_stock')
           .select('id, reserved, quantity')
@@ -283,14 +418,8 @@ export async function quoteToOrder(
     }
   }
 
-  // Cerrar la cotizacion
-  if (source === 'local') {
-    await supabase.from('tt_quotes').update({ status: 'accepted' }).eq('id', quoteId)
-  } else {
-    await supabase.from('tt_documents').update({ status: 'closed' }).eq('id', quoteId)
-  }
+  await supabase.from('tt_quotes').update({ status: 'accepted' }).eq('id', quoteId)
 
-  // Log
   await supabase.from('tt_activity_log').insert({
     entity_type: 'document',
     entity_id: order.id as string,
