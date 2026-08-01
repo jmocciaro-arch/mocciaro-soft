@@ -31,12 +31,14 @@ interface Props {
   open: boolean
   onClose: () => void
   companyId: string
+  /** Nombre de la empresa activa — para comparar contra el "receptor" que detectó la IA. */
+  companyName?: string | null
   clientId?: string
   quoteDocumentId?: string
   onParsed?: (result: OnParsedPayload) => void
 }
 
-export function OCParserModal({ open, onClose, companyId, clientId, quoteDocumentId, onParsed }: Props) {
+export function OCParserModal({ open, onClose, companyId, companyName, clientId, quoteDocumentId, onParsed }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<{ data: ParsedOC; discrepancies: OCDiscrepancy[]; ocParsedId?: string } | null>(null)
@@ -118,6 +120,32 @@ export function OCParserModal({ open, onClose, companyId, clientId, quoteDocumen
               <Stat label="Total" value={`$${(result.data.total || 0).toFixed(2)}`} />
               <Stat label="Confianza" value={`${Math.round((result.data.confidence || 0) * 100)}%`} />
             </div>
+
+            {/* Campos que antes no se mostraban (proveedor detectado, condición
+                de pago, IVA) — el usuario no podía ver si la IA los había
+                extraído o no. */}
+            <div className="grid grid-cols-3 gap-2 text-xs">
+              <Stat label="Condición de pago" value={result.data.condicion_pago || 'No detectada'} />
+              <Stat
+                label="IVA detectado"
+                value={
+                  result.data.items.some((it) => it.iva_pct != null)
+                    ? `${result.data.items.find((it) => it.iva_pct != null)?.iva_pct}%`
+                    : result.data.iva
+                      ? `$${result.data.iva.toFixed(2)}`
+                      : 'No detectado'
+                }
+              />
+              <Stat label="Proveedor (nosotros)" value={result.data.receptor_razon_social || '–'} />
+            </div>
+
+            {companyName && result.data.receptor_razon_social &&
+              !result.data.receptor_razon_social.toLowerCase().includes(companyName.toLowerCase().slice(0, 6)) &&
+              !companyName.toLowerCase().includes(result.data.receptor_razon_social.toLowerCase().slice(0, 6)) && (
+              <div className="text-xs p-2 rounded-md" style={{ background: 'rgba(249,115,22,0.1)', color: '#f97316' }}>
+                ⚠️ La OC dice &quot;{result.data.receptor_razon_social}&quot; pero elegiste <strong>{companyName}</strong> como empresa emisora — verificá que sea la empresa correcta antes de guardar.
+              </div>
+            )}
 
             {result.discrepancies.length > 0 ? (
               <div className="space-y-1">

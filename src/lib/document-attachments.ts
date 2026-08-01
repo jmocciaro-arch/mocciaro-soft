@@ -49,9 +49,29 @@ export interface DocumentAttachment {
   external_url: string | null
   uploaded_by_user_id: string | null
   created_at: string
+  /**
+   * Cuando el adjunto viene "heredado" de un documento ancestro en la
+   * cadena (ej. la OC del cliente adjuntada a la cotización, vista desde
+   * el pedido/albarán/factura derivados) — null si es un adjunto propio
+   * de este documento. Ver listAttachmentsWithAncestors().
+   */
+  inherited_from?: { system_code: string | null; doc_type: string } | null
 }
 
 const BUCKET = 'document-attachments'
+
+function docTypeToAttachmentType(docType: string): AttachmentDocType {
+  const t = (docType || '').toLowerCase()
+  if (t === 'coti' || t === 'presupuesto' || t === 'quote' || t === 'cotizacion') return 'quote'
+  if (t === 'pedido' || t === 'sales_order') return 'sales_order'
+  if (t === 'delivery_note' || t === 'albaran' || t === 'remito') return 'delivery_note'
+  if (t === 'factura' || t === 'invoice') return 'invoice'
+  if (t === 'credit_note' || t === 'factura_abono' || t === 'nota_credito') return 'credit_note'
+  if (t === 'pap' || t === 'purchase_order' || t === 'orden_compra') return 'purchase_order'
+  if (t === 'factura_compra' || t === 'purchase_invoice') return 'purchase_invoice'
+  if (t === 'client_po') return 'client_po'
+  return 'quote'
+}
 
 // =====================================================
 // LISTAR
@@ -69,6 +89,53 @@ export async function listAttachments(
     .order('created_at', { ascending: false })
   if (error) throw error
   return (data as DocumentAttachment[] | null) ?? []
+}
+
+/**
+ * Igual que listAttachments(), pero además trae los adjuntos de los
+ * documentos ANCESTROS en la cadena (cotización → pedido → albarán →
+ * factura, vía tt_document_relations), marcados con `inherited_from`.
+ *
+ * Por qué existe: la OC del cliente se adjunta una sola vez, a la
+ * cotización (vía /api/oc/attach-to-quote). Sin esto, abrir el pedido o
+ * la factura derivados nunca la mostraba — daba la impresión de que
+ * "no se adjuntó", cuando en realidad estaba un escalón más arriba en
+ * la cadena. Tope de 6 saltos para no armar un loop infinito ante datos
+ * corruptos (ciclos no deberían existir, pero por las dudas).
+ */
+export async function listAttachmentsWithAncestors(
+  documentType: AttachmentDocType,
+  documentId: string,
+): Promise<DocumentAttachment[]> {
+  const own = await listAttachments(documentType, documentId)
+
+  const sb = createClient()
+  const inherited: DocumentAttachment[] = []
+  const seenDocIds = new Set<string>([documentId])
+  let currentId = documentId
+
+  for (let hop = 0; hop < 6; hop++) {
+    const { data: link } = await sb
+      .from('tt_document_relations')
+      .select('parent_id, tt_documents:parent_id (id, system_code, doc_type)')
+      .eq('child_id', currentId)
+      .limit(1)
+      .maybeSingle()
+
+    const parent = (link as unknown as { tt_documents?: { id: string; system_code: string | null; doc_type: string } } | null)?.tt_documents
+    if (!parent || seenDocIds.has(parent.id)) break
+    seenDocIds.add(parent.id)
+
+    const parentAttType = docTypeToAttachmentType(parent.doc_type)
+    const parentAttachments = await listAttachments(parentAttType, parent.id)
+    for (const att of parentAttachments) {
+      inherited.push({ ...att, inherited_from: { system_code: parent.system_code, doc_type: parent.doc_type } })
+    }
+
+    currentId = parent.id
+  }
+
+  return [...own, ...inherited]
 }
 
 // =====================================================

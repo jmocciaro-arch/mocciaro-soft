@@ -221,17 +221,21 @@ export default function CotizadorPage() {
       fecha?: string
       emisor_razon_social?: string
       emisor_cuit?: string
+      receptor_razon_social?: string
       condicion_pago?: string
       condicion_entrega?: string
       direccion_entrega?: string
       moneda?: string
       observaciones?: string
+      subtotal?: number
+      iva?: number
       items?: Array<{
         codigo?: string
         descripcion: string
         cantidad: number
         precio_unitario?: number
         subtotal?: number
+        iva_pct?: number
         observaciones?: string
       }>
     }
@@ -319,6 +323,28 @@ export default function CotizadorPage() {
       if (data.condicion_pago) {
         setPaymentTerms(data.condicion_pago)
         setPaymentTermsType('custom')
+      }
+
+      // 4b. Pre-cargar IVA/impuestos detectados. Antes esto se descartaba
+      // por completo (la IA lo extrae per-item en iva_pct y/o el total en
+      // iva, pero nunca se usaba para setear taxRate) — la cotización
+      // siempre quedaba con el IVA default de la empresa, no el real de la OC.
+      const itemIvaPcts = (data.items || [])
+        .map((it) => it.iva_pct)
+        .filter((v): v is number => typeof v === 'number' && v >= 0)
+      if (itemIvaPcts.length > 0) {
+        // Moda (valor más frecuente) — la mayoría de las OC tienen el mismo % en todas las líneas.
+        const counts = new Map<number, number>()
+        for (const v of itemIvaPcts) counts.set(v, (counts.get(v) || 0) + 1)
+        const [modeIva] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]
+        setTaxRate(modeIva)
+        setIvaEnabled(modeIva > 0)
+      } else if (data.iva != null && data.subtotal && data.subtotal > 0) {
+        const derivedPct = Math.round((data.iva / data.subtotal) * 100 * 100) / 100
+        if (derivedPct > 0 && derivedPct < 100) {
+          setTaxRate(derivedPct)
+          setIvaEnabled(true)
+        }
       }
 
       // 5. Pre-cargar notas con referencia a la OC original
@@ -1685,6 +1711,7 @@ export default function CotizadorPage() {
           open={ocParserOpen}
           onClose={() => setOcParserOpen(false)}
           companyId={activeCompanyId}
+          companyName={companies.find((c) => c.id === activeCompanyId)?.name || null}
           clientId={selectedClient?.id}
           onParsed={(result) => { void handleOCParsed(result) }}
         />

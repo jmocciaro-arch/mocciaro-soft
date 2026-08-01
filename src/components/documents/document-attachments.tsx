@@ -26,7 +26,7 @@ import { Modal } from '@/components/ui/modal'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import {
-  listAttachments, uploadAttachment, addExternalLink, getAttachmentUrl,
+  listAttachmentsWithAncestors, uploadAttachment, addExternalLink, getAttachmentUrl,
   deleteAttachment, CATEGORY_LABELS, formatFileSize, isImage, isPdf,
   type DocumentAttachment, type AttachmentDocType, type AttachmentCategory,
 } from '@/lib/document-attachments'
@@ -61,7 +61,7 @@ export function DocumentAttachments({ documentId, documentType, readOnly = false
   const reload = useCallback(async () => {
     setLoading(true)
     try {
-      const list = await listAttachments(documentType, documentId)
+      const list = await listAttachmentsWithAncestors(documentType, documentId)
       setAttachments(list)
       onChange?.(list)
     } catch (err) {
@@ -301,7 +301,7 @@ export function DocumentAttachments({ documentId, documentType, readOnly = false
                       key={att.id}
                       att={att}
                       onOpen={() => handleOpen(att)}
-                      onDelete={readOnly ? undefined : () => handleDelete(att)}
+                      onDelete={readOnly || att.inherited_from ? undefined : () => handleDelete(att)}
                     />
                   ))}
                 </div>
@@ -361,7 +361,17 @@ function AttachmentRow({
     <div className="group flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-[#0F1218] border border-[#1E2330] hover:border-[#FF6600]/30 transition-colors">
       <Icon size={13} className="text-[#9CA3AF] shrink-0" />
       <div className="flex-1 min-w-0">
-        <p className="text-xs font-medium text-[#F0F2F5] truncate">{att.name}</p>
+        <p className="text-xs font-medium text-[#F0F2F5] truncate flex items-center gap-1.5">
+          {att.name}
+          {att.inherited_from && (
+            <span
+              className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide bg-[#1E2330] text-[#9CA3AF] border border-[#2A3040]"
+              title={`Adjuntado en ${att.inherited_from.doc_type}${att.inherited_from.system_code ? ` ${att.inherited_from.system_code}` : ''} — no se puede borrar desde acá`}
+            >
+              de {att.inherited_from.system_code || att.inherited_from.doc_type}
+            </span>
+          )}
+        </p>
         <p className="text-[10px] text-[#6B7280]">
           {att.external_url
             ? 'Link externo'

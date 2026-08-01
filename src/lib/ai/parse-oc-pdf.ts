@@ -57,7 +57,25 @@ Si un campo no se encuentra, omitirlo. Fechas ISO YYYY-MM-DD.
 
 REGLA CRÍTICA: TODOS los items de la OC deben estar en el JSON.
 No resumas ni omitas líneas. Si la OC tiene 50 items, el array "items" debe tener 50 entradas.
-No cortes por espacio ni por longitud — preferí JSON más largo antes que perder datos.`
+No cortes por espacio ni por longitud — preferí JSON más largo antes que perder datos.
+
+CAMPOS QUE SUELEN PASARSE POR ALTO — buscalos activamente en TODA la OC,
+no solo en el encabezado (a veces están en el pie, en una sección de
+"términos y condiciones", en una tabla aparte, o en letra chica):
+- receptor_razon_social: la empresa PROVEEDORA (a quien se le compra, NO el
+  cliente que emite la OC). Suele aparecer como "Proveedor:", "Vendor:",
+  "A:", "Dirigido a:", o en el encabezado/membrete si la OC fue generada
+  para un proveedor específico. Si la OC no lo menciona explícitamente
+  en ningún lado, omitilo — no inventes el nombre.
+- condicion_pago: buscá frases como "condiciones de pago", "forma de
+  pago", "términos de pago", "payment terms", "Net 30", "contado",
+  "30 días fecha factura", "50% anticipo + 50% contra entrega". Puede
+  estar en una sección separada de términos comerciales, no junto a los
+  items.
+- iva_pct / iva: el IVA puede estar como % por línea (columna "IVA",
+  "Tax", "VAT"), como monto total separado del subtotal, o directamente
+  incluido en el total sin desglosar (en ese caso, omitir iva_pct y dejar
+  que el usuario lo revise — no asumas 21% ni ningún valor por default).`
 
 const USER_PROMPT = `Extraé TODOS los datos de esta orden de compra en el siguiente JSON.
 
