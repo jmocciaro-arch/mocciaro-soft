@@ -5,10 +5,8 @@ import { useParams, useRouter } from 'next/navigation'
 import { ArrowLeft, FileX, Loader2 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useToast } from '@/components/ui/toast'
-import {
-  WorkflowArrowBar,
-  type WorkflowStep,
-} from '@/components/workflow/workflow-arrow-bar'
+import { type WorkflowStep } from '@/components/workflow/workflow-arrow-bar'
+import { OperationStrip } from '@/components/workflow/operation-strip'
 import { DocumentHeader } from '@/components/workflow/document-header'
 import {
   CriticalAlertsPanel,
@@ -796,6 +794,40 @@ export default function DocumentDetailPage() {
 
   const docComponents: DocumentItemComponent[] = useMemo(() => [], [])
 
+  // ── Datos para la banda de operación (OperationStrip) ───────────────
+  // Cadena completa ordenada por el flujo documental, con el actual incluido.
+  const stripChain = useMemo(() => {
+    if (!doc) return []
+    const rows = chainDocs.some((d) => d.id === doc.id) ? chainDocs : [...chainDocs, doc]
+    return [...rows]
+      .sort(
+        (a, b) =>
+          WORKFLOW_ORDER.indexOf(normalizeType(a.doc_type)) -
+          WORKFLOW_ORDER.indexOf(normalizeType(b.doc_type))
+      )
+      .map((d) => ({
+        id: d.id,
+        doc_type: normalizeType(d.doc_type),
+        ref: d.display_ref || d.system_code || d.id.slice(0, 8),
+        date: d.created_at ?? null,
+        status: d.status ?? null,
+        total: d.total != null ? Number(d.total) : null,
+        currency: d.currency ?? null,
+      }))
+  }, [doc, chainDocs])
+
+  // Cumplimiento por línea — se muestran las primeras 4 para no alargar la banda.
+  const stripFulfilment = useMemo(
+    () =>
+      docItems.slice(0, 4).map((it) => ({
+        sku: it.sku || '—',
+        name: it.description,
+        done: it.qty_delivered,
+        total: it.quantity,
+      })),
+    [docItems]
+  )
+
   const alerts: Alert[] = useMemo(() => {
     if (!doc) return []
     const out: Alert[] = []
@@ -1054,15 +1086,23 @@ export default function DocumentDetailPage() {
 
   return (
     <div className="space-y-4 sm:space-y-5 px-3 sm:px-5 py-4 pb-24 lg:pb-6">
-      {/* Workflow arrow bar — overflow horizontal en mobile */}
-      <div className="-mx-3 sm:mx-0">
-        <div className="px-3 sm:px-0">
-          <WorkflowArrowBar
-            steps={workflowSteps}
-            onStepClick={handleStepClick}
-          />
-        </div>
-      </div>
+      {/* ══════════════════════════════════════════════════════════════
+          BANDA DE OPERACIÓN — reemplaza a los paneles que antes se
+          apilaban (proceso + trazabilidad + cumplimiento + timeline).
+          Contesta dónde estoy / qué hago ahora / cuánto va, en ~140px.
+          ══════════════════════════════════════════════════════════════ */}
+      <OperationStrip
+        steps={workflowSteps}
+        chain={stripChain}
+        currentId={doc.id}
+        doc={doc as unknown as Record<string, unknown>}
+        fulfilment={stripFulfilment}
+        onOpenDoc={(id) => router.push(`/documentos/${id}`)}
+        onPrimaryAction={() => {
+          const current = workflowSteps.find((s) => s.status === 'current')
+          if (current) handleStepClick(current)
+        }}
+      />
 
       {/* Layout: 1 col mobile, 3 col desktop */}
       <div className="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)_300px] gap-4 lg:gap-5">
