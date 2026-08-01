@@ -751,7 +751,7 @@ export function DocumentForm({
       }
 
       // Load payments for invoice-type documents
-      const isInvoiceType = documentType === 'factura' || documentType === 'invoice'
+      const isInvoiceType = documentType === 'factura' || documentType === 'invoice' || documentType === 'factura_compra'
       if (isInvoiceType) {
         try {
           const sb2 = createClient()
@@ -1511,7 +1511,8 @@ export function DocumentForm({
   // ---------------------------------------------------------------
   // Variables derivadas para el JSX (ya está post early-return; no hay
   // problema de orden de hooks acá).
-  const isInvoiceType = documentType === 'factura' || documentType === 'invoice'
+  const isInvoiceType = documentType === 'factura' || documentType === 'invoice' || documentType === 'factura_compra'
+  const isPurchaseInvoice = documentType === 'factura_compra'
   const paidAmount = payments.reduce((sum, p) => sum + p.amount, 0)
   const docTotal = doc?.total || 0
   const remainingAmount = Math.max(0, docTotal - paidAmount)
@@ -1738,6 +1739,17 @@ export function DocumentForm({
           kind={documentType as DocumentActionType}
           className="mb-3"
           onAction={(actionKey) => {
+            // register_supplier_payment no tiene botón propio en DocumentActions
+            // (esa acción no existe ahí) — el mecanismo real es la tab
+            // Pagos/Cobros de este mismo componente. Antes esto caía al
+            // dispatch de 'doc:next-step', que no tenía ningún listener
+            // (click muerto).
+            if (actionKey === 'register_supplier_payment') {
+              setActiveTab('cobros')
+              setNewPayment(prev => ({ ...prev, amount: Math.round(remainingAmount * 100) / 100 }))
+              setShowPaymentForm(true)
+              return
+            }
             // Buscar el botón equivalente en DocumentActions y dispararlo
             const btn = window.document.querySelector<HTMLButtonElement>(
               `[data-doc-action="${actionKey}"]`
@@ -2364,7 +2376,7 @@ export function DocumentForm({
             { id: 'adjuntos' as const, label: 'Adjuntos', icon: <Paperclip size={14} /> },
             { id: 'firma' as const, label: 'Firma', icon: <PenTool size={14} /> },
             { id: 'relacionados' as const, label: 'Relacionados', icon: <Link2 size={14} /> },
-            ...(isInvoiceType ? [{ id: 'cobros' as const, label: `Cobros${payments.length > 0 ? ` (${payments.length})` : ''}`, icon: <CreditCard size={14} /> }] : []),
+            ...(isInvoiceType ? [{ id: 'cobros' as const, label: `${isPurchaseInvoice ? 'Pagos' : 'Cobros'}${payments.length > 0 ? ` (${payments.length})` : ''}`, icon: <CreditCard size={14} /> }] : []),
             ...(isPAPWithInvoice ? [{ id: 'comparacion' as const, label: 'Comparacion PO/Factura', icon: <Scale size={14} /> }] : []),
           ] as Array<{ id: typeof activeTab; label: string; icon: React.ReactNode }>).map((tab) => (
             <button
@@ -3181,12 +3193,12 @@ export function DocumentForm({
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
                   <CreditCard size={18} className="text-[#FF6600]" />
-                  <h3 className="text-base font-bold text-[#F0F2F5]">Estado de cobro</h3>
+                  <h3 className="text-base font-bold text-[#F0F2F5]">{isPurchaseInvoice ? 'Estado de pago' : 'Estado de cobro'}</h3>
                 </div>
                 <span className={`text-sm font-bold ${
                   paidPct >= 100 ? 'text-[#10B981]' : paidPct > 0 ? 'text-[#F59E0B]' : 'text-[#EF4444]'
                 }`}>
-                  {paidPct.toFixed(0)}% cobrado
+                  {paidPct.toFixed(0)}% {isPurchaseInvoice ? 'pagado' : 'cobrado'}
                 </span>
               </div>
 
@@ -3208,7 +3220,7 @@ export function DocumentForm({
                   </p>
                 </div>
                 <div className="text-center">
-                  <p className="text-[10px] text-[#6B7280] uppercase tracking-wider">Cobrado</p>
+                  <p className="text-[10px] text-[#6B7280] uppercase tracking-wider">{isPurchaseInvoice ? 'Pagado' : 'Cobrado'}</p>
                   <p className="text-lg font-bold text-[#10B981] font-mono">
                     {formatCurrency(paidAmount, (doc.currency || 'EUR') as 'EUR' | 'USD' | 'ARS')}
                   </p>
@@ -3225,7 +3237,7 @@ export function DocumentForm({
             {/* Payment list */}
             <div className="bg-[#141820] rounded-xl border border-[#2A3040] overflow-hidden">
               <div className="flex items-center justify-between px-5 py-3 border-b border-[#2A3040]">
-                <h4 className="text-sm font-bold text-[#F0F2F5]">Cobros registrados ({payments.length})</h4>
+                <h4 className="text-sm font-bold text-[#F0F2F5]">{isPurchaseInvoice ? 'Pagos registrados' : 'Cobros registrados'} ({payments.length})</h4>
                 {remainingAmount > 0 && (
                   <button
                     onClick={() => {
@@ -3234,7 +3246,7 @@ export function DocumentForm({
                     }}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#FF6600] text-white text-xs font-bold hover:bg-[#FF6600]/90 transition-colors"
                   >
-                    <Plus size={14} /> Registrar cobro
+                    <Plus size={14} /> {isPurchaseInvoice ? 'Registrar pago' : 'Registrar cobro'}
                   </button>
                 )}
               </div>
@@ -3405,7 +3417,7 @@ export function DocumentForm({
                     loading={savingPayment}
                     disabled={!newPayment.amount || newPayment.amount <= 0}
                   >
-                    <Save size={14} /> Registrar cobro
+                    <Save size={14} /> {isPurchaseInvoice ? 'Registrar pago' : 'Registrar cobro'}
                   </Button>
                 </div>
               </div>
