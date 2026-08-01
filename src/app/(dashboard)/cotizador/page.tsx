@@ -51,6 +51,11 @@ interface QuoteLineItem {
   // para poder mostrar ambos en la fila y persistir el alias sin parsear strings.
   client_sku?: string
   client_description?: string
+  // % de IVA de ESTA línea (viene de tt_products.tax_rate). El IVA no es 21%
+  // para todos los productos, así que el % vive por producto y no como un
+  // único % a nivel cliente/documento. El cliente solo define SI aplica IVA
+  // o no (subject_iva); cuando no aplica, estos % se ignoran por completo.
+  taxRate?: number
 }
 
 interface ProductSearchResult {
@@ -63,6 +68,7 @@ interface ProductSearchResult {
   image_url: string | null
   product_type?: 'product' | 'service' | 'expense'
   price_min?: number | null
+  tax_rate?: number | null
 }
 
 interface SavedQuote {
@@ -207,7 +213,7 @@ export default function CotizadorPage() {
     discrepancies?: unknown[]
     matches?: Array<{
       externalSKU: string
-      product: { id: string; sku: string; name: string; brand: string | null; price_eur: number | null } | null
+      product: { id: string; sku: string; name: string; brand: string | null; price_eur: number | null; tax_rate?: number | null } | null
       confidence: number
       source: string
     }>
@@ -275,6 +281,9 @@ export default function CotizadorPage() {
             // para mostrarla debajo del producto del catálogo y poder persistir el alias.
             client_sku: externalSKU || undefined,
             client_description: externalDesc || undefined,
+            // IVA del producto de NUESTRO catálogo, no el que traía la OC del
+            // cliente (que refleja el régimen fiscal de él, no el nuestro).
+            taxRate: m.product.tax_rate ?? undefined,
           }
         }
         unmatchedCount++
@@ -325,28 +334,6 @@ export default function CotizadorPage() {
         setPaymentTermsType('custom')
       }
 
-      // 4b. Pre-cargar IVA/impuestos detectados. Antes esto se descartaba
-      // por completo (la IA lo extrae per-item en iva_pct y/o el total en
-      // iva, pero nunca se usaba para setear taxRate) — la cotización
-      // siempre quedaba con el IVA default de la empresa, no el real de la OC.
-      const itemIvaPcts = (data.items || [])
-        .map((it) => it.iva_pct)
-        .filter((v): v is number => typeof v === 'number' && v >= 0)
-      if (itemIvaPcts.length > 0) {
-        // Moda (valor más frecuente) — la mayoría de las OC tienen el mismo % en todas las líneas.
-        const counts = new Map<number, number>()
-        for (const v of itemIvaPcts) counts.set(v, (counts.get(v) || 0) + 1)
-        const [modeIva] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]
-        setTaxRate(modeIva)
-        setIvaEnabled(modeIva > 0)
-      } else if (data.iva != null && data.subtotal && data.subtotal > 0) {
-        const derivedPct = Math.round((data.iva / data.subtotal) * 100 * 100) / 100
-        if (derivedPct > 0 && derivedPct < 100) {
-          setTaxRate(derivedPct)
-          setIvaEnabled(true)
-        }
-      }
-
       // 5. Pre-cargar notas con referencia a la OC original
       const ocRef = data.numero_oc ? `OC ${data.numero_oc}` : 'OC del cliente'
       const ocFecha = data.fecha ? ` (${data.fecha})` : ''
@@ -364,17 +351,19 @@ export default function CotizadorPage() {
       }
 
       // 7. Buscar cliente en DB por CIF/CUIT (best effort)
+      let clientFound: Client | null = null
       if (data.emisor_cuit) {
         try {
           const supabase = createClient()
-          const { data: clientFound } = await supabase
+          const { data: found } = await supabase
             .from('tt_clients')
             .select('*')
             .eq('tax_id', data.emisor_cuit)
             .limit(1)
             .maybeSingle()
-          if (clientFound) {
-            setSelectedClient(clientFound as Client)
+          if (found) {
+            clientFound = found as Client
+            setSelectedClient(clientFound)
           } else {
             // Sugerir crear/buscar manualmente
             setClientSearch(data.emisor_razon_social || '')
@@ -384,6 +373,34 @@ export default function CotizadorPage() {
         }
       } else if (data.emisor_razon_social) {
         setClientSearch(data.emisor_razon_social)
+      }
+
+      // 7b. IVA/impuestos detectados en la OC — SOLO se usan como estimación
+      // cuando el cliente NO se pudo identificar en el sistema (sin ficha,
+      // sin subject_iva/iva_rate configurado). Si el cliente SÍ se encontró,
+      // su configuración fiscal manda siempre (setter en el useEffect de
+      // "Auto-apply IVA cuando cambia selectedClient") — el IVA que figura en
+      // la OC del cliente refleja SU régimen fiscal, no el nuestro: aplicarlo
+      // a ciegas rompía exportaciones exentas (ej. Nordex, cliente exento por
+      // ser exportación, quedaba con 21% de IVA español solo porque la IA
+      // detectó un IVA en el PDF de origen).
+      if (!clientFound) {
+        const itemIvaPcts = (data.items || [])
+          .map((it) => it.iva_pct)
+          .filter((v): v is number => typeof v === 'number' && v >= 0)
+        if (itemIvaPcts.length > 0) {
+          const counts = new Map<number, number>()
+          for (const v of itemIvaPcts) counts.set(v, (counts.get(v) || 0) + 1)
+          const [modeIva] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]
+          setTaxRate(modeIva)
+          setIvaEnabled(modeIva > 0)
+        } else if (data.iva != null && data.subtotal && data.subtotal > 0) {
+          const derivedPct = Math.round((data.iva / data.subtotal) * 100 * 100) / 100
+          if (derivedPct > 0 && derivedPct < 100) {
+            setTaxRate(derivedPct)
+            setIvaEnabled(true)
+          }
+        }
       }
 
       // 8. Cerrar modal y mensaje guía
@@ -536,10 +553,13 @@ export default function CotizadorPage() {
       subject_irpf?: boolean; irpf_rate?: number;
       subject_re?: boolean; re_rate?: number;
     }
-    // IVA: default true si no está definido (compatibilidad con clientes viejos)
+    // IVA: el cliente define SOLO si aplica o no. El % sale de cada producto
+    // (tt_products.tax_rate) — `taxRate` acá queda como fallback para líneas
+    // manuales sin producto del catálogo. Default true para clientes viejos
+    // sin el campo configurado.
     const ivaOn = c.subject_iva !== false
     setIvaEnabled(ivaOn)
-    setTaxRate(ivaOn ? (c.iva_rate ?? 21) : 0)
+    setTaxRate(ivaOn ? (c.iva_rate || 21) : 0)
     if (c.subject_irpf) { setIrpfEnabled(true); setIrpfRate(c.irpf_rate || 15) }
     else { setIrpfEnabled(false); setIrpfRate(0) }
     if (c.subject_re) { setReEnabled(true); setReRate(c.re_rate || 5.2) }
@@ -623,6 +643,7 @@ export default function CotizadorPage() {
       unitPrice: resolved.price,
       discount: resolved.discount,
       notes: resolved.source !== 'catalogo' ? `Precio ${resolved.source}` : '',
+      taxRate: product.tax_rate ?? undefined,
     }])
     setShowProductSearch(false)
     setProductSearch('')
@@ -637,11 +658,23 @@ export default function CotizadorPage() {
   function updateItem(id: string, field: keyof QuoteLineItem, value: string | number) { setItems((prev) => prev.map((i) => (i.id === id ? { ...i, [field]: value } : i))) }
   function updateQuantity(id: string, delta: number) { setItems((prev) => prev.map((i) => (i.id === id ? { ...i, quantity: Math.max(1, i.quantity + delta) } : i))) }
 
-  const subtotal = items.reduce((sum, i) => sum + i.quantity * i.unitPrice * (1 - i.discount / 100), 0)
-  const taxAmount = ivaEnabled ? subtotal * (taxRate / 100) : 0
+  const lineSubtotal = (i: QuoteLineItem) => i.quantity * i.unitPrice * (1 - i.discount / 100)
+  const subtotal = items.reduce((sum, i) => sum + lineSubtotal(i), 0)
+  // IVA por línea: cada producto tiene su propio % (tt_products.tax_rate) —
+  // no todos son 21%. `taxRate` a nivel documento queda solo como default
+  // para líneas manuales sin producto del catálogo. Si el cliente no aplica
+  // IVA (subject_iva=false, ej. exportación), no se suma nada.
+  const taxAmount = ivaEnabled
+    ? items.reduce((sum, i) => sum + lineSubtotal(i) * ((i.taxRate ?? taxRate) / 100), 0)
+    : 0
   const irpfAmount = irpfEnabled ? subtotal * (irpfRate / 100) : 0
   const reAmount = reEnabled ? subtotal * (reRate / 100) : 0
   const total = subtotal + taxAmount - irpfAmount + reAmount
+  // % efectivo (mezcla ponderada) — se guarda en tax_rate del documento por
+  // compatibilidad con lo que ya lee el resto de la app (PDF, facturas, etc).
+  const effectiveTaxRate = subtotal > 0 ? (taxAmount / subtotal) * 100 : 0
+  // Para avisar en la UI cuando conviven distintos % en un mismo documento.
+  const distinctTaxRates = Array.from(new Set(items.map((i) => i.taxRate ?? taxRate)))
 
   async function saveQuote() {
     if (!selectedCompanyId) { addToast({ type: 'error', title: 'Selecciona una empresa emisora' }); return }
@@ -668,7 +701,10 @@ export default function CotizadorPage() {
           payment_terms: paymentTerms || null,
           currency,
           subtotal,
-          tax_rate: ivaEnabled ? taxRate : 0,
+          // % efectivo del documento (mezcla ponderada de los IVA por línea,
+          // que pueden diferir entre productos). El detalle real por línea va
+          // en tt_document_lines.metadata.tax_rate.
+          tax_rate: ivaEnabled ? Number(effectiveTaxRate.toFixed(4)) : 0,
           tax_amount: taxAmount,
           total,
           valid_until: validUntil ? new Date(validUntil).toISOString() : null,
@@ -700,13 +736,15 @@ export default function CotizadorPage() {
         discount_pct: item.discount,
         subtotal: item.quantity * item.unitPrice * (1 - item.discount / 100),
         notes: item.notes || null,
-        // Persistimos las referencias originales del cliente (de la OC) en metadata
-        // JSONB para que sobrevivan al ciclo guardar → reabrir → editar y para que
-        // se propaguen al pedido/albarán/factura cuando se convierta el documento.
-        // null cuando no hay refs (línea manual sin OC).
-        metadata: (item.client_sku || item.client_description) ? {
+        // Persistimos las referencias originales del cliente (de la OC) y el %
+        // de IVA de la línea en metadata JSONB, para que sobrevivan al ciclo
+        // guardar → reabrir → editar y se propaguen al pedido/albarán/factura.
+        // El IVA se guarda por línea porque no todos los productos llevan el
+        // mismo % (el tax_rate del documento es solo la mezcla ponderada).
+        metadata: (item.client_sku || item.client_description || item.taxRate != null) ? {
           client_sku: item.client_sku || null,
           client_description: item.client_description || null,
+          tax_rate: ivaEnabled ? (item.taxRate ?? taxRate) : 0,
         } : null,
       }))
       const { error: itemsError } = await supabase.from('tt_document_lines').insert(docLines)
@@ -1579,16 +1617,15 @@ export default function CotizadorPage() {
                       <div className={`w-3 h-3 rounded-full bg-white absolute top-0.5 transition-all ${ivaEnabled ? 'right-0.5' : 'left-0.5'}`} />
                     </button>
                     <span className={`${ivaEnabled ? 'text-emerald-400' : 'text-[#4B5563]'}`}>IVA</span>
+                    {/* El % ya no se edita acá: sale del IVA de cada producto
+                        (tt_products.tax_rate). Se muestra el % cuando es único
+                        para todas las líneas, o "mixto" cuando conviven varios. */}
                     {ivaEnabled && (
-                      <>
-                        <input
-                          type="number"
-                          value={taxRate}
-                          onChange={(e) => setTaxRate(Number(e.target.value))}
-                          className="w-14 bg-[#0F1218] border border-[#1E2330] rounded px-2 py-0.5 text-center text-xs text-[#F0F2F5] print:border-none"
-                        />
-                        <span className="text-xs text-[#6B7280]">%</span>
-                      </>
+                      <span className="text-xs text-[#6B7280]">
+                        {distinctTaxRates.length === 1
+                          ? `${distinctTaxRates[0]}%`
+                          : `mixto (${distinctTaxRates.slice().sort((a, b) => a - b).join('% / ')}%)`}
+                      </span>
                     )}
                   </div>
                   <span className={`${ivaEnabled ? 'text-[#D1D5DB]' : 'text-[#4B5563]'}`}>
@@ -1747,6 +1784,8 @@ export default function CotizadorPage() {
                 unitPrice: it.unitPrice && it.unitPrice > 0 ? it.unitPrice : (product.price_eur || 0),
                 client_sku: it.client_sku || (it.product_id ? undefined : it.sku),
                 client_description: it.client_description || (it.product_id ? undefined : it.description),
+                // Al vincular manualmente, la línea toma el IVA del producto elegido.
+                taxRate: product.tax_rate ?? it.taxRate,
               }))
               addToast({ type: 'success', title: 'Producto vinculado', message: product.sku })
             }}

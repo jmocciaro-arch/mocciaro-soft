@@ -158,7 +158,9 @@ export async function refreshProducts(): Promise<FetchResult> {
     fetchAllPaged<{ id: string }>({
       table: 'tt_products',
       // Solo columnas necesarias para listados/búsquedas (no specs JSONB pesado)
-      select: 'id, sku, name, brand, category, subcategory, encastre, price_eur, cost_eur, active, lifecycle_status, image_url',
+      // tax_rate: el IVA se define por producto (no todos son 21%), y el
+      // cotizador lo necesita para calcular el impuesto línea por línea.
+      select: 'id, sku, name, brand, category, subcategory, encastre, price_eur, cost_eur, active, lifecycle_status, image_url, tax_rate',
       orderBy: { column: 'sku', ascending: true },
       extraFilter: (q) => q.eq('active', true),
       scope: { companyIds: [], global: true },

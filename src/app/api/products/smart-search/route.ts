@@ -160,7 +160,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const SELECT = 'id, sku, name, brand, modelo, category, manufacturer_code, supplier_code, price_eur, image_url, search_text'
+  const SELECT = 'id, sku, name, brand, modelo, category, manufacturer_code, supplier_code, price_eur, image_url, search_text, tax_rate'
   const promises: PromiseLike<unknown>[] = []
 
   // ─── A) MATCHES EXACTOS DE CÓDIGOS (los más fuertes, scores ≥150) ───
