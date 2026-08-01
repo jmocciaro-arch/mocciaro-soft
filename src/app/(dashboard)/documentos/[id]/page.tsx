@@ -12,7 +12,6 @@ import {
   CriticalAlertsPanel,
   type Alert,
 } from '@/components/workflow/critical-alerts-panel'
-import { DeliveryProgressCard } from '@/components/workflow/delivery-progress-card'
 import {
   DocumentItemsTree,
   type DocumentItem,
@@ -816,10 +815,12 @@ export default function DocumentDetailPage() {
       }))
   }, [doc, chainDocs])
 
-  // Cumplimiento por línea — se muestran las primeras 4 para no alargar la banda.
+  // Cumplimiento: se pasan TODAS las líneas. La banda las resume en un solo
+  // gráfico (antes se recortaba a 4 acá y el total salía mal: "13 de 16"
+  // cuando en realidad eran 17 de 67).
   const stripFulfilment = useMemo(
     () =>
-      docItems.slice(0, 4).map((it) => ({
+      docItems.map((it) => ({
         sku: it.sku || '—',
         name: it.description,
         done: it.qty_delivered,
@@ -895,43 +896,6 @@ export default function DocumentDetailPage() {
 
     return out
   }, [doc, docItems, supplierPurchases])
-
-  // Progreso global del pedido (entregado / facturado / cobrado)
-  const deliveredPct = useMemo(() => {
-    if (!docItems.length) return 0
-    const totalQ = docItems.reduce((s, i) => s + i.quantity, 0)
-    const delivered = docItems.reduce((s, i) => s + i.qty_delivered, 0)
-    return totalQ > 0 ? Math.round((delivered / totalQ) * 100) : 0
-  }, [docItems])
-
-  const invoicedPct = useMemo(() => {
-    if (!docItems.length) return 0
-    const totalQ = docItems.reduce((s, i) => s + i.quantity, 0)
-    const invoiced = docItems.reduce((s, i) => s + i.qty_invoiced, 0)
-    return totalQ > 0 ? Math.round((invoiced / totalQ) * 100) : 0
-  }, [docItems])
-
-  const collectedPct = useMemo(() => {
-    if (!doc) return 0
-    if (doc.status === 'paid') return 100
-    if (doc.status === 'invoiced' || doc.status === 'completed') return invoicedPct
-    return 0
-  }, [doc, invoicedPct])
-
-  const itemStatusPills = useMemo(() => {
-    const map: Record<string, { count: number; color: string; label: string }> =
-      {}
-    for (const it of docItems) {
-      const key = it.status
-      if (!map[key])
-        map[key] = { count: 0, color: it.statusColor, label: it.statusLabel }
-      map[key].count++
-    }
-    return Object.values(map).map((m) => ({
-      label: `${m.count} ${m.label}`,
-      color: m.color,
-    }))
-  }, [docItems])
 
   // Parent docs for header (docs upstream in the chain)
   const parentDocs = useMemo(() => {
@@ -1119,20 +1083,9 @@ export default function DocumentDetailPage() {
             </div>
           )}
 
-          {(normalizeType(doc.doc_type) === 'pedido' ||
-            normalizeType(doc.doc_type) === 'albaran' ||
-            normalizeType(doc.doc_type) === 'factura') && (
-            <DeliveryProgressCard
-              clientName={
-                client?.legal_name || client?.company_name || 'Cliente'
-              }
-              deliveredPct={deliveredPct}
-              invoicedPct={invoicedPct}
-              collectedPct={collectedPct}
-              itemStatuses={itemStatusPills}
-              ocRef={doc.display_ref || doc.system_code}
-            />
-          )}
+          {/* "Entregas en curso" se quitó: mostraba el mismo avance que la banda
+              de arriba y que la tabla de ítems de abajo — la misma información
+              tres veces en una pantalla. El avance vive ahora solo en la banda. */}
 
           {showSupplierPurchases && supplierPurchases.length > 0 && (
             <SupplierPurchasesCard

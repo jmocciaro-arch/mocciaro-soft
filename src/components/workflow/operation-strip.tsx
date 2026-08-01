@@ -42,6 +42,27 @@ export interface FulfilLine {
   total: number
 }
 
+/**
+ * Resumen visual del avance. Se calcula sobre TODAS las líneas —
+ * antes se computaba sobre la lista recortada y las cifras salían mal
+ * (mostraba "13 de 16" cuando en realidad eran 17 de 67).
+ */
+function summarize(lines: FulfilLine[]) {
+  let done = 0
+  let total = 0
+  let full = 0
+  let partial = 0
+  let none = 0
+  for (const l of lines) {
+    done += l.done
+    total += l.total
+    if (l.done >= l.total && l.total > 0) full++
+    else if (l.done > 0) partial++
+    else none++
+  }
+  return { done, total, full, partial, none, pct: total > 0 ? Math.round((done / total) * 100) : 0 }
+}
+
 export interface LastEvent {
   label: string
   at: string
@@ -101,19 +122,14 @@ export function OperationStrip({
   onPrimaryAction,
 }: Props) {
   const next = useMemo(() => getNextStep(doc, inferKind(doc)), [doc])
-
-  const totals = useMemo(() => {
-    const done = fulfilment.reduce((s, l) => s + l.done, 0)
-    const all = fulfilment.reduce((s, l) => s + l.total, 0)
-    return { done, all }
-  }, [fulfilment])
+  const sum = useMemo(() => summarize(fulfilment), [fulfilment])
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] bg-[#141820] border border-[#2A3040] rounded-xl overflow-hidden">
 
       {/* ── izquierda: de dónde viene ── */}
-      <div className="p-4 min-w-0">
-        <p className="text-[10px] font-bold uppercase tracking-[0.09em] text-[#6B7280] mb-2.5">
+      <div className="p-5 min-w-0">
+        <p className="text-[11px] font-bold uppercase tracking-[0.09em] text-[#6B7280] mb-3">
           Estado de la operación
         </p>
 
@@ -133,7 +149,7 @@ export function OperationStrip({
                 <span className="flex items-center gap-1.5">
                   <span
                     className={[
-                      'w-5 h-5 rounded-full grid place-items-center text-[10px] font-bold border-[1.5px] shrink-0',
+                      'w-6 h-6 rounded-full grid place-items-center text-[11px] font-bold border-[1.5px] shrink-0',
                       done ? 'bg-[#10B981] border-[#10B981] text-white' : '',
                       now ? 'bg-[#FF6600] border-[#FF6600] text-white ring-[3px] ring-[#FF6600]/15' : '',
                       !done && !now ? 'bg-[#1A1F2A] border-[#2A3040] text-[#6B7280]' : '',
@@ -142,7 +158,7 @@ export function OperationStrip({
                     {i + 1}
                   </span>
                   <span
-                    className={`text-xs whitespace-nowrap ${
+                    className={`text-[13px] whitespace-nowrap ${
                       now ? 'text-[#F0F2F5] font-semibold' : done ? 'text-[#9CA3AF]' : 'text-[#6B7280]'
                     }`}
                   >
@@ -168,29 +184,29 @@ export function OperationStrip({
                   aria-current={here ? 'true' : undefined}
                   disabled={here}
                   className={[
-                    'flex items-center gap-2.5 px-2 py-1.5 rounded-md text-left w-full',
+                    'flex items-center gap-3 px-2.5 py-2 rounded-md text-left w-full',
                     'focus-visible:outline-2 focus-visible:outline-[#FF6600] focus-visible:outline-offset-[-2px]',
                     here
                       ? 'bg-[#FF6600]/10 border border-[#FF6600]/30 cursor-default'
                       : 'border border-transparent hover:bg-[#1A1F2A]',
                   ].join(' ')}
                 >
-                  <span className="font-mono text-[11px] text-[#6B7280] select-none" aria-hidden>
+                  <span className="font-mono text-[12px] text-[#6B7280] select-none" aria-hidden>
                     {i === 0 ? '└─' : '  └─'}
                   </span>
-                  <span className={`text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ${meta.cls}`}>
+                  <span className={`text-[11px] font-bold uppercase tracking-wide px-2 py-0.5 rounded ${meta.cls}`}>
                     {meta.short}
                   </span>
                   <span
-                    className={`font-mono text-[12.5px] font-semibold truncate ${
+                    className={`font-mono text-[14px] font-semibold truncate ${
                       here ? 'text-[#FF6600]' : 'text-[#F0F2F5]'
                     }`}
                   >
                     {d.ref}
                   </span>
-                  {d.date && <span className="text-[11.5px] text-[#6B7280] shrink-0">{fmtDate(d.date)}</span>}
+                  {d.date && <span className="text-[13px] text-[#6B7280] shrink-0">{fmtDate(d.date)}</span>}
                   {d.total != null && (
-                    <span className="ml-auto font-mono text-xs tabular-nums text-[#9CA3AF] shrink-0">
+                    <span className="ml-auto font-mono text-[13px] tabular-nums text-[#9CA3AF] shrink-0">
                       {fmtAmount(d.total, d.currency)}
                     </span>
                   )}
@@ -199,7 +215,7 @@ export function OperationStrip({
             })}
           </div>
         ) : (
-          <p className="text-xs text-[#6B7280] px-2">
+          <p className="text-[13px] text-[#6B7280] px-2 leading-relaxed">
             Todavía no derivó en otros documentos. Cuando generes el siguiente paso, la cadena aparece acá.
           </p>
         )}
@@ -207,7 +223,7 @@ export function OperationStrip({
         {/* historial colapsado — solo el último cambio + contador */}
         {lastEvent && (
           <details className="mt-2.5 group">
-            <summary className="cursor-pointer list-none text-[11.5px] text-[#6B7280] px-2 py-1 rounded-md hover:bg-[#1A1F2A] hover:text-[#9CA3AF] focus-visible:outline-2 focus-visible:outline-[#FF6600] focus-visible:outline-offset-[-2px] [&::-webkit-details-marker]:hidden">
+            <summary className="cursor-pointer list-none text-[13px] text-[#6B7280] px-2 py-1.5 rounded-md hover:bg-[#1A1F2A] hover:text-[#9CA3AF] focus-visible:outline-2 focus-visible:outline-[#FF6600] focus-visible:outline-offset-[-2px] [&::-webkit-details-marker]:hidden">
               <span className="group-open:hidden" aria-hidden>▸ </span>
               <span className="hidden group-open:inline" aria-hidden>▾ </span>
               último cambio: {lastEvent.label} · {fmtDate(lastEvent.at)}
@@ -222,8 +238,8 @@ export function OperationStrip({
       </div>
 
       {/* ── derecha: qué sigue ── */}
-      <div className="p-4 border-t lg:border-t-0 lg:border-l border-[#1E2330] min-w-0">
-        <p className="text-[10px] font-bold uppercase tracking-[0.09em] text-[#6B7280] mb-2.5">
+      <div className="p-5 border-t lg:border-t-0 lg:border-l border-[#1E2330] min-w-0">
+        <p className="text-[11px] font-bold uppercase tracking-[0.09em] text-[#6B7280] mb-3">
           Qué hacer ahora
         </p>
 
@@ -232,16 +248,16 @@ export function OperationStrip({
             type="button"
             onClick={() => onPrimaryAction?.(next.primary!.key)}
             disabled={next.primary.blocked}
-            className="w-full text-left flex items-start gap-3 rounded-lg border border-[#FF6600]/30 bg-[#FF6600]/10 px-3 py-2.5 hover:bg-[#FF6600]/15 disabled:opacity-60 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[#FF6600] focus-visible:outline-offset-2"
+            className="w-full text-left flex items-start gap-3 rounded-lg border border-[#FF6600]/30 bg-[#FF6600]/10 px-4 py-3.5 hover:bg-[#FF6600]/15 disabled:opacity-60 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[#FF6600] focus-visible:outline-offset-2"
           >
             <ChevronRight size={16} className="text-[#FF6600] mt-0.5 shrink-0" aria-hidden />
-            <span className="text-[13px] leading-snug text-[#F0F2F5]">
+            <span className="text-[15px] leading-snug text-[#F0F2F5]">
               <b className="font-semibold">{next.primary.label}</b>
               {next.primary.hint ? <> — {next.primary.hint}</> : null}
             </span>
           </button>
         ) : (
-          <div className="rounded-lg border border-[#2A3040] bg-[#1A1F2A] px-3 py-2.5 text-[13px] text-[#9CA3AF]">
+          <div className="rounded-lg border border-[#2A3040] bg-[#1A1F2A] px-4 py-3.5 text-[15px] text-[#9CA3AF]">
             {next.done ? `${next.currentLabel} — no hay nada pendiente.` : next.currentLabel}
           </div>
         )}
@@ -249,7 +265,7 @@ export function OperationStrip({
         {next.blockers.length > 0 && (
           <ul className="mt-2 space-y-1">
             {next.blockers.map((b, i) => (
-              <li key={i} className="text-[11.5px] text-[#F59E0B] flex gap-1.5">
+              <li key={i} className="text-[13px] text-[#F59E0B] flex gap-1.5">
                 <span aria-hidden>·</span>
                 <span>{b}</span>
               </li>
@@ -257,31 +273,48 @@ export function OperationStrip({
           </ul>
         )}
 
-        {/* cumplimiento por línea */}
-        {fulfilment.length > 0 && (
-          <div className="mt-3.5">
-            <p className="text-[10px] font-bold uppercase tracking-[0.09em] text-[#6B7280] mb-1.5">
-              Cumplimiento — {totals.done} de {totals.all} uds
-            </p>
-            <div className="flex flex-col gap-1.5">
-              {fulfilment.map((l) => {
-                const pct = l.total > 0 ? Math.round((l.done / l.total) * 100) : 0
-                return (
-                  <div key={l.sku + l.name} className="flex items-center gap-2.5 text-xs">
-                    <span className="font-mono text-[11px] text-[#6B7280] w-[70px] shrink-0 truncate">{l.sku}</span>
-                    <span className="text-[#9CA3AF] flex-1 min-w-0 truncate">{l.name}</span>
-                    <span className="w-[78px] h-[5px] rounded-full bg-[#2A3040] overflow-hidden shrink-0">
-                      <span
-                        className={`block h-full rounded-full ${pct > 0 ? 'bg-[#10B981]' : 'bg-[#6B7280]'}`}
-                        style={{ width: `${pct}%` }}
-                      />
-                    </span>
-                    <span className="font-mono tabular-nums text-[11.5px] text-[#9CA3AF] w-[52px] text-right shrink-0">
-                      {l.done} / {l.total}
-                    </span>
-                  </div>
-                )
-              })}
+        {/* Avance — un solo gráfico en vez de una fila por producto.
+            El detalle por línea ya está en la tabla de ítems más abajo;
+            repetirlo acá era la tercera copia de lo mismo en la pantalla. */}
+        {sum.total > 0 && (
+          <div className="mt-5">
+            <div className="flex items-baseline gap-2 mb-2">
+              <span className="text-[28px] font-bold leading-none tabular-nums text-[#F0F2F5]">
+                {sum.done}
+              </span>
+              <span className="text-[15px] text-[#9CA3AF]">de {sum.total} unidades entregadas</span>
+              <span className="ml-auto text-[15px] font-semibold tabular-nums text-[#10B981]">
+                {sum.pct}%
+              </span>
+            </div>
+
+            <div
+              className="h-2.5 rounded-full bg-[#2A3040] overflow-hidden"
+              role="progressbar"
+              aria-valuenow={sum.pct}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label={`${sum.done} de ${sum.total} unidades entregadas`}
+            >
+              <div className="h-full rounded-full bg-[#10B981]" style={{ width: `${sum.pct}%` }} />
+            </div>
+
+            <div className="flex flex-wrap gap-2 mt-3">
+              {sum.full > 0 && (
+                <span className="text-[13px] px-2.5 py-1 rounded-md bg-[#10B981]/15 text-[#10B981] font-medium">
+                  {sum.full} completas
+                </span>
+              )}
+              {sum.partial > 0 && (
+                <span className="text-[13px] px-2.5 py-1 rounded-md bg-[#F59E0B]/15 text-[#F59E0B] font-medium">
+                  {sum.partial} a medias
+                </span>
+              )}
+              {sum.none > 0 && (
+                <span className="text-[13px] px-2.5 py-1 rounded-md bg-[#2A3040] text-[#9CA3AF] font-medium">
+                  {sum.none} sin entregar
+                </span>
+              )}
             </div>
           </div>
         )}
