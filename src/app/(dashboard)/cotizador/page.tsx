@@ -36,6 +36,7 @@ import { ProductMatchModal, type CatalogProduct } from '@/components/cotizador/p
 import { DocumentContactsPanel } from '@/components/cotizador/document-contacts-panel'
 import type { ParticipantContact } from '@/lib/document-contacts'
 import { NextStepPanel } from '@/components/next-step/NextStepPanel'
+import { generateDocNumber } from '@/lib/document-workflow'
 
 interface QuoteLineItem {
   id: string
@@ -507,20 +508,15 @@ export default function CotizadorPage() {
   }
 
   async function generateQuoteNumber() {
-    const supabase = createClient()
-    const year = new Date().getFullYear()
-    const { data } = await supabase
-      .from('tt_quotes')
-      .select('number')
-      .ilike('number', `COT-${year}-%`)
-      .order('number', { ascending: false })
-      .limit(1)
-    let nextNum = 1
-    if (data && data.length > 0) {
-      const lastNum = data[0].number.split('-').pop()
-      nextNum = (parseInt(lastNum || '0', 10) || 0) + 1
-    }
-    setQuoteNumber(`COT-${year}-${nextNum.toString().padStart(4, '0')}`)
+    // Antes esto miraba tt_quotes (legacy, 4 filas históricas) para calcular
+    // el próximo número — las cotizaciones reales viven en tt_documents, así
+    // que casi siempre proponía un número ya usado ("COT-2026-0003" con el
+    // "0003" ya tomado) y el guardado fallaba con "duplicate key value
+    // violates unique constraint tt_documents_system_code_key", sin dejar
+    // seguir. generateDocNumber ya mira tt_documents primero (y tt_quotes
+    // como fallback legacy) — se reusa en vez de reimplementar mal la cuenta.
+    const number = await generateDocNumber('COT')
+    setQuoteNumber(number)
   }
 
   async function searchClients(query: string) {
@@ -684,47 +680,67 @@ export default function CotizadorPage() {
     try {
       // Migrado a tt_documents (Fase 2) — antes escribía a tt_quotes + tt_quote_items.
       const userIdResult = (await supabase.from('tt_users').select('id').eq('role', 'admin').limit(1).single()).data?.id || null
-      const { data: quoteData, error: quoteError } = await supabase
-        .from('tt_documents')
-        .insert({
-          doc_type: 'presupuesto',
-          subtype: docSubtype || 'standard',
-          system_code: quoteNumber,
-          display_ref: quoteNumber,
-          company_id: selectedCompanyId,
-          client_id: selectedClient?.id || null,
-          user_id: userIdResult,
-          status: 'draft',
-          notes,
-          internal_notes: internalNotes,
-          incoterm: incoterm || null,
-          payment_terms: paymentTerms || null,
-          currency,
-          subtotal,
-          // % efectivo del documento (mezcla ponderada de los IVA por línea,
-          // que pueden diferir entre productos). El detalle real por línea va
-          // en tt_document_lines.metadata.tax_rate.
-          tax_rate: ivaEnabled ? Number(effectiveTaxRate.toFixed(4)) : 0,
-          tax_amount: taxAmount,
-          total,
-          valid_until: validUntil ? new Date(validUntil).toISOString() : null,
-          metadata: {
-            subject_iva: ivaEnabled,
-            irpf_enabled: irpfEnabled,
-            irpf_rate: irpfEnabled ? irpfRate : 0,
-            irpf_amount: irpfAmount,
-            re_enabled: reEnabled,
-            re_rate: reEnabled ? reRate : 0,
-            re_amount: reAmount,
-            payment_days: paymentDays || null,
-            payment_terms_type: paymentTermsType || null,
-            // Contactos del cliente involucrados en este documento, con su rol.
-            // null en vez de [] para distinguir "no se cargaron" de "se borraron todos".
-            participating_contacts: participatingContacts.length > 0 ? participatingContacts : null,
-          },
-        })
-        .select('id').single()
-      if (quoteError) throw quoteError
+
+      // Reintento con número fresco ante colisión de system_code (23505).
+      // El número se generó una sola vez al abrir el cotizador (generateQuoteNumber),
+      // y puede haber quedado tomado mientras tanto (otra cotización guardada en
+      // paralelo, u otro intento previo de este mismo guardado que llegó a crear
+      // el header pero falló después). Sin esto, el guardado quedaba bloqueado
+      // sin forma de seguir — el usuario tenía que recargar la página a mano.
+      let currentQuoteNumber = quoteNumber
+      let quoteData: { id: string } | null = null
+      let lastError: { code?: string; message: string } | null = null
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const { data, error } = await supabase
+          .from('tt_documents')
+          .insert({
+            doc_type: 'presupuesto',
+            subtype: docSubtype || 'standard',
+            system_code: currentQuoteNumber,
+            display_ref: currentQuoteNumber,
+            company_id: selectedCompanyId,
+            client_id: selectedClient?.id || null,
+            user_id: userIdResult,
+            status: 'draft',
+            notes,
+            internal_notes: internalNotes,
+            incoterm: incoterm || null,
+            payment_terms: paymentTerms || null,
+            currency,
+            subtotal,
+            // % efectivo del documento (mezcla ponderada de los IVA por línea,
+            // que pueden diferir entre productos). El detalle real por línea va
+            // en tt_document_lines.metadata.tax_rate.
+            tax_rate: ivaEnabled ? Number(effectiveTaxRate.toFixed(4)) : 0,
+            tax_amount: taxAmount,
+            total,
+            valid_until: validUntil ? new Date(validUntil).toISOString() : null,
+            metadata: {
+              subject_iva: ivaEnabled,
+              irpf_enabled: irpfEnabled,
+              irpf_rate: irpfEnabled ? irpfRate : 0,
+              irpf_amount: irpfAmount,
+              re_enabled: reEnabled,
+              re_rate: reEnabled ? reRate : 0,
+              re_amount: reAmount,
+              payment_days: paymentDays || null,
+              payment_terms_type: paymentTermsType || null,
+              // Contactos del cliente involucrados en este documento, con su rol.
+              // null en vez de [] para distinguir "no se cargaron" de "se borraron todos".
+              participating_contacts: participatingContacts.length > 0 ? participatingContacts : null,
+            },
+          })
+          .select('id').single()
+
+        if (!error) { quoteData = data; break }
+
+        lastError = error
+        const isSystemCodeCollision = error.code === '23505' && error.message?.includes('system_code')
+        if (!isSystemCodeCollision) break
+        currentQuoteNumber = await generateDocNumber('COT')
+        setQuoteNumber(currentQuoteNumber)
+      }
+      if (!quoteData) throw lastError || new Error('Error creando cotización')
       const docLines = items.map((item, idx) => ({
         document_id: quoteData.id,
         product_id: item.product_id,

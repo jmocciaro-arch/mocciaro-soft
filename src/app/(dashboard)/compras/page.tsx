@@ -1918,10 +1918,17 @@ function PedidosCompraTab() {
   if (selectedPO && !showReceive) {
     const src = (selectedPO as Row & { _source?: string })._source === 'tt_documents' ? 'tt_documents' : 'local' as const
     const allIds = orders.map(o => o.id as string)
+    // El doc_type real varia segun el documento (orden_compra/factura_compra/
+    // albaran_compra para tt_documents; tt_purchase_orders locales no tienen
+    // doc_type propio, siempre son "orden de compra"). Antes esto quedaba
+    // hardcodeado en 'pap' — un doc_type que no existe en produccion (0 filas)
+    // — por lo que el workflow bar nunca mostraba las acciones correctas
+    // (ej. registrar pago) para ninguna factura/orden de compra real.
+    const docType = src === 'tt_documents' ? ((selectedPO.doc_type as string) || 'orden_compra') : 'orden_compra'
     return (
       <DocumentForm
         documentId={selectedPO.id as string}
-        documentType="pap"
+        documentType={docType}
         source={src}
         onBack={() => { setSelectedPO(null); load() }}
         onUpdate={load}

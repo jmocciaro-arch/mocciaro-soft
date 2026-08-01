@@ -89,7 +89,7 @@ Respondé SOLO con el JSON, sin texto adicional.`
             'anthropic-version': '2023-06-01',
           },
           body: JSON.stringify({
-            model: 'claude-sonnet-4-20250514',
+            model: 'claude-sonnet-5',
             max_tokens: 1024,
             system: 'Transcribí el audio y respondé en JSON con: {"text": "transcripción", "structured": {"tecnico": null, "motivo_ingreso": null, "condicion_visual": null, "observaciones": null}}. Solo JSON.',
             messages: [{
