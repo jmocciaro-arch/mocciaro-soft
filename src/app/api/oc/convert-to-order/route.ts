@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient as createServiceClient } from '@supabase/supabase-js'
+import { getAdminClient } from '@/lib/supabase/admin'
+import { withCompanyFilter } from '@/lib/auth/with-company-filter'
 import type { ParsedOCItem } from '@/lib/ai/parse-oc-pdf'
 
 export const runtime = 'nodejs'
@@ -10,17 +11,20 @@ export const runtime = 'nodejs'
  *
  * Crea un nuevo documento tipo 'pedido' (sales order) a partir de la OC parseada,
  * con items copiados y link parent=OC → child=Pedido.
+ *
+ * SECURITY: withCompanyFilter() + assertAccess(oc.document.company_id) —
+ * mismo patrón que /api/oc/match. Antes de este fix, cualquier usuario
+ * autenticado podía convertir la OC de otra empresa en un pedido.
  */
 export async function POST(req: NextRequest) {
   try {
     const { ocId } = await req.json()
     if (!ocId) return NextResponse.json({ error: 'ocId requerido' }, { status: 400 })
 
-    const supabase = createServiceClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      { auth: { persistSession: false } }
-    )
+    const guard = await withCompanyFilter()
+    if (!guard.ok) return guard.response
+
+    const supabase = getAdminClient()
 
     // Traer OC con documento asociado
     const { data: oc, error: ocErr } = await supabase
@@ -35,6 +39,10 @@ export async function POST(req: NextRequest) {
       .single()
     if (ocErr || !oc) return NextResponse.json({ error: 'OC no encontrada' }, { status: 404 })
     if (!oc.document) return NextResponse.json({ error: 'OC sin documento asociado' }, { status: 400 })
+
+    if (!guard.assertAccess((oc.document as { company_id?: string | null }).company_id ?? null)) {
+      return NextResponse.json({ error: 'Acceso denegado a esta OC' }, { status: 403 })
+    }
 
     const doc = oc.document as unknown as {
       id: string
