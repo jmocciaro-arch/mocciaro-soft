@@ -18,10 +18,16 @@ import { createClient as createServiceClient } from '@supabase/supabase-js'
 export const CLAUDE_PRICING: Record<string, { input: number; cache_write: number; cache_read: number; output: number }> = {
   // Haiku 4.5: la opción recomendada para extracción estructurada de documentos
   'claude-haiku-4-5-20251001': { input: 1.00,  cache_write: 1.25,  cache_read: 0.10, output: 5.00 },
-  // Sonnet 4.6: más potente, 3x más caro que Haiku
+  // Sonnet 5: reemplaza a claude-sonnet-4-20250514 (retirado el 2026-06-15).
+  // Precio de lista $3/$15; hay precio introductorio $2/$10 hasta 2026-08-31,
+  // pero dejamos el de lista para no SUBestimar el costo despues de esa fecha.
+  'claude-sonnet-5':           { input: 3.00,  cache_write: 3.75,  cache_read: 0.30, output: 15.00 },
+  // Sonnet 4.6: generacion anterior de Sonnet
   'claude-sonnet-4-6':         { input: 3.00,  cache_write: 3.75,  cache_read: 0.30, output: 15.00 },
-  // Opus 4.7: el más caro, reservar para tareas de razonamiento complejo
-  'claude-opus-4-7':            { input: 15.00, cache_write: 18.75, cache_read: 1.50, output: 75.00 },
+  // Opus 4.7: reservar para razonamiento complejo.
+  // CORREGIDO: estaba cargado a 15/75 (precio de Opus 3, la generacion vieja),
+  // lo que inflaba 3x el costo reportado en tt_ai_usage. El precio real es 5/25.
+  'claude-opus-4-7':           { input: 5.00,  cache_write: 6.25,  cache_read: 0.50, output: 25.00 },
 }
 
 // Modelo default (barato y suficiente para OC parsing)

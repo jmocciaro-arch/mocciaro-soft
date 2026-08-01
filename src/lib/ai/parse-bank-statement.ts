@@ -99,7 +99,7 @@ async function parseWithClaude(pdfBase64: string): Promise<ParsedBankStatement |
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-5',
         max_tokens: 8192,
         system: SYSTEM_PROMPT,
         messages: [{
