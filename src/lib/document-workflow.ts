@@ -310,6 +310,47 @@ export interface DeliveryItem {
   ordered: number
   delivered: number
   toDeliver: number
+  /**
+   * Números de serie de las unidades físicas que se están entregando en
+   * esta línea (solo para productos con series cargadas en tt_product_serials).
+   * Al entregar, cada serie pasa a ser activo del cliente con garantía de
+   * 12 meses — ver assignSerialsToClient().
+   */
+  serialNumbers?: string[]
+}
+
+const WARRANTY_MONTHS = 12
+
+/**
+ * Al entregar unidades con serie, las pasa de "en_stock/interno" a
+ * "vendido/cliente" y les carga warranty_until = hoy + 12 meses.
+ * Series que no coincidan con una fila en_stock del producto se ignoran
+ * (no rompe la entrega — la asociación de serie es best-effort).
+ */
+async function assignSerialsToClient(
+  supabase: ReturnType<typeof createClient>,
+  productId: string,
+  clientId: string | null,
+  serialNumbers: string[]
+): Promise<void> {
+  if (!clientId || serialNumbers.length === 0) return
+  const warrantyUntil = new Date()
+  warrantyUntil.setMonth(warrantyUntil.getMonth() + WARRANTY_MONTHS)
+
+  for (const sn of serialNumbers) {
+    const clean = sn.trim()
+    if (!clean) continue
+    await supabase
+      .from('tt_product_serials')
+      .update({
+        status: 'vendido',
+        current_owner_type: 'cliente',
+        current_owner_id: clientId,
+        warranty_until: warrantyUntil.toISOString().slice(0, 10),
+      })
+      .eq('product_id', productId)
+      .eq('serial_number', clean)
+  }
 }
 
 export async function orderToDeliveryNote(
@@ -318,7 +359,6 @@ export async function orderToDeliveryNote(
   source: 'local' | 'tt_documents'
 ): Promise<{ deliveryNoteId: string; deliveryNoteNumber: string }> {
   const supabase = createClient()
-  const dnNumber = await generateDocNumber('REM')
 
   // Cargar datos del pedido
   let orderData: Row | null = null
@@ -354,27 +394,49 @@ export async function orderToDeliveryNote(
     primaryWarehouseId = (whs?.[0]?.id as string) || null
   }
 
-  // Cargar info de los so_items que se van a entregar para conocer product_id
-  const soItemIds = items.filter((it) => it.toDeliver > 0).map((it) => it.id)
-  const soItemsInfo = new Map<string, { product_id: string | null; qty_ordered: number; qty_delivered: number }>()
-  if (soItemIds.length > 0) {
-    const { data: soRows } = await supabase
-      .from('tt_so_items')
-      .select('id, product_id, qty_ordered, qty_delivered')
-      .in('id', soItemIds)
-    for (const r of (soRows || []) as Row[]) {
-      soItemsInfo.set(r.id as string, {
-        product_id: (r.product_id as string) || null,
-        qty_ordered: (r.qty_ordered as number) || 0,
-        qty_delivered: (r.qty_delivered as number) || 0,
-      })
+  // Cargar info de las líneas de origen para conocer product_id/sku/precio.
+  // IMPORTANTE: cuando source==='tt_documents', `items[].id` son ids de
+  // tt_document_lines, NO de tt_so_items (esa era la causa de que el stock
+  // nunca se descontara y de que "entregado" siempre diera vacío para
+  // pedidos del modelo nuevo — ver auditoría 2026-08-01).
+  const lineIds = items.filter((it) => it.toDeliver > 0).map((it) => it.id)
+  const lineInfo = new Map<string, { product_id: string | null; sku: string | null; unit_price: number; qty_ordered: number; qty_delivered: number }>()
+  if (lineIds.length > 0) {
+    if (source === 'local') {
+      const { data: soRows } = await supabase
+        .from('tt_so_items')
+        .select('id, product_id, sku, unit_price, qty_ordered, qty_delivered')
+        .in('id', lineIds)
+      for (const r of (soRows || []) as Row[]) {
+        lineInfo.set(r.id as string, {
+          product_id: (r.product_id as string) || null,
+          sku: (r.sku as string) || null,
+          unit_price: (r.unit_price as number) || 0,
+          qty_ordered: (r.qty_ordered as number) || 0,
+          qty_delivered: (r.qty_delivered as number) || 0,
+        })
+      }
+    } else {
+      const { data: docLineRows } = await supabase
+        .from('tt_document_lines')
+        .select('id, product_id, sku, unit_price, quantity, qty_delivered')
+        .in('id', lineIds)
+      for (const r of (docLineRows || []) as Row[]) {
+        lineInfo.set(r.id as string, {
+          product_id: (r.product_id as string) || null,
+          sku: (r.sku as string) || null,
+          unit_price: (r.unit_price as number) || 0,
+          qty_ordered: (r.quantity as number) || 0,
+          qty_delivered: (r.qty_delivered as number) || 0,
+        })
+      }
     }
   }
 
   if (primaryWarehouseId) {
     for (const item of items) {
       if (item.toDeliver <= 0) continue
-      const info = soItemsInfo.get(item.id)
+      const info = lineInfo.get(item.id)
       const productId = info?.product_id || null
       if (!productId) continue
       const { data: stockRow } = await supabase
@@ -397,25 +459,29 @@ export async function orderToDeliveryNote(
     }
   }
 
-  // Crear remito
-  const { data: dn, error } = await supabase
-    .from('tt_delivery_notes')
-    .insert({
-      company_id: orderData.company_id || null,
-      client_id: orderData.client_id,
-      sales_order_id: orderId,
-      number: dnNumber,
-      status: 'pending',
-      total: (orderData.total as number) || 0,
-    })
-    .select()
-    .single()
+  // =================================================================
+  // Rama legacy: pedido en tt_sales_orders -> remito en tt_delivery_notes.
+  // Sin cambios de comportamiento respecto a la version anterior.
+  // =================================================================
+  if (source === 'local') {
+    const dnNumber = await generateDocNumber('REM')
+    const { data: dn, error } = await supabase
+      .from('tt_delivery_notes')
+      .insert({
+        company_id: orderData.company_id || null,
+        client_id: orderData.client_id,
+        sales_order_id: orderId,
+        number: dnNumber,
+        status: 'pending',
+        total: (orderData.total as number) || 0,
+      })
+      .select()
+      .single()
 
-  if (error || !dn) throw error || new Error('Error creando remito')
+    if (error || !dn) throw error || new Error('Error creando remito')
 
-  // Crear items del remito y actualizar cantidades entregadas
-  for (const item of items) {
-    if (item.toDeliver > 0) {
+    for (const item of items) {
+      if (item.toDeliver <= 0) continue
       const { data: dnItem } = await supabase
         .from('tt_dn_items')
         .insert({
@@ -426,14 +492,13 @@ export async function orderToDeliveryNote(
         })
         .select()
         .single()
-      // Actualizar qty_delivered en so_items
+
       await supabase
         .from('tt_so_items')
         .update({ qty_delivered: item.delivered + item.toDeliver })
         .eq('id', item.id)
 
-      // Movimiento de egress + descuento de stock + liberacion de reserva
-      const info = soItemsInfo.get(item.id)
+      const info = lineInfo.get(item.id)
       const productId = info?.product_id || null
       if (primaryWarehouseId && productId) {
         await supabase.from('tt_stock_movements').insert({
@@ -462,42 +527,149 @@ export async function orderToDeliveryNote(
         }
       }
     }
-  }
 
-  // Verificar si todo fue entregado
-  const { data: soItemsCheck } = await supabase
-    .from('tt_so_items')
-    .select('qty_ordered, quantity, qty_delivered')
-    .eq('sales_order_id', orderId)
+    const { data: soItemsCheck } = await supabase
+      .from('tt_so_items')
+      .select('qty_ordered, quantity, qty_delivered')
+      .eq('sales_order_id', orderId)
 
-  const allDelivered = (soItemsCheck || []).every(
-    (it: Row) =>
-      ((it.qty_delivered as number) || 0) >=
-      ((it.qty_ordered as number) || (it.quantity as number) || 0)
-  )
+    const allDelivered = (soItemsCheck || []).length > 0 && (soItemsCheck || []).every(
+      (it: Row) =>
+        ((it.qty_delivered as number) || 0) >=
+        ((it.qty_ordered as number) || (it.quantity as number) || 0)
+    )
 
-  // Actualizar status del pedido
-  if (source === 'local') {
     await supabase
       .from('tt_sales_orders')
       .update({ status: allDelivered ? 'fully_delivered' : 'partially_delivered' })
       .eq('id', orderId)
-  } else {
-    await supabase
-      .from('tt_documents')
-      .update({ status: allDelivered ? 'fully_delivered' : 'partially_delivered' })
-      .eq('id', orderId)
+
+    await supabase.from('tt_activity_log').insert({
+      entity_type: 'document',
+      entity_id: dn.id as string,
+      action: 'created',
+      detail: `Remito ${dnNumber} generado desde pedido`,
+    })
+
+    return { deliveryNoteId: dn.id as string, deliveryNoteNumber: dnNumber }
   }
 
-  // Log
-  await supabase.from('tt_activity_log').insert({
-    entity_type: 'document',
-    entity_id: dn.id as string,
-    action: 'created',
-    detail: `Remito ${dnNumber} generado desde pedido`,
+  // =================================================================
+  // Rama real: pedido en tt_documents -> remito tambien en tt_documents
+  // (doc_type='albaran'), con sus lineas en tt_document_lines y el link
+  // pedido->albaran en tt_document_relations (la tabla que lee toda la app).
+  // =================================================================
+  const albCode = `ALB-${Date.now()}`
+  const albTotal = items.reduce((sum, it) => {
+    if (it.toDeliver <= 0) return sum
+    const info = lineInfo.get(it.id)
+    return sum + it.toDeliver * (info?.unit_price || 0)
+  }, 0)
+
+  const { data: albaran, error: albErr } = await supabase
+    .from('tt_documents')
+    .insert({
+      doc_type: 'albaran',
+      system_code: albCode,
+      client_id: orderData.client_id,
+      company_id: companyId,
+      currency: (orderData.currency as string) || 'ARS',
+      total: albTotal,
+      status: 'pending',
+      metadata: { source_order_id: orderId },
+    })
+    .select('id, system_code')
+    .single()
+
+  if (albErr || !albaran) throw albErr || new Error('Error creando remito')
+
+  let sortOrder = 0
+  for (const item of items) {
+    if (item.toDeliver <= 0) continue
+    const info = lineInfo.get(item.id)
+    sortOrder += 1
+
+    await supabase.from('tt_document_lines').insert({
+      document_id: albaran.id,
+      sort_order: sortOrder,
+      sku: info?.sku || null,
+      description: item.description,
+      quantity: item.toDeliver,
+      unit_price: info?.unit_price || 0,
+      subtotal: item.toDeliver * (info?.unit_price || 0),
+      product_id: info?.product_id || null,
+    })
+
+    // Actualizar qty_delivered en la linea de origen del pedido (tt_document_lines)
+    await supabase
+      .from('tt_document_lines')
+      .update({ qty_delivered: (info?.qty_delivered || 0) + item.toDeliver })
+      .eq('id', item.id)
+
+    const productId = info?.product_id || null
+    if (productId) {
+      // Consume la reserva activa de este pedido (si la hubiera) y descuenta stock
+      await supabase.rpc('consume_stock_for_delivery', {
+        p_source_document_id: orderId,
+        p_items: [{ product_id: productId, quantity: item.toDeliver }],
+      })
+      if (primaryWarehouseId) {
+        await supabase.from('tt_stock_movements').insert({
+          product_id: productId,
+          warehouse_id: primaryWarehouseId,
+          movement_type: 'egress',
+          quantity: item.toDeliver,
+          document_id: albaran.id as string,
+          reference: `Egreso por remito ${albCode}`,
+        })
+      }
+      if (item.serialNumbers?.length) {
+        await assignSerialsToClient(supabase, productId, (orderData.client_id as string) || null, item.serialNumbers)
+      }
+    }
+  }
+
+  // Link pedido -> albaran (misma tabla que usa el resto de la app)
+  await supabase.from('tt_document_relations').insert({
+    parent_id: orderId,
+    child_id: albaran.id,
+    relation_type: 'entrega',
   })
 
-  return { deliveryNoteId: dn.id as string, deliveryNoteNumber: dnNumber }
+  // Verificar si todo el pedido fue entregado, releyendo las lineas reales
+  const { data: linesCheck } = await supabase
+    .from('tt_document_lines')
+    .select('quantity, qty_delivered')
+    .eq('document_id', orderId)
+
+  const allDelivered = (linesCheck || []).length > 0 && (linesCheck || []).every(
+    (l: Row) => ((l.qty_delivered as number) || 0) >= ((l.quantity as number) || 0)
+  )
+
+  await supabase
+    .from('tt_documents')
+    .update({ status: allDelivered ? 'fully_delivered' : 'partially_delivered' })
+    .eq('id', orderId)
+
+  await supabase.from('tt_document_events').insert([
+    {
+      document_id: albaran.id,
+      event_type: 'created',
+      payload: { source_order_id: orderId, items_count: items.filter((i) => i.toDeliver > 0).length },
+      notes: 'Remito generado desde pedido',
+    },
+    {
+      document_id: orderId,
+      event_type: 'derived_out',
+      related_document_id: albaran.id,
+      payload: { relation_type: 'entrega', to_doc_id: albaran.id },
+      notes: `Pedido entregado (parcial o total) mediante remito ${albaran.system_code}`,
+    },
+  ]).then(() => {}, (e) => {
+    console.error('[orderToDeliveryNote] addEvent failed:', e)
+  })
+
+  return { deliveryNoteId: albaran.id as string, deliveryNoteNumber: albaran.system_code as string }
 }
 
 // ---------------------------------------------------------------

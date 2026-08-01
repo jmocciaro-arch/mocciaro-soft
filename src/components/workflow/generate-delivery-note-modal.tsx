@@ -7,6 +7,7 @@ import { Modal } from '@/components/ui/modal'
 import { useToast } from '@/components/ui/toast'
 import { formatCurrency } from '@/lib/utils'
 import { orderToDeliveryNote, type DeliveryItem } from '@/lib/document-workflow'
+import { listSerials } from '@/lib/product-serials'
 import {
   Truck, Package, Check, ChevronDown, ChevronRight,
   Loader2, Minus, Plus, FileText, AlertCircle,
@@ -35,6 +36,11 @@ interface DeliveryItemLine {
   unit_price: number
   selected: boolean
   so_ref: string
+  product_id: string
+  /** Series disponibles en stock para este producto (solo se carga si el producto tiene series). */
+  availableSerials: string[]
+  /** Series elegidas para esta entrega — pasan a ser activo del cliente con garantía de 12 meses. */
+  chosenSerials: string[]
 }
 
 interface GenerateDeliveryNoteModalProps {
@@ -65,6 +71,25 @@ export function GenerateDeliveryNoteModal({
   const [creating, setCreating] = useState(false)
   const [orders, setOrders] = useState<OrderForDelivery[]>([])
   const [previewMode, setPreviewMode] = useState(false)
+
+  // Para productos con número de serie: busca las series en_stock disponibles
+  // y las deja listas para elegir. Al entregar, la serie elegida pasa a ser
+  // activo del cliente con garantía de 12 meses (ver assignSerialsToClient
+  // en document-workflow.ts). Productos sin series cargadas simplemente no
+  // muestran el picker — no es obligatorio.
+  const attachAvailableSerials = async (items: DeliveryItemLine[]) => {
+    const productIds = Array.from(new Set(items.map(it => it.product_id).filter(Boolean)))
+    if (productIds.length === 0) return
+    const serialsByProduct = new Map<string, string[]>()
+    await Promise.all(productIds.map(async (pid) => {
+      const serials = await listSerials(pid, { status: 'en_stock' })
+      if (serials.length > 0) serialsByProduct.set(pid, serials.map(s => s.serial_number))
+    }))
+    for (const it of items) {
+      const available = serialsByProduct.get(it.product_id)
+      if (available?.length) it.availableSerials = available
+    }
+  }
 
   // Load all pending orders for this client
   const loadOrders = useCallback(async () => {
@@ -103,8 +128,13 @@ export function GenerateDeliveryNoteModal({
             unit_price: (it.unit_price as number) || 0,
             selected: pending > 0,
             so_ref: so.doc_number || so.id,
+            product_id: (it.product_id as string) || '',
+            availableSerials: [],
+            chosenSerials: [],
           }
         }).filter((it: DeliveryItemLine) => it.pending > 0)
+
+        await attachAvailableSerials(mappedItems)
 
         if (mappedItems.length > 0) {
           loadedOrders.push({
@@ -151,8 +181,13 @@ export function GenerateDeliveryNoteModal({
             unit_price: (it.unit_price as number) || 0,
             selected: pending > 0,
             so_ref: soRef,
+            product_id: (it.product_id as string) || '',
+            availableSerials: [],
+            chosenSerials: [],
           }
         }).filter((it: DeliveryItemLine) => it.pending > 0)
+
+        await attachAvailableSerials(mappedItems)
 
         if (mappedItems.length > 0) {
           loadedOrders.push({
@@ -223,7 +258,26 @@ export function GenerateDeliveryNoteModal({
         items: o.items.map(it => {
           if (it.id !== itemId) return it
           const clamped = Math.max(0, Math.min(value, it.pending))
-          return { ...it, toDeliver: clamped, selected: clamped > 0 }
+          // Si se baja la cantidad, recortar también las series elegidas de más.
+          const chosenSerials = it.chosenSerials.slice(0, clamped)
+          return { ...it, toDeliver: clamped, selected: clamped > 0, chosenSerials }
+        }),
+      }
+    }))
+  }
+
+  // Elegir/quitar una serie física para la unidad que se está entregando.
+  const toggleSerial = (orderId: string, itemId: string, serial: string) => {
+    setOrders(prev => prev.map(o => {
+      if (o.id !== orderId) return o
+      return {
+        ...o,
+        items: o.items.map(it => {
+          if (it.id !== itemId) return it
+          const already = it.chosenSerials.includes(serial)
+          if (already) return { ...it, chosenSerials: it.chosenSerials.filter(s => s !== serial) }
+          if (it.chosenSerials.length >= it.toDeliver) return it // no elegir más series que unidades a entregar
+          return { ...it, chosenSerials: [...it.chosenSerials, serial] }
         }),
       }
     }))
@@ -258,6 +312,7 @@ export function GenerateDeliveryNoteModal({
               ordered: item.ordered,
               delivered: item.delivered,
               toDeliver: item.toDeliver,
+              serialNumbers: item.chosenSerials.length > 0 ? item.chosenSerials : undefined,
             })
           }
         }
@@ -433,6 +488,38 @@ export function GenerateDeliveryNoteModal({
                               )}
                             </td>
                           </tr>
+                        ))}
+                        {order.items.map((item) => (
+                          item.selected && item.availableSerials.length > 0 && (
+                            <tr key={`${item.id}-serials`} className="border-b border-[#1E2330] bg-[#0F1218]">
+                              <td />
+                              <td colSpan={6} className="px-3 py-2">
+                                <p className="text-[10px] text-[#6B7280] mb-1">
+                                  Series a entregar ({item.chosenSerials.length}/{item.toDeliver}) — quedan como activo del cliente con garantía de 12 meses:
+                                </p>
+                                <div className="flex flex-wrap gap-1">
+                                  {item.availableSerials.map((serial) => {
+                                    const chosen = item.chosenSerials.includes(serial)
+                                    return (
+                                      <button
+                                        key={serial}
+                                        type="button"
+                                        onClick={() => toggleSerial(order.id, item.id, serial)}
+                                        className={`px-2 py-1 rounded text-[10px] font-mono border transition-colors ${
+                                          chosen
+                                            ? 'bg-[#FF6600]/20 border-[#FF6600] text-[#FF6600]'
+                                            : 'bg-[#1E2330] border-[#2A3040] text-[#9CA3AF] hover:border-[#4B5563]'
+                                        }`}
+                                      >
+                                        {chosen && <Check size={10} className="inline mr-1 -mt-0.5" />}
+                                        {serial}
+                                      </button>
+                                    )
+                                  })}
+                                </div>
+                              </td>
+                            </tr>
+                          )
                         ))}
                       </tbody>
                     </table>
