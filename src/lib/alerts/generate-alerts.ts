@@ -16,6 +16,7 @@ export interface AlertResult {
   stock_low: number
   cashflow_warnings: number
   aging_critical: number
+  warranty_expiry: number
   errors: string[]
 }
 
@@ -26,7 +27,7 @@ export async function generateAlertsForCompany(
   const result: AlertResult = {
     companyId, generated: 0,
     invoice_due: 0, quote_expiry: 0, lead_cold: 0, stock_low: 0,
-    cashflow_warnings: 0, aging_critical: 0,
+    cashflow_warnings: 0, aging_critical: 0, warranty_expiry: 0,
     errors: [],
   }
 
@@ -243,6 +244,64 @@ export async function generateAlertsForCompany(
     }
   } catch (e) {
     result.errors.push(`cashflow_warning: ${(e as Error).message}`)
+  }
+
+  // 7) Garantías de cliente por vencer (tt_product_serials.warranty_until)
+  // current_owner_id es polimórfico (cliente/proveedor/interno), sin FK
+  // declarada — se resuelve el cliente con una consulta aparte en vez de
+  // un embed de PostgREST (no existe esa relación en el schema).
+  try {
+    interface SerialWithProduct {
+      id: string
+      serial_number: string
+      warranty_until: string
+      product_id: string
+      current_owner_id: string | null
+      product: { name: string | null; sku: string | null } | null
+    }
+
+    const { data: serials } = await supabase
+      .from('tt_product_serials')
+      .select('id, serial_number, warranty_until, product_id, current_owner_id, product:tt_products(name, sku)')
+      .eq('current_owner_type', 'cliente')
+      .not('warranty_until', 'is', null)
+    const serialRows = (serials || []) as unknown as SerialWithProduct[]
+
+    const clientIds = Array.from(new Set(serialRows.map((s) => s.current_owner_id).filter((id): id is string => !!id)))
+    const clientsById = new Map<string, { name: string; company_id: string }>()
+    if (clientIds.length > 0) {
+      const { data: clients } = await supabase
+        .from('tt_clients')
+        .select('id, name, company_id')
+        .in('id', clientIds)
+      for (const c of (clients || []) as Array<{ id: string; name: string; company_id: string }>) clientsById.set(c.id, c)
+    }
+
+    for (const s of serialRows) {
+      if (!s.current_owner_id) continue
+      const client = clientsById.get(s.current_owner_id)
+      if (!client || client.company_id !== companyId) continue
+      const until = new Date(s.warranty_until)
+      const diffDays = Math.round((until.getTime() - today0.getTime()) / 86400000)
+      for (const threshold of [30, 7, 0]) {
+        if (diffDays === threshold) {
+          await upsertAlert(supabase, {
+            company_id: companyId,
+            type: 'warranty_expiry',
+            entity_type: 'product_serial',
+            entity_id: s.id,
+            title: `Garantía ${s.product?.name || s.product_id} (serie ${s.serial_number}) ${threshold === 0 ? 'vence HOY' : `vence en ${threshold} día(s)`}`,
+            body: `Cliente: ${client.name || 'sin nombre'} · SKU ${s.product?.sku || '-'}`,
+            severity: threshold === 0 ? 'warning' : 'info',
+            dedup_key: `warranty-${s.id}-${threshold}`,
+          })
+          result.warranty_expiry++
+          result.generated++
+        }
+      }
+    }
+  } catch (e) {
+    result.errors.push(`warranty_expiry: ${(e as Error).message}`)
   }
 
   return result

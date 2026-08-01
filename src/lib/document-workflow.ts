@@ -310,6 +310,47 @@ export interface DeliveryItem {
   ordered: number
   delivered: number
   toDeliver: number
+  /**
+   * Números de serie de las unidades físicas que se están entregando en
+   * esta línea (solo para productos con series cargadas en tt_product_serials).
+   * Al entregar, cada serie pasa a ser activo del cliente con garantía de
+   * 12 meses — ver assignSerialsToClient().
+   */
+  serialNumbers?: string[]
+}
+
+const WARRANTY_MONTHS = 12
+
+/**
+ * Al entregar unidades con serie, las pasa de "en_stock/interno" a
+ * "vendido/cliente" y les carga warranty_until = hoy + 12 meses.
+ * Series que no coincidan con una fila en_stock del producto se ignoran
+ * (no rompe la entrega — la asociación de serie es best-effort).
+ */
+async function assignSerialsToClient(
+  supabase: ReturnType<typeof createClient>,
+  productId: string,
+  clientId: string | null,
+  serialNumbers: string[]
+): Promise<void> {
+  if (!clientId || serialNumbers.length === 0) return
+  const warrantyUntil = new Date()
+  warrantyUntil.setMonth(warrantyUntil.getMonth() + WARRANTY_MONTHS)
+
+  for (const sn of serialNumbers) {
+    const clean = sn.trim()
+    if (!clean) continue
+    await supabase
+      .from('tt_product_serials')
+      .update({
+        status: 'vendido',
+        current_owner_type: 'cliente',
+        current_owner_id: clientId,
+        warranty_until: warrantyUntil.toISOString().slice(0, 10),
+      })
+      .eq('product_id', productId)
+      .eq('serial_number', clean)
+  }
 }
 
 export async function orderToDeliveryNote(
@@ -581,6 +622,9 @@ export async function orderToDeliveryNote(
           document_id: albaran.id as string,
           reference: `Egreso por remito ${albCode}`,
         })
+      }
+      if (item.serialNumbers?.length) {
+        await assignSerialsToClient(supabase, productId, (orderData.client_id as string) || null, item.serialNumbers)
       }
     }
   }
