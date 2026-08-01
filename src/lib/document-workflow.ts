@@ -11,8 +11,14 @@ type Row = Record<string, unknown>
 // ---------------------------------------------------------------
 // Generar numero de documento secuencial: COT-2026-0001, PED-2026-0001, etc.
 // ---------------------------------------------------------------
-export async function generateDocNumber(prefix: string): Promise<string> {
-  const supabase = createClient()
+export async function generateDocNumber(
+  prefix: string,
+  // Igual que quoteToOrder: desde un API route hay que pasar el server client,
+  // porque el del browser no existe del lado server. Sin esto, cualquier
+  // llamada server-side a quoteToOrder reventaba acá adentro.
+  supabaseClient?: ReturnType<typeof createClient>
+): Promise<string> {
+  const supabase = supabaseClient ?? createClient()
   const year = new Date().getFullYear()
   const pattern = `${prefix}-${year}-%`
 
@@ -171,7 +177,7 @@ export async function quoteToOrder(
       throw new Error('Cotización sin company_id. No se puede generar pedido — cargá la cotización con empresa explícita.')
     }
 
-    const orderNumber = await generateDocNumber('PED')
+    const orderNumber = await generateDocNumber('PED', supabase)
 
     const { data: order, error } = await supabase
       .from('tt_documents')
