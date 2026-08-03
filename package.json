@@ -1,7 +1,13 @@
 {
   "name": "mocciaro-soft",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
+  "description": "ERP/CRM multi-empresa para distribución industrial (Grupo Mocciaro).",
+  "author": {
+    "name": "Juan Manuel Mocciaro",
+    "email": "jmocciaro@gmail.com"
+  },
+  "main": "electron/main.js",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -14,7 +20,50 @@
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:install": "playwright install chromium",
     "seed:test": "tsx scripts/seed-test.ts",
-    "db:diagram": "tsx scripts/db-diagram.ts"
+    "db:diagram": "tsx scripts/db-diagram.ts",
+    "electron:dev": "concurrently -k -n NEXT,ELECTRON -c blue,magenta \"next dev\" \"wait-on http://localhost:3000 && electron .\"",
+    "electron:build": "cross-env ELECTRON_BUILD=1 next build",
+    "electron:pack": "npm run electron:build && electron-builder --mac --dir",
+    "electron:dist": "npm run electron:build && electron-builder --mac",
+    "electron:publish": "npm run electron:build && electron-builder --mac --publish always"
+  },
+  "build": {
+    "appId": "com.mocciaro.soft",
+    "productName": "Mocciaro Soft",
+    "copyright": "Copyright © 2026 Juan Manuel Mocciaro",
+    "asar": true,
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "afterPack": "scripts/electron-afterpack.js",
+    "files": [
+      "electron/**/*",
+      "package.json",
+      "!**/node_modules/**/{CHANGELOG.md,README.md,readme.md,LICENSE,license,*.d.ts,*.map}"
+    ],
+    "mac": {
+      "category": "public.app-category.business",
+      "target": [
+        { "target": "dmg", "arch": ["arm64", "x64"] },
+        { "target": "zip", "arch": ["arm64", "x64"] }
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": false
+    },
+    "dmg": {
+      "writeUpdateInfo": true
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "jmocciaro-arch",
+      "repo": "mocciaro-soft",
+      "private": true,
+      "releaseType": "release"
+    }
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.2",
@@ -24,6 +73,9 @@
     "clsx": "^2.1.1",
     "cron-parser": "^4.9.0",
     "date-fns": "^4.1.0",
+    "electron-log": "^5.4.4",
+    "electron-updater": "^6.8.3",
+    "get-port-please": "^3.2.0",
     "googleapis": "^171.4.0",
     "lucide-react": "^1.8.0",
     "next": "16.2.3",
@@ -44,12 +96,17 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitest/coverage-v8": "^2.1.8",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
     "dotenv": "^17.4.2",
+    "electron": "^42.2.0",
+    "electron-builder": "^26.8.1",
     "eslint": "^9",
     "eslint-config-next": "16.2.3",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
     "typescript": "^5",
-    "vitest": "^2.1.8"
+    "vitest": "^2.1.8",
+    "wait-on": "^9.0.10"
   }
 }

@@ -17,8 +17,15 @@
 /.next/
 /out/
 
-# production
-/build
+# production (electron-builder resources directory)
+/build/*
+!/build/entitlements.mac.plist
+!/build/icon.icns
+!/build/icon.png
+!/build/background.png
+
+# electron-builder output
+/release/
 
 # misc
 .DS_Store
