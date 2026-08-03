@@ -90,6 +90,16 @@
 - **Plan de remediación:** sprint dedicado a lint cleanup. Estimación 8-12 horas (script automático con `eslint --fix` resuelve unused-vars, prefer-const, require-imports; `no-explicit-any` requiere review caso por caso).
 - **Triage:** 🟡 backlog. No bloquea features. Atacar en bloque cuando sea sprint dedicado.
 
+### BUG-08 — Íconos PNG de la PWA no existen
+
+- **Descubierto:** 2026-07-08 durante fix del matcher del middleware para assets PWA
+- **Severidad:** media
+- **Síntoma:** `/icons/icon-192.png` (y los otros 7 PNG) devuelven 404. `public/icons/` solo contiene `icon.svg` y `generate.html` — los PNG nunca se generaron/commitearon.
+- **Archivo(s) sospechoso(s):** `public/icons/`, `public/manifest.json` (referencia 8 PNG), `public/sw.js` (precachea icon-192/512, usa icon-72 como badge de notificaciones), `scripts/generate-icons.js`
+- **Contexto:** al verificar que el middleware ya no redirija los assets PWA a `/login`, los íconos siguieron dando 404 — pero por ausencia del archivo, no por el middleware
+- **Workaround:** el SW precachea con `add` por URL y solo warnea, así que no rompe la instalación; pero el manifest queda sin íconos válidos (afecta "Agregar a inicio") y las notificaciones push no tienen icon/badge
+- **Triage:** ⏳ pendiente — correr `scripts/generate-icons.js` (o generar desde `icon.svg`) y commitear los PNG
+
 ---
 
 ## Bugs cerrados
