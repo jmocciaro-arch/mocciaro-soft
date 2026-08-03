@@ -11,7 +11,7 @@ import {
   Cpu, Box, Layers, BookOpen, Pause, History,
   Banknote, Sparkles, TrendingUp, GitBranch, FormInput, Bot,
   RefreshCw, Zap, Globe, MessageCircle, ArrowLeft, HelpCircle,
-  Inbox, Workflow, ArrowLeftRight,
+  Inbox, Workflow, ArrowLeftRight, FolderOpen,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
@@ -64,6 +64,8 @@ const navGroups: NavGroup[] = [
   { id: 'principal', title: 'Principal', icon: Inbox, items: [
     { label: 'Inicio', href: '/inicio', icon: Inbox },
     { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+    // Biblioteca central: documentos de empresa + adjuntos de operaciones
+    { label: 'Archivo', href: '/archivo', icon: FolderOpen },
   ] },
   { id: 'ventas', title: 'Ventas', icon: FileText, items: [
     { label: 'Cotizador', href: '/cotizador', icon: FileText, badgeKey: 'quotes_draft', requiredPermissions: ['create_quote', 'edit_quote', 'view_sales_reports'] },
@@ -440,6 +442,7 @@ function getModuleTitle(pathname: string): { section: string; title: string } {
     [/^\/admin/, 'Administración', 'Admin'],
     [/^\/calendario/, 'SAT', 'Calendario'],
     [/^\/mail/, 'CRM', 'Mail'],
+    [/^\/archivo/, 'Principal', 'Archivo'],
     [/^\/documentos/, 'Ventas', 'Documento'],
   ]
   for (const [pattern, section, title] of map) {
